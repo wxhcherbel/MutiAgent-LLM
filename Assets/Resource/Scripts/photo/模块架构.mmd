@@ -1,0 +1,72 @@
+graph TB
+    %% 核心控制层
+    subgraph Core [核心控制层]
+        IA[IntelligentAgent<br>智能体核心控制器]
+        CM[CoordinationManager<br>协同管理器]
+        
+        IA --> CM
+        CM --> IA
+    end
+
+    %% 高级认知层（LLM）
+    subgraph LLMLayer [高级认知层 - LLM主导]
+        LLM[AgentLLMControl<br>LLM控制模块]
+        MM[MemoryModule<br>记忆模块]
+        PM[PlanningModule<br>规划模块]
+        ADM[ActionDecisionModule<br>动作决策模块]
+        RM[ReflectionModule<br>反思模块]
+        
+        LLM --> MM
+        LLM --> PM
+        LLM --> ADM
+        LLM --> RM
+        PM --> ADM
+        MM --> ADM
+        RM --> MM
+    end
+
+    %% 实时执行层（ML-Agents）
+    subgraph MLLayer [实时执行层 - ML-Agents主导]
+        ML[MLAgentsController<br>ML-Agents控制器]
+        Obs[ObservationSystem<br>观察系统]
+        Rew[RewardSystem<br>奖励系统]
+        
+        Obs --> ML
+        ML --> Rew
+    end
+
+    %% 环境交互层
+    subgraph EnvLayer [环境交互层]
+        Per[PerceptionModule<br>感知模块]
+        Com[CommunicationModule<br>通信模块]
+        Phys[PhysicalEnvironment<br>物理环境]
+        
+        Per --> Obs
+        Phys --> Per
+        Com --> CM
+    end
+
+    %% 数据存储层
+    subgraph DataLayer [数据存储层]
+        Props[AgentProperties<br>静态属性]
+        State[AgentDynamicState<br>动态状态]
+        Enum[CoreEnums<br>枚举定义]
+        
+        Props --> IA
+        State --> IA
+        Enum --> ALL
+    end
+
+    %% 主要调用关系
+    ADM -- 高级动作指令 --> CM
+    CM -- 优化后指令 --> ML
+    ML -- 执行状态 --> CM
+    CM -- 决策请求 --> LLM
+    Rew -- 奖励反馈 --> MM
+    Per -- 环境数据 --> Obs
+    Com -- 通信消息 --> CM
+    RM -- 反思结果 --> MM
+    
+    %% 异常处理路径
+    ML -- 异常检测 --> CM
+    CM -- 紧急求助 --> LLM

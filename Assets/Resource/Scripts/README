@@ -1,0 +1,126 @@
+Assets/
+├── Scripts/
+│   ├── Agents/          # 智能体相关脚本
+│   ├── Modules/         # 核心功能模块
+│   ├── Utilities/       # 工具类
+│   └── API/            # API接口
+├── Prefabs/            # 预制体
+├── Scenes/             # 场景文件
+└── Resources/          # 资源文件
+
+
+## 各模块详细说明
+
+### 1. 核心控制层
+
+**IntelligentAgent (智能体核心控制器)**
+- **作用**：总控制器，协调所有模块的工作流程
+- **职责**：状态管理、动作队列处理、生命周期控制
+- **调用关系**：调用所有其他模块，被CoordinationManager调用
+
+**CoordinationManager (协同管理器)**
+- **作用**：LLM与ML-Agents之间的桥梁
+- **职责**：指令优化、安全验证、异常处理、协调调度
+- **调用关系**：被IntelligentAgent调用，调用LLM和ML-Agents模块
+
+### 2. 高级认知层（LLM主导）
+
+**AgentLLMControl (LLM控制模块)**
+- **作用**：LLM集成和接口管理
+- **职责**：API调用、提示词构建、响应解析
+- **调用关系**：被CoordinationManager调用，调用其他LLM模块
+
+**MemoryModule (记忆模块)**
+- **作用**：经验存储和检索
+- **职责**：记忆添加、关联检索、重要性排序
+- **调用关系**：被LLMControl调用，被其他模块查询
+
+**PlanningModule (规划模块)**
+- **作用**：长期任务规划
+- **职责**：目标生成、步骤分解、进度跟踪
+- **调用关系**：被LLMControl调用，提供任务给ActionDecisionModule
+
+**ActionDecisionModule (动作决策模块)**
+- **作用**：高级动作决策
+- **职责**：动作选择、目标设定、LLM交互
+- **调用关系**：接收PlanningModule任务，向CoordinationManager发送指令
+
+**ReflectionModule (反思模块)**
+- **作用**：经验总结和学习
+- **职责**：定期反思、模式识别、知识提炼
+- **调用关系**：定期自动触发，向MemoryModule存储反思结果
+
+### 3. 实时执行层（ML-Agents主导）
+
+**MLAgentsController (ML-Agents控制器)**
+- **作用**：实时运动控制和执行
+- **职责**：动作执行、物理交互、避障、低层控制
+- **调用关系**：接收CoordinationManager指令，返回执行状态
+
+**ObservationSystem (观察系统)**
+- **作用**：环境感知和数据收集
+- **职责**：传感器数据处理、特征提取、状态观察
+- **调用关系**：向ML-Agents提供观察数据
+
+**RewardSystem (奖励系统)**
+- **作用**：强化学习奖励计算
+- **职责**：奖励分配、惩罚计算、学习信号生成
+- **调用关系**：基于执行结果计算奖励，反馈给记忆系统
+
+### 4. 环境交互层
+
+**PerceptionModule (感知模块)**
+- **作用**：环境感知和物体检测
+- **职责**：传感器管理、物体识别、距离计算
+- **调用关系**：提供感知数据给ObservationSystem
+
+**CommunicationModule (通信模块)**
+- **作用**：智能体间通信
+- **职责**：消息收发、协议处理、网络管理
+- **调用关系**：向CoordinationManager传递消息
+
+**PhysicalEnvironment (物理环境)**
+- **作用**：Unity物理环境
+- **职责**：物理仿真、碰撞检测、运动学计算
+- **调用关系**：与所有需要物理交互的模块交互
+
+### 5. 数据存储层
+
+**AgentProperties (静态属性)**
+- **作用**：智能体不变属性存储
+- **职责**：配置数据管理、属性访问
+- **调用关系**：被所有需要属性数据的模块读取
+
+**AgentDynamicState (动态状态)**
+- **作用**：运行时状态存储
+- **职责**：状态更新、数据持久化、状态查询
+- **调用关系**：被所有需要状态数据的模块读写
+
+**CoreEnums (枚举定义)**
+- **作用**：类型和状态定义
+- **职责**：枚举值管理、类型安全
+- **调用关系**：被所有模块引用
+
+## 调用流程示例
+
+### 正常任务执行流程：
+1. **PlanningModule** 生成任务计划
+2. **ActionDecisionModule** 决定具体动作
+3. **CoordinationManager** 优化和安全验证
+4. **MLAgentsController** 执行物理动作
+5. **RewardSystem** 计算执行奖励
+6. **MemoryModule** 存储执行经验
+
+### 异常处理流程：
+1. **MLAgentsController** 检测到执行异常
+2. **CoordinationManager** 接收异常信号
+3. **AgentLLMControl** 生成应急方案
+4. **ActionDecisionModule** 制定恢复动作
+5. **MLAgentsController** 执行恢复动作
+
+### 学习反思流程：
+1. **ReflectionModule** 定期触发反思
+2. **MemoryModule** 提供历史经验
+3. **AgentLLMControl** 进行分析总结
+4. **MemoryModule** 存储学习成果
+5. **PlanningModule** 应用学习结果到新计划

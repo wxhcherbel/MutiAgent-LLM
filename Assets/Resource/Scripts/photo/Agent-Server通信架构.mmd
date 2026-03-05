@@ -1,0 +1,43 @@
+sequenceDiagram
+    participant A as 智能体A(领导)
+    participant B as 智能体B(成员)
+    participant C as 智能体C(成员)
+    participant Network as 通信网络
+
+    Note over A, C: 阶段1: 任务分配
+    A->>A: LLM生成协同计划
+    A->>Network: 广播任务公告(任务ID,需求,约束)
+    Network-->>B: 传递任务公告
+    Network-->>C: 传递任务公告
+    
+    Note over B, C: 阶段2: 能力响应
+    B->>B: 评估自身能力(电池,位置,负载)
+    C->>C: 评估自身能力(电池,位置,负载)
+    B->>Network: 发送能力响应(可承担子任务)
+    C->>Network: 发送能力响应(可承担子任务)
+    Network-->>A: 汇总响应信息
+    
+    Note over A, A: 阶段3: 角色分配
+    A->>A: 基于响应进行最优分配
+    A->>Network: 发送角色分配指令
+    Network-->>B: 分配具体角色和任务
+    Network-->>C: 分配具体角色和任务
+    
+    Note over B, C: 阶段4: 协同执行
+    B->>B: 执行分配的子任务
+    C->>C: 执行分配的子任务
+    B->>Network: 定期状态更新(进度,问题)
+    C->>Network: 定期状态更新(进度,问题)
+    Network-->>A: 监控整体进度
+    
+    Note over A, C: 阶段5: 动态调整
+    A->>A: 分析执行状态
+    A->>Network: 发送调整指令(需要时)
+    Network-->>B: 接收调整指令
+    Network-->>C: 接收调整指令
+    
+    Note over A, C: 阶段6: 任务完成
+    B->>Network: 发送子任务完成
+    C->>Network: 发送子任务完成
+    Network-->>A: 确认任务完成
+    A->>Network: 广播任务完成确认

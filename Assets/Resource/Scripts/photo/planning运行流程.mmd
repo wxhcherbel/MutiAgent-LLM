@@ -1,0 +1,26 @@
+graph TD
+    A[用户提交任务] --> B[SubmitMissionRequest]
+    B --> C[AnalyzeMissionDescription]
+    C --> D[LLM分析任务]
+    D --> E{解析成功?}
+    E -->|是| F[ParseMissionFromLLM]
+    E -->|否| G[CreateDefaultMission]
+    F --> H[设置协调者]
+    H --> I[DistributeMissionToAgents]
+    I --> J[广播任务]
+    J --> K[ReceiveMissionAssignment]
+    G --> K
+    K --> L[AnalyzeMissionAndCreatePlan]
+    L --> M[LLM分析角色]
+    M --> N{解析成功?}
+    N -->|是| O[ParseAndCreatePlan]
+    N -->|否| P[CreateDefaultPlan]
+    O --> Q[创建当前计划]
+    P --> Q
+    Q --> R[记录记忆]
+    R --> S[发送角色确认]
+    S --> T[开始执行任务]
+    
+    U[其他智能体] --> V[接收广播任务]
+    V --> W[ReceiveMissionAssignment]
+    W --> L
