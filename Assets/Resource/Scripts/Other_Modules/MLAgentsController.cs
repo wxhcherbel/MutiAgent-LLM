@@ -83,10 +83,17 @@ public class MLAgentsController : MonoBehaviour
     [Header("动作序列")]
     public Queue<ActionCommand> actionSequence = new Queue<ActionCommand>(); // 原子动作序列队列
     public float actionTimeout = 100f;     // 单个动作超时时间
-
+    [Min(2f)] public float moveTimeoutMin = 8f;          // MoveTo 最短超时
+    [Min(0.05f)] public float moveTimeoutPerMeter = 0.9f; // MoveTo 每米额外预算
+    [Min(1f)] public float moveProgressTimeout = 4f;     // 多久无进展判定为卡住
+    [Min(0.05f)] public float moveProgressThreshold = 0.4f; // 认为“有进展”的最小逼近距离
+ 
     // 状态跟踪
     private float actionStartTime;
     private float actionStableStartTime = -1f; // 当前动作“连续稳定”起始时间
+    private float commandStartPlanarDistance;
+    private float closestPlanarDistance;
+    private float lastProgressTime;
     private HashSet<Vector3Int> exploredNodes = new HashSet<Vector3Int>(); // 探索记录
     private GameObject heldObject;        // 持有的物体
     private int resourcesDelivered = 0;   // 已运送资源计数
@@ -229,10 +236,12 @@ public class MLAgentsController : MonoBehaviour
         // 执行当前命令
         if (isExecutingCommand)
         {
+            UpdateCommandProgressTracking();
+
             // 检查超时
-            if (Time.time - actionStartTime > actionTimeout)
+            if (HasCommandTimedOut())
             {
-                OnActionCompleted(false, "动作超时");
+                OnActionCompleted(false, BuildCommandTimeoutReason());
                 return;
             }
 
@@ -287,6 +296,9 @@ public class MLAgentsController : MonoBehaviour
         currentActionCallback = callback;
         actionStartTime = Time.time;
         actionStableStartTime = -1f;
+        commandStartPlanarDistance = GetCurrentPlanarDistanceToCommandTarget();
+        closestPlanarDistance = commandStartPlanarDistance;
+        lastProgressTime = Time.time;
         
         if (intelligentAgent != null)
         {
@@ -790,6 +802,105 @@ public class MLAgentsController : MonoBehaviour
         return Mathf.Clamp(h, droneMinHeight, droneMaxHeight);
     }
 
+    private float GetCurrentPlanarDistanceToCommandTarget()
+    {
+        if (currentCommand == null) return 0f;
+
+        Vector3 target = currentCommand.TargetPosition;
+        if (currentCommand.TargetObject != null)
+        {
+            target = currentCommand.TargetObject.transform.position;
+        }
+
+        return Vector2.Distance(
+            new Vector2(transform.position.x, transform.position.z),
+            new Vector2(target.x, target.z)
+        );
+    }
+
+    private void UpdateCommandProgressTracking()
+    {
+        if (currentCommand == null) return;
+        if (currentCommand.ActionType != PrimitiveActionType.MoveTo &&
+            currentCommand.ActionType != PrimitiveActionType.Follow &&
+            currentCommand.ActionType != PrimitiveActionType.Align)
+        {
+            return;
+        }
+
+        float planar = GetCurrentPlanarDistanceToCommandTarget();
+        if (planar + moveProgressThreshold < closestPlanarDistance)
+        {
+            closestPlanarDistance = planar;
+            lastProgressTime = Time.time;
+        }
+    }
+
+    private float GetEffectiveActionTimeout()
+    {
+        if (currentCommand == null) return actionTimeout;
+
+        var parameters = ParseActionParameters(currentCommand.Parameters);
+        if (parameters.TryGetValue("timeout", out float customTimeout))
+        {
+            return Mathf.Max(1f, customTimeout);
+        }
+
+        if (currentCommand.ActionType == PrimitiveActionType.MoveTo)
+        {
+            float speed = parameters.TryGetValue("speed", out float requestedSpeed)
+                ? Mathf.Max(0.5f, requestedSpeed)
+                : Mathf.Max(0.5f, maxSpeed);
+
+            if (intelligentAgent?.Properties.Type == AgentType.Quadcopter)
+            {
+                speed = Mathf.Max(speed, droneCruiseSpeed * 0.75f);
+            }
+
+            float adaptive = moveTimeoutMin + (Mathf.Max(commandStartPlanarDistance, closestPlanarDistance) / speed) * moveTimeoutPerMeter;
+            return Mathf.Clamp(adaptive, moveTimeoutMin, actionTimeout);
+        }
+
+        return actionTimeout;
+    }
+
+    private bool HasCommandTimedOut()
+    {
+        if (currentCommand == null) return false;
+
+        float elapsed = Time.time - actionStartTime;
+        if (elapsed > GetEffectiveActionTimeout())
+        {
+            return true;
+        }
+
+        if (currentCommand.ActionType == PrimitiveActionType.MoveTo &&
+            commandStartPlanarDistance > Mathf.Max(1.5f, moveProgressThreshold * 2f) &&
+            Time.time - lastProgressTime > moveProgressTimeout)
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private string BuildCommandTimeoutReason()
+    {
+        if (currentCommand == null) return "动作超时";
+
+        if (currentCommand.ActionType == PrimitiveActionType.MoveTo &&
+            commandStartPlanarDistance > Mathf.Max(1.5f, moveProgressThreshold * 2f) &&
+            Time.time - lastProgressTime > moveProgressTimeout)
+        {
+            float planar = GetCurrentPlanarDistanceToCommandTarget();
+            return $"动作卡住: 无进展{(Time.time - lastProgressTime):F1}s, dist={planar:F1}m";
+        }
+
+        float effectiveTimeout = GetEffectiveActionTimeout();
+        float currentDist = GetCurrentPlanarDistanceToCommandTarget();
+        return $"动作超时: elapsed={(Time.time - actionStartTime):F1}s/{effectiveTimeout:F1}s, dist={currentDist:F1}m";
+    }
+
     /// <summary>
     /// 条件需要连续满足一段时间才返回 true，避免边界抖动造成误判。
     /// </summary>
@@ -1062,6 +1173,15 @@ public class MLAgentsController : MonoBehaviour
                     bool near = distXZ < posTol && Mathf.Abs(transform.position.y - targetHeight) < heightTol;
                     bool stable = horizontalVel.magnitude < horiTol &&
                                   Mathf.Abs(rb.velocity.y) < vertTol;
+                    bool softStable = horizontalVel.magnitude < Mathf.Max(horiTol * 2.2f, 1.1f) &&
+                                      Mathf.Abs(rb.velocity.y) < Mathf.Max(vertTol * 2.2f, 0.65f);
+
+                    if (near && softStable)
+                    {
+                        float softSettle = Mathf.Min(settleTime, 0.08f);
+                        return EvaluateSettled(true, softSettle);
+                    }
+
                     return EvaluateSettled(near && stable, settleTime);
                 }
 
@@ -1246,7 +1366,13 @@ public class MLAgentsController : MonoBehaviour
         if (obstacleInfluence > 0)
         {
             avoidanceDir /= obstacleInfluence; // 归一化避障方向
-            return Vector3.Lerp(desiredDir, avoidanceDir, obstacleInfluence).normalized;
+            float blend = Mathf.Clamp01(obstacleInfluence);
+            blend = Mathf.Min(0.75f, blend);
+            Vector3 blended = Vector3.Lerp(desiredDir, avoidanceDir.normalized, blend);
+            if (blended.sqrMagnitude > 1e-4f)
+            {
+                return blended.normalized;
+            }
         }
         
         return desiredDir;
@@ -1424,6 +1550,7 @@ public class MLAgentsController : MonoBehaviour
             TryExtractFloat(raw, "settleTime", parameters);
             TryExtractFloat(raw, "vertTol", parameters);
             TryExtractFloat(raw, "horiTol", parameters);
+            TryExtractFloat(raw, "timeout", parameters);
         }
         catch (Exception e)
         {

@@ -35,6 +35,12 @@ public class ActionDecisionModule : MonoBehaviour
     [Min(0.5f)] public float stepTargetReachDistance = 8f;       // 判定“已到达步骤目标”的平面距离阈值
     [Min(0.2f)] public float stepTargetReachHeightTolerance = 2f; // 判定“已到达步骤目标”的高度阈值
 
+    [Header("决策性能优化")]
+    public bool reuseHighLevelDecisionForSameStep = true;        // 同一步内复用第一阶段高层决策，减少重复 LLM 请求
+    public bool skipWaypointRefinementForStaticNavigation = false; // 静态地点/坐标寻路默认跳过第二阶段 waypoint 细化
+    [Range(1, 10)] public int fastStaticReactiveSegmentWaypoints = 5; // 静态目标且局部无明显动态障碍时，一次执行更长的 A* 子段
+    [Min(2f)] public float deterministicNavigationObstacleRadius = 24f; // 判定“局部简单，可直接走系统导航”的邻域半径
+
     [Header("A*粗路径可视化")]
     public bool showCoarsePathGizmos = true;              // 是否显示粗路径 Gizmos
     public Color coarsePathColor = new Color(0.10f, 0.90f, 0.95f, 1f); // 粗路径颜色
@@ -101,6 +107,9 @@ public class ActionDecisionModule : MonoBehaviour
 
     private StepTargetBinding lastStepTargetBinding;
     private bool lastIssuedSequenceContainsMovement;
+    private string cachedHighLevelStep = string.Empty;
+    private List<ActionData> cachedHighLevelActionData;
+    private StepTargetBinding cachedHighLevelTargetBinding;
 
     void Start()
     {
@@ -865,35 +874,42 @@ public class ActionDecisionModule : MonoBehaviour
             yield break;
         }
         StepNavigationDecision navDecision = BuildStepNavigationDecision(currentStep);
-
-        string highLevelPrompt = BuildHighLevelDecisionPrompt(currentStep, navDecision);
-        string highLevelResponse = string.Empty;
-        yield return llmInterface.SendRequest(highLevelPrompt, result =>
+        List<ActionData> highLevelActionData;
+        bool reusedHighLevelDecision = TryGetCachedHighLevelDecision(currentStep, out highLevelActionData, out lastStepTargetBinding);
+        if (!reusedHighLevelDecision)
         {
-            highLevelResponse = result ?? string.Empty;
-        }, temperature: 0.1f, maxTokens: 420);
+            string highLevelPrompt = BuildHighLevelDecisionPrompt(currentStep, navDecision);
+            string highLevelResponse = string.Empty;
+            yield return llmInterface.SendRequest(highLevelPrompt, result =>
+            {
+                highLevelResponse = result ?? string.Empty;
+            }, temperature: 0.1f, maxTokens: 420);
 
-        if (string.IsNullOrWhiteSpace(highLevelResponse))
-        {
-            ExecuteDefaultAction();
-            yield break;
+            if (string.IsNullOrWhiteSpace(highLevelResponse))
+            {
+                ExecuteDefaultAction();
+                yield break;
+            }
+
+            highLevelActionData = ParseActionDataSequenceFromJSON(highLevelResponse);
+            if (highLevelActionData == null || highLevelActionData.Count == 0)
+            {
+                ExecuteDefaultAction();
+                yield break;
+            }
+
+            lastStepTargetBinding = ResolveStepTargetBindingFromActionData(highLevelActionData, currentStep);
+            UpdateHighLevelDecisionCache(currentStep, highLevelActionData, lastStepTargetBinding);
         }
 
-        List<ActionData> highLevelActionData = ParseActionDataSequenceFromJSON(highLevelResponse);
-        if (highLevelActionData == null || highLevelActionData.Count == 0)
-        {
-            ExecuteDefaultAction();
-            yield break;
-        }
-
-        lastStepTargetBinding = ResolveStepTargetBindingFromActionData(highLevelActionData, currentStep);
         ApplyHighLevelIntentToNavigationDecision(ref navDecision, highLevelActionData, lastStepTargetBinding);
-        Debug.Log($"[ActionDecision][Stage1] step={currentStep} target={(lastStepTargetBinding.HasTarget ? lastStepTargetBinding.Summary : "none")} nav={BuildNavigationPromptSummary(navDecision)}");
+        Debug.Log($"[ActionDecision][Stage1] step={currentStep} reused={(reusedHighLevelDecision ? 1 : 0)} target={(lastStepTargetBinding.HasTarget ? lastStepTargetBinding.Summary : "none")} nav={BuildNavigationPromptSummary(navDecision)}");
 
         CoarsePathContext coarsePath = BuildCoarsePathContextForStep(currentStep, navDecision, lastStepTargetBinding);
         List<ActionCommand> actionSequence = BuildActionCommandsFromActionData(highLevelActionData);
+        bool deterministicStaticNavigation = ShouldPreferDeterministicStaticNavigation(lastStepTargetBinding, coarsePath);
 
-        if (ShouldRequestWaypointRefinement(actionSequence, lastStepTargetBinding))
+        if (!deterministicStaticNavigation && ShouldRequestWaypointRefinement(actionSequence, lastStepTargetBinding))
         {
             string waypointPrompt = BuildWaypointRefinementPrompt(currentStep, navDecision, lastStepTargetBinding, coarsePath, highLevelActionData);
             string waypointResponse = string.Empty;
@@ -912,6 +928,10 @@ public class ActionDecisionModule : MonoBehaviour
                     Debug.Log($"[ActionDecision][Stage2] refinedMoveCount={refinedMovement.Count} coarsePath={(coarsePath.HasPath ? coarsePath.Summary : "none")}");
                 }
             }
+        }
+        else if (deterministicStaticNavigation)
+        {
+            Debug.Log($"[ActionDecision] step={currentStep} 使用系统静态导航快速路径，跳过第二阶段 waypoint 细化");
         }
 
         actionSequence = ApplyCoarsePathFallbackIfNeeded(actionSequence, coarsePath);
@@ -1291,6 +1311,88 @@ public class ActionDecisionModule : MonoBehaviour
         return parts.Count > 0 ? string.Join("\n- ", parts) : "none";
     }
 
+    private bool TryGetCachedHighLevelDecision(string currentStep, out List<ActionData> actionDataList, out StepTargetBinding binding)
+    {
+        actionDataList = null;
+        binding = default(StepTargetBinding);
+
+        if (!reuseHighLevelDecisionForSameStep) return false;
+        if (string.IsNullOrWhiteSpace(currentStep)) return false;
+        if (!string.Equals(cachedHighLevelStep, currentStep, System.StringComparison.Ordinal)) return false;
+        if (cachedHighLevelActionData == null || cachedHighLevelActionData.Count == 0) return false;
+        if (!ShouldReuseCachedHighLevelBinding(cachedHighLevelTargetBinding)) return false;
+
+        actionDataList = cachedHighLevelActionData;
+        binding = cachedHighLevelTargetBinding;
+        return true;
+    }
+
+    private void UpdateHighLevelDecisionCache(string currentStep, List<ActionData> actionDataList, StepTargetBinding binding)
+    {
+        if (!reuseHighLevelDecisionForSameStep)
+        {
+            cachedHighLevelStep = string.Empty;
+            cachedHighLevelActionData = null;
+            cachedHighLevelTargetBinding = default(StepTargetBinding);
+            return;
+        }
+
+        cachedHighLevelStep = currentStep ?? string.Empty;
+        cachedHighLevelActionData = actionDataList;
+        cachedHighLevelTargetBinding = binding;
+    }
+
+    private static bool ShouldReuseCachedHighLevelBinding(StepTargetBinding binding)
+    {
+        if (!binding.HasTarget) return false;
+
+        switch (binding.TargetKind)
+        {
+            case "Feature":
+            case "World":
+            case "Self":
+                return true;
+            case "SmallNode":
+                return binding.Source == null ||
+                       binding.Source.IndexOf("Dynamic", System.StringComparison.OrdinalIgnoreCase) < 0;
+            default:
+                return false;
+        }
+    }
+
+    private bool ShouldPreferDeterministicStaticNavigation(StepTargetBinding binding, CoarsePathContext coarsePath)
+    {
+        if (!skipWaypointRefinementForStaticNavigation) return false;
+        if (!binding.HasTarget || !coarsePath.HasPath) return false;
+        if (binding.TargetKind != "Feature" && binding.TargetKind != "World") return false;
+        if (HasNearbyBlockingOrDynamicSmallNodes(deterministicNavigationObstacleRadius)) return false;
+        return true;
+    }
+
+    private bool HasNearbyBlockingOrDynamicSmallNodes(float radius)
+    {
+        if (radius <= 0f) return false;
+        if (agentState?.DetectedSmallNodes == null || agentState.DetectedSmallNodes.Count == 0) return false;
+
+        float radiusSq = radius * radius;
+        Vector3 me = transform.position;
+        for (int i = 0; i < agentState.DetectedSmallNodes.Count; i++)
+        {
+            SmallNodeData node = agentState.DetectedSmallNodes[i];
+            if (node == null) continue;
+            if (!node.BlocksMovement && !node.IsDynamic) continue;
+
+            Vector3 delta = node.WorldPosition - me;
+            delta.y = 0f;
+            if (delta.sqrMagnitude <= radiusSq)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private string GetNearbyObstacleSmallNodeSummary()
     {
         if (agentState?.DetectedSmallNodes == null || agentState.DetectedSmallNodes.Count == 0)
@@ -1473,8 +1575,27 @@ public class ActionDecisionModule : MonoBehaviour
     private List<Vector3> BuildReactiveWaypointSegment(List<Vector3> fullPath)
     {
         if (fullPath == null || fullPath.Count == 0) return new List<Vector3>();
-        int n = Mathf.Clamp(reactiveAStarSegmentWaypoints, 1, fullPath.Count);
+        int n = ResolveReactiveSegmentWaypointCount(fullPath.Count);
         return fullPath.Take(n).ToList();
+    }
+
+    private int ResolveReactiveSegmentWaypointCount(int fullPathCount)
+    {
+        if (fullPathCount <= 0) return 0;
+
+        int baseCount = Mathf.Clamp(reactiveAStarSegmentWaypoints, 1, fullPathCount);
+        if (lastStepTargetBinding.TargetKind != "Feature" && lastStepTargetBinding.TargetKind != "World")
+        {
+            return baseCount;
+        }
+
+        if (HasNearbyBlockingOrDynamicSmallNodes(deterministicNavigationObstacleRadius))
+        {
+            return baseCount;
+        }
+
+        int fastCount = Mathf.Max(baseCount, fastStaticReactiveSegmentWaypoints);
+        return Mathf.Clamp(fastCount, 1, fullPathCount);
     }
 
     /// <summary>
@@ -1815,7 +1936,12 @@ public class ActionDecisionModule : MonoBehaviour
             {
                 ["pathMode"] = string.IsNullOrWhiteSpace(pathMode) ? "Path" : pathMode,
                 ["waypointIndex"] = (i + 1).ToString(),
-                ["waypointTotal"] = total.ToString()
+                ["waypointTotal"] = total.ToString(),
+                ["posTol"] = "1.8",
+                ["heightTol"] = "0.6",
+                ["horiTol"] = "1.2",
+                ["vertTol"] = "0.7",
+                ["settleTime"] = "0.05"
             };
 
             ActionCommand waypointMove = new ActionCommand
