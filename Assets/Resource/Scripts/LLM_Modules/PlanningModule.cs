@@ -5,16 +5,19 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;  // 确保 UnityEngine 在 System.Diagnostics 之前
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 // 或者移除不必要的 using System.Diagnostics
 
 [Serializable]
 public class Plan
 {
     public string mission;           // 总任务描述
-    public MissionType missionType;  // 任务类型（用于任务级导航策略判定）
-    public NavigationPolicy navigationPolicy; // 任务级默认导航策略（step 可覆盖）
+    public MissionType missionType;  // 任务类型
+    public NavigationPolicy navigationPolicy; // 任务级默认导航策略（由 LLM 输出，step 可覆盖）
     public RoleType agentRole;       // 本智能体在此任务中的角色（使用枚举）
     public string[] steps;           // 具体步骤
+    public string[] stepActionTypes; // 每步动作意图（Move/Observe/Communicate/Interact/Idle）
+    public string[] stepNavigationModes; // 每步导航模式（AStar/Direct/None）
     public int currentStep;          // 当前步骤
     public DateTime created;         // 创建时间
     public Priority priority;        // 任务优先级
@@ -49,6 +52,9 @@ public class PlanResponse
 {
     public string assignedRole;
     public string[] steps;
+    public string[] stepActionTypes;
+    public string[] stepNavigationModes;
+    public string missionNavigationPolicy;
     public string[] coordinationNeeds;
     public string reasoning;
 }
@@ -68,45 +74,6 @@ public class RolePreferenceWrapper
 
 public class PlanningModule : MonoBehaviour
 {
-    /// <summary>
-    /// 判定“移动型 step”的关键词。
-    /// 只要命中这些词，就说明该 step 可能需要位移类动作。
-    /// </summary>
-    private static readonly string[] MovementStepKeywords =
-    {
-        "前往", "到达", "移动", "赶往", "巡航", "运输", "追击", "搜索区域", "路径",
-        "move", "go", "travel", "navigate", "route"
-    };
-
-    /// <summary>
-    /// 判定“局部近场 step”的关键词。
-    /// 命中后默认不建议使用全局 A*，优先近场机动/感知。
-    /// </summary>
-    private static readonly string[] LocalStepKeywords =
-    {
-        "附近", "周边", "就近", "本地", "近处", "当前区域"
-    };
-
-    /// <summary>
-    /// 判定“通信/观察型 step”的关键词。
-    /// 这类 step 一般不需要全局路径规划。
-    /// </summary>
-    private static readonly string[] CommunicationObservationKeywords =
-    {
-        "通信", "广播", "汇报", "报告", "发送", "同步", "等待", "观察", "扫描", "监控",
-        "communicate", "report", "scan", "observe", "wait", "sync"
-    };
-
-    /// <summary>
-    /// 判定“全局目标倾向”的关键词。
-    /// 命中后表示目标更可能在远距离或跨区域，适合先走 A* 粗路径。
-    /// </summary>
-    private static readonly string[] GlobalTargetKeywords =
-    {
-        "基地", "建筑", "楼", "区域", "校门", "目的地", "远处", "跨区", "跨区域",
-        "destination", "building", "zone", "global"
-    };
-
     private MemoryModule memoryModule;
     private LLMInterface llmInterface;
     private AgentProperties agentProperties;
@@ -289,27 +256,38 @@ public class PlanningModule : MonoBehaviour
     // 分析任务并创建具体计划
     public IEnumerator AnalyzeMissionAndCreatePlan(MissionAssignment mission, RoleType? specificRole = null)
     {
-        string prompt = $@"任务分析请求：
+        string prompt = $@"你是多智能体任务规划器，请根据输入给当前智能体生成精简执行计划。
 
-        总任务描述：{mission.missionDescription}
-        任务类型：{mission.missionType}
-        推荐通信模式：{mission.communicationMode}
-        我的属性：{agentProperties.Type}类型，角色：{agentProperties.Role}
-        我的能力：最大速度{agentProperties.MaxSpeed}m/s，感知范围{agentProperties.PerceptionRange}m
+        [输入]
+        - mission: {mission.missionDescription}
+        - missionType: {mission.missionType}
+        - communicationMode: {mission.communicationMode}
+        - selfType: {agentProperties.Type}
+        - selfRolePreference: {agentProperties.Role}
+        - maxSpeed: {agentProperties.MaxSpeed:F1}
+        - perceptionRange: {agentProperties.PerceptionRange:F1}
 
-        请分析：
-        1. 基于我的角色，制定3-5个具体执行步骤
-        2. 在此通信模式({mission.communicationMode})下如何与其他智能体协作？
+        [硬性规则]
+        1) 只能输出一个JSON对象，不要Markdown，不要解释文字。
+        2) assignedRole 只能取: Supporter|Scout|Assault|Defender|Transporter。
+        3) steps 数量 3-5 条；每条一句、简短、可执行，建议 <= 22 字（或 <= 12 英文词）。
+        4) stepActionTypes 必须与 steps 等长，每项只能取: Move|Observe|Communicate|Interact|Idle。
+        5) stepNavigationModes 必须与 steps 等长，每项只能取: AStar|Direct|None。
+        6) 仅当该步骤需要全局路径规划时才标记 AStar；通信/观察步骤标记 None。
+        7) coordinationNeeds 数量 1-3 条；每条简短，建议 <= 20 字（或 <= 10 英文词）。
+        8) reasoning 必须很短，<= 40 字（或 <= 20 英文词），禁止换行。
+        9) 若信息不足，仍要给出可执行默认步骤，不能返回空数组。
 
-        返回JSON格式：
+        [输出模板]
         {{
-            ""assignedRole"": ""角色名称"",
-            ""steps"": [""步骤1"", ""步骤2"", ...],
-            ""coordinationNeeds"": [""需要协调的事项1"", ...],
-            ""reasoning"": ""选择理由""
-        }}
-        steps描述和coordinationNeeds描述需要尽可能的简单和简洁，但不能省略；
-        ";
+        ""assignedRole"": ""Scout"",
+        ""steps"": [""步骤1"", ""步骤2"", ""步骤3""],
+        ""stepActionTypes"": [""Move"", ""Observe"", ""Move""],
+        ""stepNavigationModes"": [""AStar"", ""None"", ""Direct""],
+        ""missionNavigationPolicy"": ""Auto"",
+        ""coordinationNeeds"": [""协作点1""],
+        ""reasoning"": ""简短理由""
+        }}";
 
         yield return llmInterface.SendRequest(prompt, (result) =>
         {
@@ -322,7 +300,7 @@ public class PlanningModule : MonoBehaviour
                 Debug.LogError($"任务分析失败: {e.Message}");
                 CreateDefaultPlan(mission);
             }
-        }, temperature: 0.3f, maxTokens: 200);
+        }, temperature: 0.2f, maxTokens: 220);
     }
 
     private void ParseAndCreatePlan(string llmResponse, MissionAssignment mission, RoleType? specificRole)
@@ -330,7 +308,9 @@ public class PlanningModule : MonoBehaviour
         RoleType assignedRole = specificRole ?? ExtractRoleTypeFromResponse(llmResponse);
         string[] steps = ExtractStepsFromResponse(llmResponse);
         string reasoning = "LLM分析分配";
-        NavigationPolicy navPolicy = ResolveNavigationPolicyByMissionType(mission.missionType);
+        string[] stepActionTypes = ExtractStepActionTypesFromResponse(llmResponse, steps.Length);
+        string[] stepNavigationModes = ExtractStepNavigationModesFromResponse(llmResponse, steps.Length);
+        NavigationPolicy navPolicy = ExtractMissionNavigationPolicyFromResponse(llmResponse);
 
         currentPlan = new Plan
         {
@@ -339,6 +319,8 @@ public class PlanningModule : MonoBehaviour
             navigationPolicy = navPolicy,
             agentRole = assignedRole,
             steps = steps,
+            stepActionTypes = stepActionTypes,
+            stepNavigationModes = stepNavigationModes,
             currentStep = 0,
             created = DateTime.Now,
             priority = Priority.Normal,
@@ -362,7 +344,9 @@ public class PlanningModule : MonoBehaviour
         // 打印所有步骤详情
         for (int i = 0; i < currentPlan.steps.Length; i++)
         {
-            Debug.Log($"步骤 {i + 1}: {currentPlan.steps[i]}");
+            string intent = (currentPlan.stepActionTypes != null && i < currentPlan.stepActionTypes.Length) ? currentPlan.stepActionTypes[i] : "NA";
+            string nav = (currentPlan.stepNavigationModes != null && i < currentPlan.stepNavigationModes.Length) ? currentPlan.stepNavigationModes[i] : "NA";
+            Debug.Log($"步骤 {i + 1}: {currentPlan.steps[i]} | intent={intent} | nav={nav}");
         }
         Debug.Log("=== 计划详情结束 ===");
 
@@ -521,32 +505,6 @@ public class PlanningModule : MonoBehaviour
     }
 
     /// <summary>
-    /// 根据 MissionType 解析“任务级默认导航策略”。
-    /// 说明：
-    /// 1) 这是 mission 级默认倾向，不代表每个 step 都要走 A*；
-    /// 2) step 层会按“是否移动/是否近距离搜索/是否全局目标”再覆盖；
-    /// 3) 该策略供 ActionDecisionModule 判定是否优先启用 A*。
-    /// </summary>
-    private NavigationPolicy ResolveNavigationPolicyByMissionType(MissionType missionType)
-    {
-        switch (missionType)
-        {
-            case MissionType.Transport:
-            case MissionType.SearchRescue:
-            case MissionType.Pursuit:
-                return NavigationPolicy.PreferGlobalAStar;
-
-            case MissionType.Exploration:
-            case MissionType.Cooperation:
-                return NavigationPolicy.PreferLocal;
-
-            case MissionType.Competition:
-            default:
-                return NavigationPolicy.Auto;
-        }
-    }
-
-    /// <summary>
     /// 对外接口：获取当前计划的任务级导航策略。
     /// </summary>
     public NavigationPolicy GetCurrentNavigationPolicy()
@@ -578,67 +536,63 @@ public class PlanningModule : MonoBehaviour
 
     /// <summary>
     /// 对外接口：判断某个 step 是否是“移动型 step”。
-    /// 规则：
-    /// 1) 命中通信/观察关键词，直接判为非移动型；
-    /// 2) 否则只要命中移动关键词，即判为移动型。
+    /// 仅依据 LLM 输出的 stepActionTypes/stepNavigationModes。
     /// </summary>
     public bool IsMovementLikeStep(string stepText)
     {
-        if (string.IsNullOrWhiteSpace(stepText)) return false;
-        if (ContainsAnyKeyword(stepText, CommunicationObservationKeywords)) return false;
-        return ContainsAnyKeyword(stepText, MovementStepKeywords);
+        int idx = ResolveStepIndex(stepText);
+        if (idx < 0) return false;
+
+        string actionType = GetStepActionTypeHint(idx);
+        if (actionType == "Move") return true;
+
+        string navMode = GetStepNavigationModeHint(idx);
+        return navMode == "AStar" || navMode == "Direct";
     }
 
     /// <summary>
     /// 对外接口：判断某个 step 是否是“通信或观察型 step”。
+    /// 仅依据 LLM 输出的 stepActionTypes。
     /// </summary>
     public bool IsCommunicationOrObservationStep(string stepText)
     {
-        if (string.IsNullOrWhiteSpace(stepText)) return false;
-        return ContainsAnyKeyword(stepText, CommunicationObservationKeywords);
+        int idx = ResolveStepIndex(stepText);
+        if (idx < 0) return false;
+        string actionType = GetStepActionTypeHint(idx);
+        return actionType == "Communicate" || actionType == "Observe";
     }
 
     /// <summary>
-    /// 对外接口：判断某个 step 是否是“局部近场 step”。
-    /// 典型例子：附近搜索、就近交互、当前区域扫描。
+    /// 对外接口：判断某个 step 是否是“局部机动 step”。
+    /// 仅依据 LLM 输出的 stepNavigationModes=Direct。
     /// </summary>
     public bool IsLikelyLocalStep(string stepText)
     {
-        if (string.IsNullOrWhiteSpace(stepText)) return false;
-        return ContainsAnyKeyword(stepText, LocalStepKeywords);
+        int idx = ResolveStepIndex(stepText);
+        if (idx < 0) return false;
+        return GetStepNavigationModeHint(idx) == "Direct";
     }
 
     /// <summary>
-    /// 对外接口：判断某个 step 是否带有“全局目标”提示。
-    /// 仅用于在 PreferLocal/Auto 策略下做覆盖判断。
+    /// 对外接口：判断某个 step 是否带有“全局导航提示”。
+    /// 仅依据 LLM 输出的 stepNavigationModes=AStar。
     /// </summary>
     public bool HasGlobalTargetHint(string stepText)
     {
-        if (string.IsNullOrWhiteSpace(stepText)) return false;
-        return ContainsAnyKeyword(stepText, GlobalTargetKeywords);
+        int idx = ResolveStepIndex(stepText);
+        if (idx < 0) return false;
+        return GetStepNavigationModeHint(idx) == "AStar";
     }
 
     /// <summary>
-    /// 对外接口：给出“当前 step 是否建议优先使用 A*”的结论。
-    /// 判定顺序：
-    /// 1) 非移动 step / 通信观察 step -> 不用 A*；
-    /// 2) 局部近场 step -> 不用 A*；
-    /// 3) 再结合任务级策略（NavigationPolicy）决定：
-    ///    - PreferGlobalAStar: 直接建议使用 A*；
-    ///    - PreferLocal: 仅当有全局目标提示时使用 A*；
-    ///    - Auto: 仅当有全局目标提示时使用 A*。
+    /// 对外接口：当前 step 是否建议优先使用 A*。
+    /// 仅依据 LLM 输出的 stepNavigationModes，不再进行自然语言关键词推断。
     /// </summary>
     public bool ShouldPreferAStarForStep(string stepText)
     {
-        if (string.IsNullOrWhiteSpace(stepText)) return false;
-        if (!IsMovementLikeStep(stepText)) return false;
-        if (IsCommunicationOrObservationStep(stepText)) return false;
-        if (IsLikelyLocalStep(stepText)) return false;
-
-        NavigationPolicy policy = GetCurrentNavigationPolicy();
-        if (policy == NavigationPolicy.PreferGlobalAStar) return true;
-        if (policy == NavigationPolicy.PreferLocal) return HasGlobalTargetHint(stepText);
-        return HasGlobalTargetHint(stepText);
+        int idx = ResolveStepIndex(stepText);
+        if (idx < 0) return false;
+        return GetStepNavigationModeHint(idx) == "AStar";
     }
 
     /// <summary>
@@ -650,18 +604,56 @@ public class PlanningModule : MonoBehaviour
     }
 
     /// <summary>
-    /// 工具函数：判定文本是否包含任意关键词（忽略大小写）。
+    /// 将 step 文本映射到当前计划中的索引。
     /// </summary>
-    private static bool ContainsAnyKeyword(string text, string[] keywords)
+    private int ResolveStepIndex(string stepText)
     {
-        if (string.IsNullOrWhiteSpace(text) || keywords == null || keywords.Length == 0) return false;
-        for (int i = 0; i < keywords.Length; i++)
+        if (currentPlan == null || currentPlan.steps == null || currentPlan.steps.Length == 0) return -1;
+
+        int cur = currentPlan.currentStep;
+        if (cur >= 0 && cur < currentPlan.steps.Length)
         {
-            string keyword = keywords[i];
-            if (string.IsNullOrWhiteSpace(keyword)) continue;
-            if (text.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            string curText = currentPlan.steps[cur] ?? string.Empty;
+            if (string.Equals(curText.Trim(), (stepText ?? string.Empty).Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                return cur;
+            }
         }
-        return false;
+
+        if (!string.IsNullOrWhiteSpace(stepText))
+        {
+            for (int i = 0; i < currentPlan.steps.Length; i++)
+            {
+                string s = currentPlan.steps[i] ?? string.Empty;
+                if (string.Equals(s.Trim(), stepText.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    return i;
+                }
+            }
+        }
+
+        if (cur >= 0 && cur < currentPlan.steps.Length) return cur;
+        return -1;
+    }
+
+    /// <summary>
+    /// 获取某一步的动作意图（Move/Observe/Communicate/Interact/Idle）。
+    /// </summary>
+    private string GetStepActionTypeHint(int stepIndex)
+    {
+        if (currentPlan == null || currentPlan.stepActionTypes == null) return "Idle";
+        if (stepIndex < 0 || stepIndex >= currentPlan.stepActionTypes.Length) return "Idle";
+        return NormalizeStepActionTypeToken(currentPlan.stepActionTypes[stepIndex]);
+    }
+
+    /// <summary>
+    /// 获取某一步的导航模式（AStar/Direct/None）。
+    /// </summary>
+    private string GetStepNavigationModeHint(int stepIndex)
+    {
+        if (currentPlan == null || currentPlan.stepNavigationModes == null) return "None";
+        if (stepIndex < 0 || stepIndex >= currentPlan.stepNavigationModes.Length) return "None";
+        return NormalizeStepNavigationModeToken(currentPlan.stepNavigationModes[stepIndex]);
     }
 
     // 从LLM响应中提取通信模式
@@ -716,9 +708,11 @@ public class PlanningModule : MonoBehaviour
         {
             mission = mission.missionDescription,
             missionType = mission.missionType,
-            navigationPolicy = ResolveNavigationPolicyByMissionType(mission.missionType),
+            navigationPolicy = NavigationPolicy.Auto,
             agentRole = mission.roles[0].roleType,
             steps = defaultSteps,
+            stepActionTypes = BuildFilledArray(defaultSteps.Length, "Move"),
+            stepNavigationModes = BuildFilledArray(defaultSteps.Length, "Direct"),
             currentStep = 0,
             created = DateTime.Now,
             priority = Priority.Normal,
@@ -777,19 +771,19 @@ public class PlanningModule : MonoBehaviour
     {
         try
         {
-            // 提取纯 JSON 部分
-            string jsonContent = ExtractPureJson(response);
-            
-            if (!string.IsNullOrEmpty(jsonContent))
+            string parsedJson;
+            string parseError;
+            if (TryParsePlanResponse(response, out PlanResponse planResponse, out parsedJson, out parseError))
             {
-                // 直接解析 JSON
-                var planResponse = JsonUtility.FromJson<PlanResponse>(jsonContent);
-                
-                if (planResponse?.steps != null && planResponse.steps.Length > 0)
+                if (planResponse != null && planResponse.steps != null && planResponse.steps.Length > 0)
                 {
                     Debug.Log($"成功解析出 {planResponse.steps.Length} 个步骤");
                     return planResponse.steps;
                 }
+            }
+            else if (!string.IsNullOrWhiteSpace(parseError))
+            {
+                Debug.LogWarning($"步骤解析未命中结构化JSON，原因: {parseError}");
             }
         }
         catch (Exception e)
@@ -801,48 +795,223 @@ public class PlanningModule : MonoBehaviour
         return new string[] { "分析环境", "执行任务", "报告状态" };
     }
 
+    /// <summary>
+    /// 从 LLM 响应提取每步动作意图（由 LLM 明确给出，不做自然语言关键词判断）。
+    /// </summary>
+    private string[] ExtractStepActionTypesFromResponse(string response, int stepCount)
+    {
+        int n = Mathf.Max(0, stepCount);
+        string[] fallback = BuildFilledArray(n, "Move");
+        if (n == 0) return fallback;
+
+        try
+        {
+            if (TryParsePlanResponse(response, out PlanResponse planResponse, out _, out _))
+            {
+                if (planResponse != null && planResponse.stepActionTypes != null && planResponse.stepActionTypes.Length > 0)
+                {
+                    string[] raw = planResponse.stepActionTypes;
+                    string[] result = new string[n];
+                    for (int i = 0; i < n; i++)
+                    {
+                        string token = i < raw.Length ? raw[i] : raw[raw.Length - 1];
+                        result[i] = NormalizeStepActionTypeToken(token);
+                    }
+                    return result;
+                }
+            }
+        }
+        catch { }
+
+        return fallback;
+    }
+
+    /// <summary>
+    /// 从 LLM 响应提取每步导航模式（由 LLM 明确给出，不做自然语言关键词判断）。
+    /// </summary>
+    private string[] ExtractStepNavigationModesFromResponse(string response, int stepCount)
+    {
+        int n = Mathf.Max(0, stepCount);
+        string[] fallback = BuildFilledArray(n, "Direct");
+        if (n == 0) return fallback;
+
+        try
+        {
+            if (TryParsePlanResponse(response, out PlanResponse planResponse, out _, out _))
+            {
+                if (planResponse != null && planResponse.stepNavigationModes != null && planResponse.stepNavigationModes.Length > 0)
+                {
+                    string[] raw = planResponse.stepNavigationModes;
+                    string[] result = new string[n];
+                    for (int i = 0; i < n; i++)
+                    {
+                        string token = i < raw.Length ? raw[i] : raw[raw.Length - 1];
+                        result[i] = NormalizeStepNavigationModeToken(token);
+                    }
+                    return result;
+                }
+            }
+        }
+        catch { }
+
+        return fallback;
+    }
+
+    /// <summary>
+    /// 任务级导航策略由 LLM 给出；若缺失则统一回退 Auto。
+    /// </summary>
+    private NavigationPolicy ExtractMissionNavigationPolicyFromResponse(string response)
+    {
+        try
+        {
+            if (TryParsePlanResponse(response, out PlanResponse planResponse, out _, out _))
+            {
+                string token = planResponse != null ? planResponse.missionNavigationPolicy : string.Empty;
+                if (!string.IsNullOrWhiteSpace(token))
+                {
+                    string n = token.Trim().ToLowerInvariant();
+                    if (n == "preferglobalastar" || n == "globalastar" || n == "astar") return NavigationPolicy.PreferGlobalAStar;
+                    if (n == "preferlocal" || n == "local" || n == "direct") return NavigationPolicy.PreferLocal;
+                    if (n == "auto") return NavigationPolicy.Auto;
+                }
+            }
+        }
+        catch { }
+
+        return NavigationPolicy.Auto;
+    }
+
+    private static string[] BuildFilledArray(int count, string value)
+    {
+        if (count <= 0) return new string[0];
+        string[] arr = new string[count];
+        for (int i = 0; i < count; i++) arr[i] = value;
+        return arr;
+    }
+
+    private static string NormalizeStepActionTypeToken(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "Idle";
+        string s = raw.Trim().ToLowerInvariant();
+        if (s == "move" || s == "navigation" || s == "navigate") return "Move";
+        if (s == "observe" || s == "scan" || s == "sensing") return "Observe";
+        if (s == "communicate" || s == "communication" || s == "comm") return "Communicate";
+        if (s == "interact" || s == "interaction" || s == "pickup" || s == "drop") return "Interact";
+        if (s == "idle" || s == "none") return "Idle";
+        return "Idle";
+    }
+
+    private static string NormalizeStepNavigationModeToken(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "None";
+        string s = raw.Trim().ToLowerInvariant();
+        if (s == "astar" || s == "globalastar" || s == "global") return "AStar";
+        if (s == "direct" || s == "local" || s == "reactive") return "Direct";
+        if (s == "none" || s == "na" || s == "n/a") return "None";
+        return "None";
+    }
+
     // 从响应中提取纯 JSON 内容
     private string ExtractPureJson(string response)
     {
         if (string.IsNullOrEmpty(response))
             return response;
 
+        string text = response.Trim();
+
         // 如果包含代码块标记，提取其中的内容
-        if (response.Contains("```json"))
+        if (text.Contains("```json"))
         {
-            int jsonStart = response.IndexOf("```json") + 7;
-            int jsonEnd = response.IndexOf("```", jsonStart);
+            int jsonStart = text.IndexOf("```json", StringComparison.Ordinal) + 7;
+            int jsonEnd = text.IndexOf("```", jsonStart, StringComparison.Ordinal);
             if (jsonEnd > jsonStart)
             {
-                return response.Substring(jsonStart, jsonEnd - jsonStart).Trim();
+                text = text.Substring(jsonStart, jsonEnd - jsonStart).Trim();
             }
         }
-        
-        // 如果包含普通的代码块标记
-        if (response.Contains("```"))
+        else if (text.Contains("```"))
         {
-            int jsonStart = response.IndexOf("```") + 3;
-            int jsonEnd = response.IndexOf("```", jsonStart);
+            // 如果包含普通的代码块标记
+            int jsonStart = text.IndexOf("```", StringComparison.Ordinal) + 3;
+            int jsonEnd = text.IndexOf("```", jsonStart, StringComparison.Ordinal);
             if (jsonEnd > jsonStart)
             {
-                return response.Substring(jsonStart, jsonEnd - jsonStart).Trim();
+                text = text.Substring(jsonStart, jsonEnd - jsonStart).Trim();
             }
         }
-        
-        // 如果没有代码块标记，直接返回整个响应（可能是纯 JSON）
-        return response.Trim();
+
+        // 从文本中截取首个完整 JSON 对象/数组，避免前后解释文本污染解析。
+        int objStart = text.IndexOf('{');
+        int arrStart = text.IndexOf('[');
+        int start = -1;
+
+        if (objStart >= 0 && arrStart >= 0) start = Mathf.Min(objStart, arrStart);
+        else if (objStart >= 0) start = objStart;
+        else if (arrStart >= 0) start = arrStart;
+
+        if (start < 0) return text;
+
+        char open = text[start];
+        char close = open == '{' ? '}' : ']';
+
+        int depth = 0;
+        bool inString = false;
+        char quote = '\0';
+        bool escaped = false;
+
+        for (int i = start; i < text.Length; i++)
+        {
+            char c = text[i];
+
+            if (inString)
+            {
+                if (escaped)
+                {
+                    escaped = false;
+                    continue;
+                }
+                if (c == '\\')
+                {
+                    escaped = true;
+                    continue;
+                }
+                if (c == quote)
+                {
+                    inString = false;
+                }
+                continue;
+            }
+
+            if (c == '"' || c == '\'')
+            {
+                inString = true;
+                quote = c;
+                continue;
+            }
+
+            if (c == open) depth++;
+            else if (c == close)
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    return text.Substring(start, i - start + 1).Trim();
+                }
+            }
+        }
+
+        // 若未找到闭合，至少返回从首个 JSON 起始处开始的内容，供后续容错解析尝试。
+        return text.Substring(start).Trim();
     }
     // 从LLM响应中提取角色
     private RoleType ExtractRoleTypeFromResponse(string response)
     {
         try
         {
-            // 提取纯 JSON 部分
-            string jsonContent = ExtractPureJson(response);
-            
-            if (!string.IsNullOrEmpty(jsonContent))
+            string parsedJson;
+            string parseError;
+            if (TryParsePlanResponse(response, out PlanResponse planResponse, out parsedJson, out parseError))
             {
-                var planResponse = JsonUtility.FromJson<PlanResponse>(jsonContent);
                 if (!string.IsNullOrEmpty(planResponse?.assignedRole))
                 {
                     if (System.Enum.TryParse<RoleType>(planResponse.assignedRole, out RoleType role))
@@ -850,6 +1019,10 @@ public class PlanningModule : MonoBehaviour
                         return role;
                     }
                 }
+            }
+            else if (!string.IsNullOrWhiteSpace(parseError))
+            {
+                Debug.LogWarning($"角色解析未命中结构化JSON，原因: {parseError}");
             }
         }
         catch (Exception e)
@@ -864,6 +1037,311 @@ public class PlanningModule : MonoBehaviour
             AgentType.WheeledRobot => RoleType.Transporter,
             _ => RoleType.Scout
         };
+    }
+
+    /// <summary>
+    /// 统一解析计划响应（鲁棒版）：
+    /// 1) 自动从 LLM 文本里提取首个 JSON 对象/数组；
+    /// 2) 优先按对象反序列化 PlanResponse；
+    /// 3) 兼容仅返回步骤数组的情况。
+    /// </summary>
+    private bool TryParsePlanResponse(string response, out PlanResponse planResponse, out string normalizedJson, out string error)
+    {
+        planResponse = null;
+        normalizedJson = string.Empty;
+        error = string.Empty;
+
+        string jsonContent = ExtractPureJson(response);
+        if (string.IsNullOrWhiteSpace(jsonContent))
+        {
+            error = "提取到的JSON为空";
+            return false;
+        }
+
+        normalizedJson = jsonContent.Trim();
+
+        try
+        {
+            if (normalizedJson.StartsWith("{"))
+            {
+                planResponse = JsonConvert.DeserializeObject<PlanResponse>(normalizedJson);
+                if (planResponse != null)
+                {
+                    JObject obj = JObject.Parse(normalizedJson);
+
+                    if (string.IsNullOrWhiteSpace(planResponse.assignedRole))
+                    {
+                        // 兼容 role 字段命名差异
+                        planResponse.assignedRole = (string)obj["assignedRole"] ?? (string)obj["role"] ?? string.Empty;
+                    }
+
+                    if (planResponse.steps == null || planResponse.steps.Length == 0)
+                    {
+                        JToken token = obj["steps"] ?? obj["planSteps"] ?? obj["actions"];
+                        if (token is JArray arr)
+                        {
+                            var list = new List<string>();
+                            for (int i = 0; i < arr.Count; i++)
+                            {
+                                string s = arr[i]?.ToString();
+                                if (!string.IsNullOrWhiteSpace(s)) list.Add(s.Trim());
+                            }
+                            planResponse.steps = list.ToArray();
+                        }
+                    }
+
+                    if (planResponse.stepActionTypes == null || planResponse.stepActionTypes.Length == 0)
+                    {
+                        JToken token = obj["stepActionTypes"] ?? obj["stepIntents"] ?? obj["actionTypes"];
+                        if (token is JArray arr)
+                        {
+                            var list = new List<string>();
+                            for (int i = 0; i < arr.Count; i++)
+                            {
+                                string s = arr[i]?.ToString();
+                                if (!string.IsNullOrWhiteSpace(s)) list.Add(s.Trim());
+                            }
+                            planResponse.stepActionTypes = list.ToArray();
+                        }
+                    }
+
+                    if (planResponse.stepNavigationModes == null || planResponse.stepNavigationModes.Length == 0)
+                    {
+                        JToken token = obj["stepNavigationModes"] ?? obj["stepNavModes"] ?? obj["stepNavigation"];
+                        if (token is JArray arr)
+                        {
+                            var list = new List<string>();
+                            for (int i = 0; i < arr.Count; i++)
+                            {
+                                string s = arr[i]?.ToString();
+                                if (!string.IsNullOrWhiteSpace(s)) list.Add(s.Trim());
+                            }
+                            planResponse.stepNavigationModes = list.ToArray();
+                        }
+                    }
+
+                    if (string.IsNullOrWhiteSpace(planResponse.missionNavigationPolicy))
+                    {
+                        planResponse.missionNavigationPolicy =
+                            (string)obj["missionNavigationPolicy"] ??
+                            (string)obj["navigationPolicy"] ??
+                            string.Empty;
+                    }
+
+                    return true;
+                }
+            }
+            else if (normalizedJson.StartsWith("["))
+            {
+                // 兼容直接返回 ["step1","step2"] 的情况
+                JArray arr = JArray.Parse(normalizedJson);
+                var list = new List<string>();
+                for (int i = 0; i < arr.Count; i++)
+                {
+                    string s = arr[i]?.ToString();
+                    if (!string.IsNullOrWhiteSpace(s)) list.Add(s.Trim());
+                }
+
+                planResponse = new PlanResponse
+                {
+                    assignedRole = string.Empty,
+                    steps = list.ToArray()
+                };
+                return list.Count > 0;
+            }
+
+            if (TryParsePlanResponseLoosely(normalizedJson, out planResponse))
+            {
+                error = "JSON结构不标准，已使用容错解析";
+                Debug.LogWarning($"计划响应使用容错解析: {error}");
+                return true;
+            }
+
+            error = "JSON不是对象或数组";
+            return false;
+        }
+        catch (Exception ex)
+        {
+            if (TryParsePlanResponseLoosely(normalizedJson, out planResponse))
+            {
+                error = $"标准JSON解析失败({ex.Message})，已回退容错解析";
+                Debug.LogWarning($"计划响应使用容错解析: {error}");
+                return true;
+            }
+
+            error = ex.Message;
+            Debug.LogError($"计划响应解析失败: {error}\n原始片段: {normalizedJson}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 非严格 JSON 容错解析：
+    /// 即使 response 被截断（如 reasoning 未闭合），也尽量提取 assignedRole 与 steps。
+    /// </summary>
+    private bool TryParsePlanResponseLoosely(string raw, out PlanResponse planResponse)
+    {
+        planResponse = null;
+        if (string.IsNullOrWhiteSpace(raw)) return false;
+
+        bool gotRole = TryExtractStringFieldLoose(raw, "assignedRole", out string role);
+        if (!gotRole)
+        {
+            TryExtractStringFieldLoose(raw, "role", out role);
+        }
+
+        bool gotSteps = TryExtractStringArrayFieldLoose(raw, "steps", out string[] steps);
+        if (!gotSteps)
+        {
+            gotSteps = TryExtractStringArrayFieldLoose(raw, "planSteps", out steps);
+        }
+        if (!gotSteps)
+        {
+            gotSteps = TryExtractStringArrayFieldLoose(raw, "actions", out steps);
+        }
+
+        bool gotActionTypes = TryExtractStringArrayFieldLoose(raw, "stepActionTypes", out string[] stepActionTypes);
+        if (!gotActionTypes)
+        {
+            gotActionTypes = TryExtractStringArrayFieldLoose(raw, "stepIntents", out stepActionTypes);
+        }
+
+        bool gotNavModes = TryExtractStringArrayFieldLoose(raw, "stepNavigationModes", out string[] stepNavigationModes);
+        if (!gotNavModes)
+        {
+            gotNavModes = TryExtractStringArrayFieldLoose(raw, "stepNavModes", out stepNavigationModes);
+        }
+
+        bool gotMissionPolicy = TryExtractStringFieldLoose(raw, "missionNavigationPolicy", out string missionNavPolicy);
+        if (!gotMissionPolicy)
+        {
+            TryExtractStringFieldLoose(raw, "navigationPolicy", out missionNavPolicy);
+        }
+
+        if (!gotRole && !gotSteps && !gotActionTypes && !gotNavModes && !gotMissionPolicy) return false;
+
+        planResponse = new PlanResponse
+        {
+            assignedRole = role ?? string.Empty,
+            steps = (steps != null && steps.Length > 0) ? steps : new string[0],
+            stepActionTypes = (stepActionTypes != null && stepActionTypes.Length > 0) ? stepActionTypes : new string[0],
+            stepNavigationModes = (stepNavigationModes != null && stepNavigationModes.Length > 0) ? stepNavigationModes : new string[0],
+            missionNavigationPolicy = missionNavPolicy ?? string.Empty
+        };
+        return planResponse.steps.Length > 0 ||
+               !string.IsNullOrWhiteSpace(planResponse.assignedRole) ||
+               planResponse.stepActionTypes.Length > 0 ||
+               planResponse.stepNavigationModes.Length > 0 ||
+               !string.IsNullOrWhiteSpace(planResponse.missionNavigationPolicy);
+    }
+
+    /// <summary>
+    /// 容错提取字符串字段，如 "assignedRole":"Scout"
+    /// </summary>
+    private static bool TryExtractStringFieldLoose(string raw, string key, out string value)
+    {
+        value = string.Empty;
+        if (string.IsNullOrWhiteSpace(raw) || string.IsNullOrWhiteSpace(key)) return false;
+
+        string pattern = $"\"{System.Text.RegularExpressions.Regex.Escape(key)}\"\\s*:\\s*\"(?<v>(?:\\\\.|[^\"])*)";
+        var m = System.Text.RegularExpressions.Regex.Match(raw, pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!m.Success) return false;
+
+        value = UnescapeJsonStringLoose(m.Groups["v"].Value).Trim();
+        return !string.IsNullOrWhiteSpace(value);
+    }
+
+    /// <summary>
+    /// 容错提取字符串数组字段，如 "steps":[ "...", "..." ]
+    /// </summary>
+    private static bool TryExtractStringArrayFieldLoose(string raw, string key, out string[] values)
+    {
+        values = null;
+        if (string.IsNullOrWhiteSpace(raw) || string.IsNullOrWhiteSpace(key)) return false;
+
+        int keyPos = raw.IndexOf($"\"{key}\"", StringComparison.OrdinalIgnoreCase);
+        if (keyPos < 0) return false;
+
+        int colonPos = raw.IndexOf(':', keyPos);
+        if (colonPos < 0) return false;
+
+        int arrStart = raw.IndexOf('[', colonPos);
+        if (arrStart < 0) return false;
+
+        List<string> list = new List<string>();
+        bool inString = false;
+        bool escaped = false;
+        int depth = 0;
+        int strStart = -1;
+
+        for (int i = arrStart; i < raw.Length; i++)
+        {
+            char c = raw[i];
+
+            if (inString)
+            {
+                if (escaped)
+                {
+                    escaped = false;
+                    continue;
+                }
+                if (c == '\\')
+                {
+                    escaped = true;
+                    continue;
+                }
+                if (c == '"')
+                {
+                    string token = raw.Substring(strStart, i - strStart);
+                    string unescaped = UnescapeJsonStringLoose(token).Trim();
+                    if (!string.IsNullOrWhiteSpace(unescaped)) list.Add(unescaped);
+                    inString = false;
+                    strStart = -1;
+                }
+                continue;
+            }
+
+            if (c == '"')
+            {
+                inString = true;
+                strStart = i + 1;
+                continue;
+            }
+
+            if (c == '[')
+            {
+                depth++;
+                continue;
+            }
+
+            if (c == ']')
+            {
+                depth--;
+                if (depth <= 0)
+                {
+                    values = list.ToArray();
+                    return values.Length > 0;
+                }
+            }
+        }
+
+        // 数组可能被截断，仍可返回已提取到的步骤。
+        values = list.ToArray();
+        return values.Length > 0;
+    }
+
+    /// <summary>
+    /// 容错解码 JSON 字符串中的常见转义。
+    /// </summary>
+    private static string UnescapeJsonStringLoose(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return string.Empty;
+        return s
+            .Replace("\\\"", "\"")
+            .Replace("\\\\", "\\")
+            .Replace("\\n", "\n")
+            .Replace("\\r", "\r")
+            .Replace("\\t", "\t");
     }
     // 创建角色辅助方法
     private MissionRole CreateRole(RoleType roleType, AgentType agentType, int count, string[] responsibilities)
@@ -961,6 +1439,12 @@ public class PlanningModule : MonoBehaviour
     {
         if (commModule != null && currentMission != null)
         {
+            string safeCompleted = (step ?? string.Empty).Replace("\"", "\\\"");
+            string nextStep = (currentPlan != null && currentPlan.currentStep >= 0 && currentPlan.currentStep < currentPlan.steps.Length)
+                ? (currentPlan.steps[currentPlan.currentStep] ?? string.Empty)
+                : "none";
+            string safeNext = nextStep.Replace("\"", "\\\"");
+
             var message = new AgentMessage
             {
                 SenderID = agentProperties.AgentID,
@@ -968,7 +1452,7 @@ public class PlanningModule : MonoBehaviour
                 Type = MessageType.TaskUpdate,
                 Priority = 1,
                 Timestamp = Time.time,
-                Content = $"{{\"completedStep\":\"{step}\",\"nextStep\":\"{GetCurrentTask()}\",\"progress\":\"{currentPlan.currentStep}/{currentPlan.steps.Length}\"}}"
+                Content = $"{{\"completedStep\":\"{safeCompleted}\",\"nextStep\":\"{safeNext}\",\"progress\":\"{currentPlan.currentStep}/{currentPlan.steps.Length}\"}}"
             };
 
             commModule.SendMessage(message);

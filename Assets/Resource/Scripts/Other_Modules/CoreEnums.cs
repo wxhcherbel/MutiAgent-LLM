@@ -65,6 +65,33 @@ public class SmallNodePerceptionSnapshot
 }
 
 /// <summary>
+/// 校园地点感知数据：
+/// 用于记录智能体在当前感知周期内“真实看到”的建筑/地点信息。
+/// 设计说明：
+/// 1) 建筑等大目标会占据多个网格，因此同时记录“样本网格列表”与“代表坐标”；
+/// 2) Anchor 用于导航锚点（通常是离智能体更近的观测单元）；
+/// 3) ApproxCenter 用于语义描述与提示词，不直接用于刚性路径终点。
+/// </summary>
+[System.Serializable]
+public class CampusFeaturePerceptionData
+{
+    public string FeatureUid;                         // 地点唯一ID（来自 CampusGrid2D）
+    public string FeatureName;                        // 地点名称（如 building_5）
+    public string FeatureKind;                        // 地点类型字符串（Building/Water/...）
+    public bool BlocksMovement;                       // 该地点是否阻塞通行
+    public Vector2Int AnchorGridCell;                 // 导航锚点网格（局部可见样本中更靠近智能体的一格）
+    public Vector3 AnchorWorldPosition;               // 导航锚点世界坐标
+    public Vector3 ApproxCenterWorldPosition;         // 样本网格估计中心世界坐标
+    public int ObservedCellCount;                     // 本轮观测到的网格数
+    public List<Vector2Int> ObservedSampleCells = new List<Vector2Int>(); // 观测样本网格（有上限，防止爆内存）
+    public float FirstSeenTime;                       // 首次观测时间
+    public float LastSeenTime;                        // 最近观测时间
+    public int SeenCount;                             // 被观测次数
+    public float Confidence;                          // 置信度 [0,1]
+    public string SourceAgentId;                      // 最近观测来源智能体ID
+}
+
+/// <summary>
 /// 智能体状态
 /// </summary>
 public enum AgentStatus

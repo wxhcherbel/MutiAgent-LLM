@@ -53,10 +53,32 @@ public class MLAgentsController : MonoBehaviour
     public float takeOffHeight = 2f;      // 起飞目标高度
     public float hoverStabilityThreshold = 0.1f; // 悬停稳定性阈值
 
+    [Header("无人机飞行调校")]
+    [Min(1f)] public float droneCruiseSpeed = 8f;                 // 巡航速度
+    [Min(1f)] public float droneMaxHorizontalAccel = 14f;         // 水平加速度上限
+    [Min(1f)] public float droneMaxHorizontalBrakeAccel = 18f;    // 水平制动上限
+    [Min(0.5f)] public float droneArrivalSlowRadius = 6f;         // 进入减速区半径
+    [Min(0.2f)] public float droneFinalApproachRadius = 1.2f;     // 最终进近半径
+    [Range(0f, 35f)] public float droneMaxPitchAngle = 14f;       // 最大前倾角
+    [Range(0f, 35f)] public float droneMaxRollAngle = 18f;        // 最大侧倾角
+    [Min(0.5f)] public float droneYawResponse = 6f;               // 偏航响应速度
+    [Min(0.5f)] public float droneTiltResponse = 7f;              // 倾斜响应速度
+    [Min(0f)] public float droneHoverDrag = 2.4f;                 // 悬停水平阻尼
+    [Min(0f)] public float droneCruiseDrag = 0.9f;                // 巡航水平阻尼
+
     [Header("动作精度参数")]
     public float rotatePrecision = 2f;    // 旋转精度（度）
     public float positionPrecision = 1f;// 位置精度（米）
     public float scanRange = 10f;         // 扫描范围
+
+    [Header("动作完成判定(无人机)")]
+    [Min(0.05f)] public float completionSettleTime = 0.2f; // 条件连续满足该时长才判完成
+    [Min(0.05f)] public float droneAltitudeTolerance = 0.18f; // 高度误差阈值
+    [Min(0.05f)] public float droneHorizontalSpeedTolerance = 0.45f; // 水平速度阈值
+    [Min(0.05f)] public float droneVerticalSpeedTolerance = 0.25f;   // 垂直速度阈值
+    [Min(0.05f)] public float takeoffLandHeightTolerance = 0.15f;    // 起降高度阈值
+    [Min(1f)] public float maxVerticalControlAccel = 12f;            // 垂向控制最大等效加速度
+    [Min(0.05f)] public float minMoveHorizontalTolerance = 0.35f;    // MoveTo 最小水平容差
 
     [Header("动作序列")]
     public Queue<ActionCommand> actionSequence = new Queue<ActionCommand>(); // 原子动作序列队列
@@ -64,6 +86,7 @@ public class MLAgentsController : MonoBehaviour
 
     // 状态跟踪
     private float actionStartTime;
+    private float actionStableStartTime = -1f; // 当前动作“连续稳定”起始时间
     private HashSet<Vector3Int> exploredNodes = new HashSet<Vector3Int>(); // 探索记录
     private GameObject heldObject;        // 持有的物体
     private int resourcesDelivered = 0;   // 已运送资源计数
@@ -86,33 +109,60 @@ public class MLAgentsController : MonoBehaviour
 
     private void Awake()
     {
+        intelligentAgent = GetComponent<IntelligentAgent>();
         rb = GetComponent<Rigidbody>();
         if (rb == null)
         {
             rb = gameObject.AddComponent<Rigidbody>();
-            ConfigureRigidbody(); // 配置物理属性
         }
         perceptionModule = GetComponent<PerceptionModule>();
-        intelligentAgent = GetComponent<IntelligentAgent>();
-        tempSpeed = maxSpeed; // 初始化临时速度为默认值
+        SyncMotionConfigFromAgentProperties();
+        ConfigureRigidbody();
+        tempSpeed = maxSpeed;
     }
     private void ConfigureRigidbody()
     {
+        if (rb == null) return;
         rb.mass = 1f;
+        rb.interpolation = RigidbodyInterpolation.Interpolate;
+        rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+        rb.maxAngularVelocity = Mathf.Max(10f, maxAngularSpeed * Mathf.Deg2Rad * 1.5f);
         
         if (intelligentAgent != null && intelligentAgent.Properties.Type == AgentType.Quadcopter)
         {
-            // 关键修改：启用重力，但通过向上的力来抵消
-            rb.useGravity = true;  // 改为 true！
-            rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
-            rb.drag = 1f;
-            rb.angularDrag = 2f;
+            rb.useGravity = true;
+            rb.constraints = RigidbodyConstraints.None;
+            rb.drag = 0.25f;
+            rb.angularDrag = 4.5f;
         }
         else
         {
             rb.useGravity = true;
             rb.drag = 0.1f;
             rb.angularDrag = 0.1f;
+            rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
+        }
+    }
+
+    private void SyncMotionConfigFromAgentProperties()
+    {
+        if (intelligentAgent?.Properties == null) return;
+
+        if (intelligentAgent.Properties.MaxSpeed > 0.01f)
+        {
+            maxSpeed = intelligentAgent.Properties.MaxSpeed;
+        }
+        if (intelligentAgent.Properties.MaxAngularSpeed > 0.01f)
+        {
+            maxAngularSpeed = intelligentAgent.Properties.MaxAngularSpeed;
+        }
+
+        if (intelligentAgent.Properties.Type == AgentType.Quadcopter)
+        {
+            droneCruiseSpeed = Mathf.Max(droneCruiseSpeed, maxSpeed);
+            droneMaxHorizontalAccel = Mathf.Max(6f, intelligentAgent.Properties.Acceleration > 0.01f ? intelligentAgent.Properties.Acceleration * 2.2f : droneMaxHorizontalAccel);
+            droneMaxHorizontalBrakeAccel = Mathf.Max(droneMaxHorizontalAccel, droneMaxHorizontalBrakeAccel);
+            takeOffHeight = Mathf.Clamp(Mathf.Max(takeOffHeight, intelligentAgent.Properties.PhysicalSize.y * 1.5f), droneMinHeight + 0.5f, droneMaxHeight);
         }
     }
 
@@ -121,6 +171,8 @@ public class MLAgentsController : MonoBehaviour
         // 获取外部模块引用
         agentSpawner = FindObjectOfType<AgentSpawner>();
         campusGrid = FindObjectOfType<CampusGrid2D>();
+        SyncMotionConfigFromAgentProperties();
+        ConfigureRigidbody();
 
         if (campusGrid != null)
         {
@@ -204,27 +256,10 @@ public class MLAgentsController : MonoBehaviour
     /// </summary>
     private void StabilizeDroneHover()
     {
-        // 目标悬停高度（设为起飞高度）
         float targetHoverHeight = takeOffHeight;
-        
-        // 高度PID控制
-        float heightError = targetHoverHeight - transform.position.y;
-        float liftForce = heightError * 25f; // 比例控制
-        
-        // 应用升力（抵消重力 + 高度修正）
-        float baseLift = Mathf.Abs(Physics.gravity.y) * rb.mass; // 抵消重力的基础升力
-        rb.AddForce(Vector3.up * (baseLift + liftForce));
-        
-        // 水平稳定 - 阻尼任何水平移动
-        Vector3 horizontalVel = new Vector3(rb.velocity.x, 0, rb.velocity.z);
-        rb.AddForce(-horizontalVel * 8f);
-        
-        // 姿态稳定 - 保持水平
-        Quaternion levelRot = Quaternion.Euler(0, transform.eulerAngles.y, 0);
-        transform.rotation = Quaternion.Lerp(transform.rotation, levelRot, Time.fixedDeltaTime * 5f);
-        
-        // 角速度阻尼
-        rb.angularVelocity = Vector3.Lerp(rb.angularVelocity, Vector3.zero, Time.fixedDeltaTime * 8f);
+        ApplyDroneAltitudeControl(targetHoverHeight, 22f, 9f, maxVerticalControlAccel);
+        ApplyDroneHorizontalVelocityControl(Vector3.zero, null);
+        ApplyDroneFlightAttitude(Vector3.zero, Vector3.zero, 0f, null);
     }
 
 
@@ -251,6 +286,7 @@ public class MLAgentsController : MonoBehaviour
         PrepareCommandForExecution(currentCommand);
         currentActionCallback = callback;
         actionStartTime = Time.time;
+        actionStableStartTime = -1f;
         
         if (intelligentAgent != null)
         {
@@ -296,10 +332,23 @@ public class MLAgentsController : MonoBehaviour
         }
         else if (command.ActionType == PrimitiveActionType.AdjustAltitude)
         {
-            if (parameters.TryGetValue("height", out float h))
-            {
-                command.TargetPosition = new Vector3(transform.position.x, h, transform.position.z);
-            }
+            float targetHeight = ResolveDesiredHeightFromParameters(parameters, transform.position.y);
+            command.TargetPosition = new Vector3(transform.position.x, targetHeight, transform.position.z);
+        }
+        else if (command.ActionType == PrimitiveActionType.TakeOff)
+        {
+            float targetHeight = ResolveDesiredHeightFromParameters(parameters, takeOffHeight);
+            command.TargetPosition = new Vector3(transform.position.x, targetHeight, transform.position.z);
+        }
+        else if (command.ActionType == PrimitiveActionType.Land)
+        {
+            float targetHeight = ResolveDesiredHeightFromParameters(parameters, droneMinHeight);
+            command.TargetPosition = new Vector3(transform.position.x, targetHeight, transform.position.z);
+        }
+        else if (command.ActionType == PrimitiveActionType.Hover)
+        {
+            float targetHeight = ResolveDesiredHeightFromParameters(parameters, transform.position.y);
+            command.TargetPosition = new Vector3(transform.position.x, targetHeight, transform.position.z);
         }
     }
 
@@ -410,44 +459,33 @@ public class MLAgentsController : MonoBehaviour
     /// </summary>
     private void ExecuteDroneMoveTo(Vector3 targetPos, float moveSpeed, Dictionary<string, float> parameters)
     {
-        // 水平误差
-        Vector3 horizontalError = new Vector3(
-            targetPos.x - transform.position.x,
-            0,
-            targetPos.z - transform.position.z
-        );
-
+        Vector3 toTarget = targetPos - transform.position;
+        Vector3 horizontalError = new Vector3(toTarget.x, 0f, toTarget.z);
         float distance = horizontalError.magnitude;
-        Vector3 dir = horizontalError.normalized;
 
-        // 避障
-        dir = ApplyObstacleAvoidance(dir);
+        Vector3 desiredDir = distance > 0.01f ? horizontalError / distance : Vector3.zero;
+        if (desiredDir.sqrMagnitude > 0.0001f)
+        {
+            desiredDir = ApplyObstacleAvoidance(desiredDir).normalized;
+        }
 
-        // PID 参数
-        float kp = 4f;
-        float kd = 2f;
+        float commandedSpeed = ResolveDroneMoveSpeed(moveSpeed, parameters);
+        float slowRadius = parameters.TryGetValue("slowRadius", out float sr)
+            ? Mathf.Max(droneFinalApproachRadius, sr)
+            : droneArrivalSlowRadius;
+        float finalRadius = parameters.TryGetValue("approachRadius", out float fr)
+            ? Mathf.Max(0.2f, fr)
+            : droneFinalApproachRadius;
 
-        // 阻尼（抑制前冲和抖动）
-        Vector3 damping = -new Vector3(rb.velocity.x, 0, rb.velocity.z) * kd;
+        float speedFactor = EvaluateApproachSpeedFactor(distance, slowRadius, finalRadius);
+        Vector3 desiredVelocity = desiredDir * commandedSpeed * speedFactor;
+        Vector3 desiredAccel = ApplyDroneHorizontalVelocityControl(desiredVelocity, parameters);
 
-        // 主力（越近越弱，用于减速）
-        Vector3 force = dir * kp * Mathf.Clamp01(distance / 3f) * moveSpeed + damping;
-
-        // 施加水平力
-        rb.AddForce(new Vector3(force.x, 0, force.z));
-
-        // 高度保持
-        float height = parameters.TryGetValue("height", out float h)
-            ? Mathf.Clamp(h, droneMinHeight, droneMaxHeight)
-            : transform.position.y;
-
-        float heightError = height - transform.position.y;
-        float liftForce = heightError * 25f;
-
-        rb.AddForce(Vector3.up * (liftForce + Mathf.Abs(Physics.gravity.y) * rb.mass));
-
-        // 姿态稳定
-        StabilizeDroneAttitude();
+        float targetHeight = ResolveDesiredHeightFromParameters(parameters, targetPos.y > 0.01f ? targetPos.y : transform.position.y);
+        float altitudeGain = distance > slowRadius ? 26f : 22f;
+        float altitudeDamping = distance > slowRadius ? 8.5f : 9.5f;
+        ApplyDroneAltitudeControl(targetHeight, altitudeGain, altitudeDamping, maxVerticalControlAccel);
+        ApplyDroneFlightAttitude(desiredVelocity, desiredAccel, distance, parameters);
     }
 
     /// <summary>
@@ -497,35 +535,99 @@ public class MLAgentsController : MonoBehaviour
         rb.velocity = newVel;
     }
 
+    private float ResolveDroneMoveSpeed(float requestedSpeed, Dictionary<string, float> parameters)
+    {
+        float speed = requestedSpeed > 0.01f ? requestedSpeed : maxSpeed;
+        speed = Mathf.Min(speed, Mathf.Max(maxSpeed, droneCruiseSpeed));
+
+        if (parameters != null && parameters.TryGetValue("cruiseSpeed", out float cruise))
+        {
+            speed = Mathf.Min(speed, Mathf.Max(0.5f, cruise));
+        }
+
+        return Mathf.Max(0.5f, speed);
+    }
+
+    private float EvaluateApproachSpeedFactor(float distance, float slowRadius, float finalRadius)
+    {
+        if (distance <= finalRadius) return 0f;
+        if (distance >= slowRadius) return 1f;
+
+        float t = Mathf.InverseLerp(finalRadius, slowRadius, distance);
+        return Mathf.SmoothStep(0.12f, 1f, t);
+    }
+
+    private Vector3 ApplyDroneHorizontalVelocityControl(Vector3 desiredVelocity, Dictionary<string, float> parameters)
+    {
+        Vector3 currentVelocity = new Vector3(rb.velocity.x, 0f, rb.velocity.z);
+        Vector3 velocityError = desiredVelocity - currentVelocity;
+
+        float accelLimit = parameters != null && parameters.TryGetValue("accel", out float accel)
+            ? Mathf.Max(1f, accel)
+            : droneMaxHorizontalAccel;
+        float brakeLimit = parameters != null && parameters.TryGetValue("brakeAccel", out float brake)
+            ? Mathf.Max(accelLimit, brake)
+            : droneMaxHorizontalBrakeAccel;
+
+        bool braking = desiredVelocity.sqrMagnitude < currentVelocity.sqrMagnitude * 0.9f ||
+                       Vector3.Dot(currentVelocity.normalized, desiredVelocity.normalized) < 0.35f;
+        float maxAccel = braking ? brakeLimit : accelLimit;
+
+        float dt = Mathf.Max(Time.fixedDeltaTime, 0.001f);
+        Vector3 desiredAccel = Vector3.ClampMagnitude(velocityError / dt, maxAccel);
+        float drag = desiredVelocity.sqrMagnitude > 0.05f ? droneCruiseDrag : droneHoverDrag;
+        desiredAccel += -currentVelocity * drag;
+
+        rb.AddForce(new Vector3(desiredAccel.x, 0f, desiredAccel.z) * rb.mass, ForceMode.Force);
+        return desiredAccel;
+    }
+
+    private void ApplyDroneFlightAttitude(Vector3 desiredVelocity, Vector3 desiredAccel, float distanceToTarget, Dictionary<string, float> parameters)
+    {
+        Vector3 yawReference = desiredVelocity.sqrMagnitude > 0.2f
+            ? new Vector3(desiredVelocity.x, 0f, desiredVelocity.z)
+            : new Vector3(rb.velocity.x, 0f, rb.velocity.z);
+
+        float currentYaw = transform.eulerAngles.y;
+        if (yawReference.sqrMagnitude > 0.01f)
+        {
+            currentYaw = Quaternion.LookRotation(yawReference.normalized, Vector3.up).eulerAngles.y;
+        }
+
+        float yawResponse = parameters != null && parameters.TryGetValue("yawSpeed", out float ys)
+            ? Mathf.Max(0.5f, ys)
+            : droneYawResponse;
+        float pitchLimit = parameters != null && parameters.TryGetValue("pitchAngle", out float pa)
+            ? Mathf.Clamp(pa, 0f, 35f)
+            : droneMaxPitchAngle;
+        float rollLimit = parameters != null && parameters.TryGetValue("rollAngle", out float ra)
+            ? Mathf.Clamp(ra, 0f, 35f)
+            : droneMaxRollAngle;
+
+        Quaternion yawBasis = Quaternion.Euler(0f, currentYaw, 0f);
+        Vector3 localAccel = Quaternion.Inverse(yawBasis) * new Vector3(desiredAccel.x, 0f, desiredAccel.z);
+        float accelNorm = Mathf.Max(1f, droneMaxHorizontalBrakeAccel);
+        float pitch = Mathf.Clamp(-localAccel.z / accelNorm, -1f, 1f) * pitchLimit;
+        float roll = Mathf.Clamp(-localAccel.x / accelNorm, -1f, 1f) * rollLimit;
+
+        float nearFactor = distanceToTarget > 0.01f
+            ? Mathf.Clamp01(distanceToTarget / Mathf.Max(0.5f, droneFinalApproachRadius * 2f))
+            : 0f;
+        pitch *= nearFactor;
+        roll *= nearFactor;
+
+        Quaternion targetRotation = yawBasis * Quaternion.Euler(pitch, 0f, roll);
+        Quaternion blended = Quaternion.Slerp(rb.rotation, targetRotation, Time.fixedDeltaTime * Mathf.Max(yawResponse, droneTiltResponse));
+        rb.MoveRotation(blended);
+        rb.angularVelocity = Vector3.Lerp(rb.angularVelocity, Vector3.zero, Time.fixedDeltaTime * 6f);
+    }
+
     /// <summary>
     /// 无人机姿态稳定（飞行中保持水平）
     /// </summary>
     private void StabilizeDroneAttitude()
     {
-        // 只有在移动速度较大时才进行姿态调整，避免过度修正
-        if (rb.velocity.magnitude > 0.5f)
-        {
-            // 目标姿态：保持水平，面向移动方向
-            Quaternion targetAttitude = Quaternion.LookRotation(
-                new Vector3(rb.velocity.x, 0, rb.velocity.z).normalized
-            );
-            
-            // 平滑过渡到目标姿态
-            transform.rotation = Quaternion.Lerp(
-                transform.rotation, 
-                targetAttitude, 
-                Time.fixedDeltaTime * 3f
-            );
-        }
-        else
-        {
-            // 低速或悬停时保持完全水平
-            Quaternion levelRot = Quaternion.Euler(0, transform.eulerAngles.y, 0);
-            transform.rotation = Quaternion.Lerp(transform.rotation, levelRot, Time.fixedDeltaTime * 5f);
-        }
-        
-        // 角速度阻尼（减少不必要的旋转晃动）
-        rb.angularVelocity = Vector3.Lerp(rb.angularVelocity, Vector3.zero, Time.fixedDeltaTime * 8f);
+        ApplyDroneFlightAttitude(Vector3.zero, Vector3.zero, 0f, null);
     }
 
     /// <summary>
@@ -624,26 +726,14 @@ public class MLAgentsController : MonoBehaviour
         if (intelligentAgent?.Properties.Type != AgentType.Quadcopter) return;
 
         var parameters = ParseActionParameters(currentCommand.Parameters);
-        float targetHeight = parameters.TryGetValue("height", out float h) 
-            ? Mathf.Clamp(h, droneMinHeight, droneMaxHeight) 
-            : takeOffHeight;
+        float targetHeight = ResolveDesiredHeightFromParameters(
+            parameters,
+            currentCommand.TargetPosition.y > 0.01f ? currentCommand.TargetPosition.y : takeOffHeight
+        );
 
-        float heightDiff = targetHeight - transform.position.y;
-        
-        if (heightDiff > 0.1f)
-        {
-            // 使用力而不是直接设置速度
-            float liftForce = Mathf.Min(heightDiff * 20f, tempSpeed * 10f);
-            rb.AddForce(Vector3.up * liftForce);
-            
-            // 水平稳定
-            StabilizeHorizontalPosition();
-        }
-        else
-        {
-            // 切换到悬停模式
-            ExecuteHover();
-        }
+        ApplyDroneAltitudeControl(targetHeight, 28f, 9.0f, maxVerticalControlAccel);
+        StabilizeHorizontalPosition();
+        StabilizeDroneAttitude();
     }
 
     /// <summary>
@@ -654,29 +744,68 @@ public class MLAgentsController : MonoBehaviour
         if (intelligentAgent?.Properties.Type != AgentType.Quadcopter) return;
 
         var parameters = ParseActionParameters(currentCommand.Parameters);
-        float targetHeight = parameters.TryGetValue("height", out float h) 
-            ? Mathf.Clamp(h, droneMinHeight, droneMaxHeight) 
-            : transform.position.y;
+        float targetHeight = ResolveDesiredHeightFromParameters(
+            parameters,
+            currentCommand.TargetPosition.y > 0.01f ? currentCommand.TargetPosition.y : transform.position.y
+        );
 
-        // 主动悬停控制
-        float heightError = targetHeight - transform.position.y;
-        float liftForce = heightError * 25f; // PID比例控制
-        
-        // 应用升力（抵消重力 + 高度修正）
-        rb.AddForce(Vector3.up * (liftForce + Mathf.Abs(Physics.gravity.y) * rb.mass));
-        
-        // 水平稳定
+        ApplyDroneAltitudeControl(targetHeight, 22f, 8.5f, maxVerticalControlAccel);
         StabilizeHorizontalPosition();
-        
-        // 姿态稳定
         StabilizeDroneAttitude();
     }
 
     private void StabilizeHorizontalPosition()
     {
-        // 阻尼水平移动
-        Vector3 horizontalVel = new Vector3(rb.velocity.x, 0, rb.velocity.z);
-        rb.AddForce(-horizontalVel * 8f);
+        ApplyDroneHorizontalVelocityControl(Vector3.zero, null);
+    }
+
+    /// <summary>
+    /// 无人机垂向控制（PD + 重力补偿）。
+    /// 返回值为当前高度误差，便于调试。
+    /// </summary>
+    private float ApplyDroneAltitudeControl(float targetHeight, float kp, float kd, float maxAccel)
+    {
+        targetHeight = Mathf.Clamp(targetHeight, droneMinHeight, droneMaxHeight);
+        float heightError = targetHeight - transform.position.y;
+        float velY = rb.velocity.y;
+
+        float accelCmd = Mathf.Clamp(kp * heightError - kd * velY, -Mathf.Abs(maxAccel), Mathf.Abs(maxAccel));
+        float gravityComp = Mathf.Abs(Physics.gravity.y);
+        float totalLift = rb.mass * (gravityComp + accelCmd);
+        rb.AddForce(Vector3.up * totalLift, ForceMode.Force);
+        return heightError;
+    }
+
+    /// <summary>
+    /// 统一解析目标高度：优先参数，其次回退高度。
+    /// </summary>
+    private float ResolveDesiredHeightFromParameters(Dictionary<string, float> parameters, float fallbackHeight)
+    {
+        float h = fallbackHeight;
+        if (parameters != null)
+        {
+            if (parameters.TryGetValue("height", out float ph)) h = ph;
+            else if (parameters.TryGetValue("altitude", out float pa)) h = pa;
+        }
+        return Mathf.Clamp(h, droneMinHeight, droneMaxHeight);
+    }
+
+    /// <summary>
+    /// 条件需要连续满足一段时间才返回 true，避免边界抖动造成误判。
+    /// </summary>
+    private bool EvaluateSettled(bool condition, float settleTime = -1f)
+    {
+        float required = settleTime > 0f ? settleTime : completionSettleTime;
+        required = Mathf.Max(0.01f, required);
+
+        if (!condition)
+        {
+            actionStableStartTime = -1f;
+            return false;
+        }
+
+        if (actionStableStartTime < 0f) actionStableStartTime = Time.time;
+        return (Time.time - actionStableStartTime) >= required;
     }
 
     /// <summary>
@@ -687,27 +816,17 @@ public class MLAgentsController : MonoBehaviour
         if (intelligentAgent?.Properties.Type != AgentType.Quadcopter) return;
 
         var parameters = ParseActionParameters(currentCommand.Parameters);
-        float targetHeight = parameters.TryGetValue("height", out float h) 
-            ? Mathf.Clamp(h, droneMinHeight, droneMaxHeight) 
-            : droneMinHeight;
-
-        // 降落目标位置（保持水平位置不变，仅调整高度）
-        Vector3 targetPos = new Vector3(transform.position.x, targetHeight, transform.position.z);
+        float targetHeight = ResolveDesiredHeightFromParameters(
+            parameters,
+            currentCommand.TargetPosition.y > 0.01f ? currentCommand.TargetPosition.y : droneMinHeight
+        );
         
-        // 降落时保持水平姿态
-        if (Mathf.Abs(transform.eulerAngles.x) > 5f || Mathf.Abs(transform.eulerAngles.z) > 5f)
-        {
-            // 快速修正到水平姿态
-            Quaternion levelRot = Quaternion.Euler(0, transform.eulerAngles.y, 0);
-            transform.rotation = Quaternion.Lerp(transform.rotation, levelRot, Time.fixedDeltaTime * 10f);
-        }
-
-        // 接近地面时减速
-        float distanceToGround = transform.position.y - targetHeight;
-        float speedFactor = Mathf.Clamp01(distanceToGround / (droneMinHeight + 1f)); // 最后1米减速
-        tempSpeed = Mathf.Lerp(maxSpeed * 0.3f, maxSpeed, speedFactor); // 最低速度限制为30%最大速度
-
-        ExecuteMoveTo(targetPos);
+        // 垂向受控下降，接近地面时更平缓
+        float heightError = Mathf.Abs(targetHeight - transform.position.y);
+        float accelLimit = Mathf.Lerp(maxVerticalControlAccel * 0.35f, maxVerticalControlAccel, Mathf.Clamp01(heightError / 1.5f));
+        ApplyDroneAltitudeControl(targetHeight, 20f, 9.5f, accelLimit);
+        StabilizeHorizontalPosition();
+        StabilizeDroneAttitude();
     }
    
     /// <summary>
@@ -798,14 +917,16 @@ public class MLAgentsController : MonoBehaviour
     }
     private void ExecuteAdjustAltitude()
     {
-        var parameters = ParseActionParameters(currentCommand.Parameters);
-        float targetHeight = parameters.TryGetValue("height", out float h) 
-            ? Mathf.Clamp(h, droneMinHeight, droneMaxHeight) 
-            : transform.position.y;
-        float heightError = targetHeight - transform.position.y;
-        float force = heightError * 20f;
+        if (intelligentAgent?.Properties.Type != AgentType.Quadcopter) return;
 
-        rb.AddForce(Vector3.up * (force + Mathf.Abs(Physics.gravity.y) * rb.mass));
+        var parameters = ParseActionParameters(currentCommand.Parameters);
+        float targetHeight = ResolveDesiredHeightFromParameters(
+            parameters,
+            currentCommand.TargetPosition.y > 0.01f ? currentCommand.TargetPosition.y : transform.position.y
+        );
+
+        ApplyDroneAltitudeControl(targetHeight, 24f, 9.0f, maxVerticalControlAccel);
+        StabilizeHorizontalPosition();
         StabilizeDroneAttitude();
     }
     private void ExecuteAlign(Vector3 targetPos)
@@ -887,15 +1008,8 @@ public class MLAgentsController : MonoBehaviour
         // 5. 高度保持 (仅无人机)
         if (intelligentAgent?.Properties.Type == AgentType.Quadcopter)
         {
-            // 复用 ExecuteHover 中的高度保持逻辑
-            // 为了避免重复逻辑，我们在这里只添加核心升力控制，即 ExecuteHover 的简化版。
-            float targetHeight = transform.position.y; // 公转中保持当前高度
-            float heightError = targetHeight - transform.position.y;
-            float liftForce = heightError * 25f; // PID比例控制
-            
-            // 应用升力（抵消重力 + 高度修正）
-            rb.AddForce(Vector3.up * (liftForce + Mathf.Abs(Physics.gravity.y) * mass));
-            
+            float targetHeight = ResolveDesiredHeightFromParameters(parameters, currentCommand.TargetPosition.y > 0.01f ? currentCommand.TargetPosition.y : transform.position.y);
+            ApplyDroneAltitudeControl(targetHeight, 20f, 7.5f, maxVerticalControlAccel);
             // 姿态和角速度稳定
             StabilizeDroneAttitude(); 
         }
@@ -924,62 +1038,114 @@ public class MLAgentsController : MonoBehaviour
         {
             case PrimitiveActionType.MoveTo:
             {
+                var parameters = ParseActionParameters(currentCommand.Parameters);
                 float distXZ = Vector2.Distance(
                     new Vector2(transform.position.x, transform.position.z),
                     new Vector2(currentCommand.TargetPosition.x, currentCommand.TargetPosition.z)
                 );
 
-                bool slow = rb.velocity.magnitude < 0.3f;
-                return distXZ < positionPrecision && slow;
+                float posTol = parameters.TryGetValue("posTol", out float pt)
+                    ? Mathf.Max(0.1f, pt)
+                    : Mathf.Max(minMoveHorizontalTolerance, positionPrecision);
+                float settleTime = parameters.TryGetValue("settleTime", out float st) ? Mathf.Max(0.01f, st) : completionSettleTime;
+
+                Vector2 horizontalVel = new Vector2(rb.velocity.x, rb.velocity.z);
+                if (intelligentAgent?.Properties.Type == AgentType.Quadcopter)
+                {
+                    float targetHeight = ResolveDesiredHeightFromParameters(parameters, currentCommand.TargetPosition.y);
+                    float heightTol = parameters.TryGetValue("heightTol", out float ht)
+                        ? Mathf.Max(0.05f, ht)
+                        : droneAltitudeTolerance;
+                    float horiTol = parameters.TryGetValue("horiTol", out float hlt) ? Mathf.Max(0.05f, hlt) : droneHorizontalSpeedTolerance;
+                    float vertTol = parameters.TryGetValue("vertTol", out float vlt) ? Mathf.Max(0.05f, vlt) : droneVerticalSpeedTolerance;
+
+                    bool near = distXZ < posTol && Mathf.Abs(transform.position.y - targetHeight) < heightTol;
+                    bool stable = horizontalVel.magnitude < horiTol &&
+                                  Mathf.Abs(rb.velocity.y) < vertTol;
+                    return EvaluateSettled(near && stable, settleTime);
+                }
+
+                bool slow = horizontalVel.magnitude < 0.25f;
+                return EvaluateSettled(distXZ < posTol && slow, settleTime);
             }
             case PrimitiveActionType.RotateTo:
-                float angleDiff = Mathf.DeltaAngle(transform.eulerAngles.y, currentCommand.TargetRotation.eulerAngles.y);
-                return Mathf.Abs(angleDiff) < rotatePrecision;
+            {
+                var parameters = ParseActionParameters(currentCommand.Parameters);
+                float tol = parameters.TryGetValue("rotTol", out float rt) ? Mathf.Max(0.2f, rt) : rotatePrecision;
+
+                float angleDiff;
+                if (intelligentAgent?.Properties.Type == AgentType.Quadcopter)
+                {
+                    angleDiff = Quaternion.Angle(transform.rotation, currentCommand.TargetRotation);
+                }
+                else
+                {
+                    angleDiff = Mathf.Abs(Mathf.DeltaAngle(transform.eulerAngles.y, currentCommand.TargetRotation.eulerAngles.y));
+                }
+                return EvaluateSettled(angleDiff < tol, 0.08f);
+            }
             case PrimitiveActionType.TakeOff:
             {
-                float heightError = Mathf.Abs(transform.position.y - takeOffHeight);
-                bool stable = Mathf.Abs(rb.velocity.y) < 0.2f;
-                return heightError < 0.1f && stable;
+                if (intelligentAgent?.Properties.Type != AgentType.Quadcopter) return true;
+                var parameters = ParseActionParameters(currentCommand.Parameters);
+                float targetHeight = ResolveDesiredHeightFromParameters(parameters, currentCommand.TargetPosition.y > 0.01f ? currentCommand.TargetPosition.y : takeOffHeight);
+                float heightError = Mathf.Abs(transform.position.y - targetHeight);
+                float hSpeed = new Vector2(rb.velocity.x, rb.velocity.z).magnitude;
+                bool stable = hSpeed < droneHorizontalSpeedTolerance && Mathf.Abs(rb.velocity.y) < droneVerticalSpeedTolerance;
+                float settleTime = parameters.TryGetValue("settleTime", out float st) ? Mathf.Max(0.01f, st) : 0.25f;
+                return EvaluateSettled(heightError < takeoffLandHeightTolerance && stable, settleTime);
             }
             case PrimitiveActionType.Land:
             {
-                float heightError = Mathf.Abs(transform.position.y - droneMinHeight);
-                bool stable = Mathf.Abs(rb.velocity.y) < 0.2f;
-                return heightError < 0.1f && stable;
+                if (intelligentAgent?.Properties.Type != AgentType.Quadcopter) return true;
+                var parameters = ParseActionParameters(currentCommand.Parameters);
+                float targetHeight = ResolveDesiredHeightFromParameters(parameters, currentCommand.TargetPosition.y > 0.01f ? currentCommand.TargetPosition.y : droneMinHeight);
+                float heightError = Mathf.Abs(transform.position.y - targetHeight);
+                float hSpeed = new Vector2(rb.velocity.x, rb.velocity.z).magnitude;
+                bool stable = hSpeed < droneHorizontalSpeedTolerance && Mathf.Abs(rb.velocity.y) < droneVerticalSpeedTolerance;
+                float settleTime = parameters.TryGetValue("settleTime", out float st) ? Mathf.Max(0.01f, st) : 0.25f;
+                return EvaluateSettled(heightError < takeoffLandHeightTolerance && stable, settleTime);
             }
             case PrimitiveActionType.Stop:
-                return rb.velocity.magnitude < 0.1f;
+            {
+                bool stable = rb.velocity.magnitude < 0.12f && rb.angularVelocity.magnitude < 0.2f;
+                return EvaluateSettled(stable, 0.08f);
+            }
             case PrimitiveActionType.PickUp:
                 return heldObject != null;
             case PrimitiveActionType.Drop:
                 return heldObject == null;
             case PrimitiveActionType.LookAt:
-                Vector3 lookDir = (currentCommand.TargetPosition - transform.position).normalized;
+            {
+                Vector3 lookVec = currentCommand.TargetPosition - transform.position;
+                if (lookVec.sqrMagnitude < 1e-4f) return true;
+
+                Vector3 lookDir = lookVec.normalized;
                 float lookAngle = Vector3.Angle(transform.forward, lookDir);
-                return lookAngle < rotatePrecision * 2;
+                return EvaluateSettled(lookAngle < rotatePrecision * 2f, 0.08f);
+            }
             case PrimitiveActionType.Scan:
                 return Time.time - actionStartTime > 1f; // 扫描持续1秒
             case PrimitiveActionType.Hover:
             {
                 var parameters = ParseActionParameters(currentCommand.Parameters);
                 float Duration = parameters.TryGetValue("duration", out float d)? d : 2.0f;
+                float targetHeight = ResolveDesiredHeightFromParameters(parameters, currentCommand.TargetPosition.y > 0.01f ? currentCommand.TargetPosition.y : transform.position.y);
+                bool atTargetHeight = Mathf.Abs(transform.position.y - targetHeight) < droneAltitudeTolerance;
+                float horiTol = parameters.TryGetValue("horiTol", out float hlt) ? Mathf.Max(0.05f, hlt) : droneHorizontalSpeedTolerance;
+                float vertTol = parameters.TryGetValue("vertTol", out float vlt) ? Mathf.Max(0.05f, vlt) : droneVerticalSpeedTolerance;
+                bool isStable = new Vector2(rb.velocity.x, rb.velocity.z).magnitude < horiTol &&
+                                Mathf.Abs(rb.velocity.y) < vertTol;
+                float settleTime = parameters.TryGetValue("settleTime", out float st) ? Mathf.Max(0.01f, st) : completionSettleTime;
+
                 if (Duration > 0)
                 {
-                    return Time.time - actionStartTime > Duration;
+                    bool elapsed = Time.time - actionStartTime > Duration;
+                    return elapsed && EvaluateSettled(atTargetHeight && isStable, 0.1f);
                 }
                 else
                 {
-                    // 检查是否达到稳定悬停状态
-                    float currentHeight = transform.position.y;
-                    parameters = ParseActionParameters(currentCommand.Parameters);
-                    float targetHeight = parameters.TryGetValue("height", out float h) 
-                        ? Mathf.Clamp(h, droneMinHeight, droneMaxHeight) 
-                        : currentHeight;
-                        
-                    bool atTargetHeight = Mathf.Abs(currentHeight - targetHeight) < 0.2f;
-                    bool isStable = rb.velocity.magnitude < hoverStabilityThreshold * 2f;
-                    
-                    return atTargetHeight && isStable;
+                    return EvaluateSettled(atTargetHeight && isStable, settleTime);
                 }
             }
             case PrimitiveActionType.Wait:
@@ -990,9 +1156,21 @@ public class MLAgentsController : MonoBehaviour
             }
             case PrimitiveActionType.AdjustAltitude:
             {
-                float heightErr = Mathf.Abs(transform.position.y - currentCommand.TargetPosition.y);
-                bool stable = Mathf.Abs(rb.velocity.y) < 0.2f;
-                return heightErr < 0.1f && stable;
+                if (intelligentAgent?.Properties.Type != AgentType.Quadcopter) return true;
+
+                var parameters = ParseActionParameters(currentCommand.Parameters);
+                float targetHeight = ResolveDesiredHeightFromParameters(parameters, currentCommand.TargetPosition.y > 0.01f ? currentCommand.TargetPosition.y : transform.position.y);
+                float heightTol = parameters.TryGetValue("heightTol", out float ht)
+                    ? Mathf.Max(0.05f, ht)
+                    : droneAltitudeTolerance;
+                float horiTol = parameters.TryGetValue("horiTol", out float hlt) ? Mathf.Max(0.05f, hlt) : droneHorizontalSpeedTolerance;
+                float vertTol = parameters.TryGetValue("vertTol", out float vlt) ? Mathf.Max(0.05f, vlt) : droneVerticalSpeedTolerance;
+                float settleTime = parameters.TryGetValue("settleTime", out float st) ? Mathf.Max(0.01f, st) : 0.2f;
+
+                float heightErr = Mathf.Abs(transform.position.y - targetHeight);
+                bool stable = new Vector2(rb.velocity.x, rb.velocity.z).magnitude < horiTol &&
+                              Mathf.Abs(rb.velocity.y) < vertTol;
+                return EvaluateSettled(heightErr < heightTol && stable, settleTime);
             }
             case PrimitiveActionType.Align:
             {
@@ -1002,11 +1180,14 @@ public class MLAgentsController : MonoBehaviour
 
                 Quaternion targetRot = Quaternion.Euler(0, rotY, 0);
 
-                float dist = Vector3.Distance(transform.position, currentCommand.TargetPosition);
+                float dist = Vector2.Distance(
+                    new Vector2(transform.position.x, transform.position.z),
+                    new Vector2(currentCommand.TargetPosition.x, currentCommand.TargetPosition.z)
+                );
                 float ang = Quaternion.Angle(transform.rotation, targetRot);
-                bool slow = rb.velocity.magnitude < 0.2f;
+                bool slow = rb.velocity.magnitude < 0.25f;
 
-                return dist < 0.2f && ang < 5f && slow;
+                return EvaluateSettled(dist < Mathf.Max(0.2f, positionPrecision * 0.5f) && ang < 5f && slow, 0.1f);
             }
             case PrimitiveActionType.Follow:
             {
@@ -1202,6 +1383,7 @@ public class MLAgentsController : MonoBehaviour
         // 3. 清理当前动作状态
         currentCommand = null;
         currentActionCallback = null; // 清空回调，避免重复调用
+        actionStableStartTime = -1f;
 
         if (intelligentAgent != null)
         {
@@ -1229,6 +1411,19 @@ public class MLAgentsController : MonoBehaviour
             TryExtractFloat(raw, "followDist", parameters);
             TryExtractFloat(raw, "radius", parameters);
             TryExtractFloat(raw, "orbitSpeed", parameters);
+            TryExtractFloat(raw, "accel", parameters);
+            TryExtractFloat(raw, "brakeAccel", parameters);
+            TryExtractFloat(raw, "slowRadius", parameters);
+            TryExtractFloat(raw, "approachRadius", parameters);
+            TryExtractFloat(raw, "yawSpeed", parameters);
+            TryExtractFloat(raw, "pitchAngle", parameters);
+            TryExtractFloat(raw, "rollAngle", parameters);
+            TryExtractFloat(raw, "posTol", parameters);
+            TryExtractFloat(raw, "heightTol", parameters);
+            TryExtractFloat(raw, "rotTol", parameters);
+            TryExtractFloat(raw, "settleTime", parameters);
+            TryExtractFloat(raw, "vertTol", parameters);
+            TryExtractFloat(raw, "horiTol", parameters);
         }
         catch (Exception e)
         {

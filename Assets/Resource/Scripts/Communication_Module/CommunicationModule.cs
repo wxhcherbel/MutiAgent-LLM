@@ -201,8 +201,10 @@ public class CommunicationModule : MonoBehaviour
             case MessageType.RequestHelp:
                 HandleHelpRequest(message);
                 break;
-            case MessageType.TaskUpdate:
             case MessageType.TaskAnnouncement:
+                HandleTaskAnnouncement(message);
+                break;
+            case MessageType.TaskUpdate:
                 HandleTaskUpdate(message);
                 break;
             case MessageType.ResourceRequest:
@@ -216,6 +218,9 @@ public class CommunicationModule : MonoBehaviour
                 break;
             case MessageType.RoleConfirmed:
                 HandleRoleConfirmed(message);
+                break;
+            case MessageType.RoleAssignment:
+                HandleRoleAssignment(message);
                 break;
             default:
                 Debug.Log($"{agent.Properties.AgentID} 处理消息: {message.Type} - {message.Content}");
@@ -253,7 +258,7 @@ public class CommunicationModule : MonoBehaviour
     /// <summary>
     /// 处理任务更新
     /// </summary>
-    private void HandleTaskUpdate(AgentMessage message)
+    private void HandleTaskAnnouncement(AgentMessage message)
     {
         try
         {
@@ -289,6 +294,14 @@ public class CommunicationModule : MonoBehaviour
         {
             Debug.LogError($"{agent.Properties.AgentID} 处理任务消息时出错: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// 处理任务进度更新（非任务分配）。
+    /// </summary>
+    private void HandleTaskUpdate(AgentMessage message)
+    {
+        Debug.Log($"{agent.Properties.AgentID} 收到任务进度更新 from {message.SenderID}: {message.Content}");
     }
 
     /// <summary>
@@ -328,15 +341,31 @@ public class CommunicationModule : MonoBehaviour
         if (message.Type == MessageType.RolePreference)
         {
             var pref = JsonUtility.FromJson<RolePreferenceWrapper>(message.Content);
-            planningModule.receivedPreferences[message.SenderID] = pref.preferences;
+            if (pref != null && pref.preferences != null && planningModule != null)
+            {
+                planningModule.receivedPreferences[message.SenderID] = pref.preferences;
+            }
         }
     }
 
     private void HandleRoleConfirmed(AgentMessage message)
     {
         Debug.Log($"{agent.Properties.AgentID} 收到角色确认消息: {message.Content}");
-        RoleType finalRole = System.Enum.Parse<RoleType>(message.Content);
+        if (planningModule == null) return;
+        if (!System.Enum.TryParse<RoleType>(message.Content, true, out RoleType finalRole))
+        {
+            Debug.LogWarning($"{agent.Properties.AgentID} 无法解析角色确认: {message.Content}");
+            return;
+        }
         StartCoroutine(planningModule.AnalyzeMissionAndCreatePlan(planningModule.currentMission, finalRole));
+    }
+
+    /// <summary>
+    /// 处理角色接受/分配回执（用于闭环可观测性）。
+    /// </summary>
+    private void HandleRoleAssignment(AgentMessage message)
+    {
+        Debug.Log($"{agent.Properties.AgentID} 收到角色分配回执 from {message.SenderID}: {message.Content}");
     }
 
     void Update()

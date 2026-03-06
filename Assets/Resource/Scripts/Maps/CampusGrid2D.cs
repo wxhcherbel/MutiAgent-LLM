@@ -335,6 +335,138 @@ public class CampusGrid2D : MonoBehaviour
         return false;
     }
 
+    /// <summary>
+    /// 按 feature uid 查找首个网格。
+    /// </summary>
+    public bool TryGetFeatureFirstCellByUid(string featureUid, out Vector2Int cell, bool preferWalkable = false, bool ignoreCase = true)
+    {
+        cell = new Vector2Int(-1, -1);
+        if (string.IsNullOrWhiteSpace(featureUid) || cellFeatureUidGrid == null) return false;
+
+        StringComparison comp = ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        Vector2Int firstHit = new Vector2Int(-1, -1);
+
+        for (int x = 0; x < gridWidth; x++)
+        {
+            for (int z = 0; z < gridLength; z++)
+            {
+                string uid = cellFeatureUidGrid[x, z];
+                if (string.IsNullOrEmpty(uid) || !string.Equals(uid, featureUid, comp)) continue;
+
+                if (firstHit.x < 0) firstHit = new Vector2Int(x, z);
+                if (!preferWalkable || IsWalkable(x, z))
+                {
+                    cell = new Vector2Int(x, z);
+                    return true;
+                }
+            }
+        }
+
+        if (firstHit.x >= 0)
+        {
+            cell = firstHit;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// 统一解析地点查询（优先精确，再到规范化匹配），同时支持 name 与 uid。
+    /// </summary>
+    public bool TryResolveFeatureCell(string query, out Vector2Int cell, out string matchedUid, out string matchedName, bool preferWalkable = true, bool ignoreCase = true)
+    {
+        cell = new Vector2Int(-1, -1);
+        matchedUid = string.Empty;
+        matchedName = string.Empty;
+        if (string.IsNullOrWhiteSpace(query)) return false;
+
+        string q = query.Trim();
+        if (q.StartsWith("building:", StringComparison.OrdinalIgnoreCase)) q = q.Substring("building:".Length).Trim();
+        else if (q.StartsWith("feature:", StringComparison.OrdinalIgnoreCase)) q = q.Substring("feature:".Length).Trim();
+        if (string.IsNullOrWhiteSpace(q)) return false;
+
+        // 1) 精确 name
+        if (TryGetFeatureFirstCell(q, out cell, preferWalkable, ignoreCase))
+        {
+            TryGetCellFeatureInfo(cell.x, cell.y, out matchedUid, out matchedName, out _, out _);
+            return true;
+        }
+
+        // 2) 精确 uid
+        if (TryGetFeatureFirstCellByUid(q, out cell, preferWalkable, ignoreCase))
+        {
+            TryGetCellFeatureInfo(cell.x, cell.y, out matchedUid, out matchedName, out _, out _);
+            return true;
+        }
+
+        if (cellFeatureNameGrid == null && cellFeatureUidGrid == null) return false;
+
+        string normalizedQ = NormalizeFeatureToken(q);
+        bool hasQueryBuildingId = TryExtractBuildingId(q, out string queryBuildingId);
+        int bestScore = int.MaxValue;
+        Vector2Int bestCell = new Vector2Int(-1, -1);
+        string bestUid = string.Empty;
+        string bestName = string.Empty;
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        for (int x = 0; x < gridWidth; x++)
+        {
+            for (int z = 0; z < gridLength; z++)
+            {
+                string uid = cellFeatureUidGrid != null ? (cellFeatureUidGrid[x, z] ?? string.Empty) : string.Empty;
+                string name = cellFeatureNameGrid != null ? (cellFeatureNameGrid[x, z] ?? string.Empty) : string.Empty;
+                if (string.IsNullOrWhiteSpace(uid) && string.IsNullOrWhiteSpace(name)) continue;
+
+                string key = $"{uid}|{name}";
+                if (!visited.Add(key)) continue;
+
+                if (preferWalkable && !IsWalkable(x, z))
+                {
+                    // 仍允许候选进入评分，但给较大惩罚，避免全部是 blocked 时完全找不到。
+                }
+
+                string nu = NormalizeFeatureToken(uid);
+                string nn = NormalizeFeatureToken(name);
+                bool exactNormalized = (!string.IsNullOrEmpty(nu) && nu == normalizedQ) || (!string.IsNullOrEmpty(nn) && nn == normalizedQ);
+
+                bool idMatched = false;
+                if (hasQueryBuildingId)
+                {
+                    bool uidHasId = TryExtractBuildingId(uid, out string uidId) && uidId == queryBuildingId;
+                    bool nameHasId = TryExtractBuildingId(name, out string nameId) && nameId == queryBuildingId;
+                    idMatched = uidHasId || nameHasId;
+                }
+
+                bool contains = (!string.IsNullOrEmpty(uid) && uid.IndexOf(q, ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) >= 0) ||
+                                (!string.IsNullOrEmpty(name) && name.IndexOf(q, ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) >= 0);
+
+                if (!exactNormalized && !idMatched && !contains) continue;
+
+                int score = 1000;
+                if (exactNormalized) score = 0;
+                else if (idMatched) score = 10;
+                else if (contains) score = 50;
+
+                if (!IsWalkable(x, z)) score += 200;
+                score += Math.Abs((name ?? string.Empty).Length - q.Length);
+
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestCell = new Vector2Int(x, z);
+                    bestUid = uid;
+                    bestName = name;
+                }
+            }
+        }
+
+        if (bestCell.x < 0) return false;
+        cell = bestCell;
+        matchedUid = bestUid ?? string.Empty;
+        matchedName = bestName ?? string.Empty;
+        return true;
+    }
+
     private void HandleRuntimeClickQuery()
     {
         if (blockedGrid == null || cellTypeGrid == null)
@@ -966,6 +1098,39 @@ public class CampusGrid2D : MonoBehaviour
             Mathf.Max(a.xMax, b.xMax),
             Mathf.Max(a.yMax, b.yMax)
         );
+    }
+
+    /// <summary>
+    /// 归一化地点标识：统一大小写并移除空白、下划线、连字符，便于模糊对齐。
+    /// </summary>
+    private static string NormalizeFeatureToken(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
+        string s = raw.Trim().ToLowerInvariant();
+        s = s.Replace(" ", string.Empty)
+             .Replace("_", string.Empty)
+             .Replace("-", string.Empty)
+             .Replace("：", ":");
+        return s;
+    }
+
+    /// <summary>
+    /// 从文本中提取建筑编号（如 building_12 / 楼12 / 建筑-12）。
+    /// </summary>
+    private static bool TryExtractBuildingId(string text, out string id)
+    {
+        id = string.Empty;
+        if (string.IsNullOrWhiteSpace(text)) return false;
+
+        System.Text.RegularExpressions.Match m = System.Text.RegularExpressions.Regex.Match(
+            text,
+            @"(?:building|楼|建筑)?\s*[_\-:：]?\s*(\d+)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+        );
+        if (!m.Success) return false;
+
+        id = m.Groups[1].Value?.Trim() ?? string.Empty;
+        return !string.IsNullOrWhiteSpace(id);
     }
 
     private static bool PointInPolygon2D(Vector2 p, List<Vector2> poly)

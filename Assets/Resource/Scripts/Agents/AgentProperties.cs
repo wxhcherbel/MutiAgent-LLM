@@ -53,6 +53,12 @@ public class AgentDynamicState
     // 当前感知周期内检测到的小节点（按 NodeId 索引，便于快速查询）
     public Dictionary<string, SmallNodeData> NearbySmallNodes = new Dictionary<string, SmallNodeData>();
 
+    // 当前感知周期内检测到的校园地点（按 FeatureKey 索引，便于快速查询）
+    public Dictionary<string, CampusFeaturePerceptionData> NearbyCampusFeatures = new Dictionary<string, CampusFeaturePerceptionData>();
+
+    // 当前感知周期内检测到的校园地点（线性列表，便于遍历与提示词摘要）
+    public List<CampusFeaturePerceptionData> DetectedCampusFeatures = new List<CampusFeaturePerceptionData>();
+
     // 当前使用的校园二维逻辑网格（新网格系统）
     public CampusGrid2D CampusGrid;
 }
