@@ -79,6 +79,7 @@ public class MLAgentsController : MonoBehaviour
     [Min(0.05f)] public float takeoffLandHeightTolerance = 0.15f;    // 起降高度阈值
     [Min(1f)] public float maxVerticalControlAccel = 12f;            // 垂向控制最大等效加速度
     [Min(0.05f)] public float minMoveHorizontalTolerance = 0.35f;    // MoveTo 最小水平容差
+    [Min(2f)] public float perceivedFeatureArrivalDistance = 18f;     // 已经感知到目标建筑时，允许直接判到达的近距阈值
 
     [Header("动作序列")]
     public Queue<ActionCommand> actionSequence = new Queue<ActionCommand>(); // 原子动作序列队列
@@ -1158,7 +1159,14 @@ public class MLAgentsController : MonoBehaviour
                 float posTol = parameters.TryGetValue("posTol", out float pt)
                     ? Mathf.Max(0.1f, pt)
                     : Mathf.Max(minMoveHorizontalTolerance, positionPrecision);
+                bool useWaypointToleranceOnly = parameters.TryGetValue("useWaypointToleranceOnly", out float waypointOnly) && waypointOnly > 0.5f;
+                bool disableFeaturePerceptionArrival = parameters.TryGetValue("disableFeaturePerceptionArrival", out float disablePerception) && disablePerception > 0.5f;
+                if (!useWaypointToleranceOnly && parameters.TryGetValue("targetArrivalRadius", out float arrivalRadius))
+                {
+                    posTol = Mathf.Max(posTol, Mathf.Max(0.5f, arrivalRadius));
+                }
                 float settleTime = parameters.TryGetValue("settleTime", out float st) ? Mathf.Max(0.01f, st) : completionSettleTime;
+                bool reachedByPerception = !disableFeaturePerceptionArrival && IsFeatureMoveArrivalSatisfiedByPerception(parameters, posTol);
 
                 Vector2 horizontalVel = new Vector2(rb.velocity.x, rb.velocity.z);
                 if (intelligentAgent?.Properties.Type == AgentType.Quadcopter)
@@ -1176,6 +1184,12 @@ public class MLAgentsController : MonoBehaviour
                     bool softStable = horizontalVel.magnitude < Mathf.Max(horiTol * 2.2f, 1.1f) &&
                                       Mathf.Abs(rb.velocity.y) < Mathf.Max(vertTol * 2.2f, 0.65f);
 
+                    if (reachedByPerception && softStable)
+                    {
+                        float softSettle = Mathf.Min(settleTime, 0.08f);
+                        return EvaluateSettled(true, softSettle);
+                    }
+
                     if (near && softStable)
                     {
                         float softSettle = Mathf.Min(settleTime, 0.08f);
@@ -1186,6 +1200,10 @@ public class MLAgentsController : MonoBehaviour
                 }
 
                 bool slow = horizontalVel.magnitude < 0.25f;
+                if (reachedByPerception && slow)
+                {
+                    return EvaluateSettled(true, Mathf.Min(settleTime, 0.08f));
+                }
                 return EvaluateSettled(distXZ < posTol && slow, settleTime);
             }
             case PrimitiveActionType.RotateTo:
@@ -1551,12 +1569,96 @@ public class MLAgentsController : MonoBehaviour
             TryExtractFloat(raw, "vertTol", parameters);
             TryExtractFloat(raw, "horiTol", parameters);
             TryExtractFloat(raw, "timeout", parameters);
+            TryExtractFloat(raw, "targetArrivalRadius", parameters);
+            TryExtractFloat(raw, "useWaypointToleranceOnly", parameters);
+            TryExtractFloat(raw, "disableFeaturePerceptionArrival", parameters);
         }
         catch (Exception e)
         {
             Debug.LogError($"参数解析错误: {e.Message}");
         }
         return parameters;
+    }
+
+    private bool IsFeatureMoveArrivalSatisfiedByPerception(Dictionary<string, float> numericParameters, float fallbackPosTol)
+    {
+        if (currentCommand == null || intelligentAgent?.CurrentState == null) return false;
+        if (perceptionModule == null) return false;
+
+        Dictionary<string, string> rawMap = ParseLooseStringParameters(currentCommand.Parameters);
+        if (!rawMap.TryGetValue("targetKind", out string targetKind) ||
+            !string.Equals(targetKind, "Feature", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        string targetFeature = rawMap.TryGetValue("targetFeature", out string featureToken) ? featureToken : string.Empty;
+        string targetUid = rawMap.TryGetValue("targetUid", out string uidToken) ? uidToken : string.Empty;
+        string targetName = rawMap.TryGetValue("targetName", out string nameToken) ? nameToken : string.Empty;
+        if (string.IsNullOrWhiteSpace(targetFeature) && string.IsNullOrWhiteSpace(targetUid) && string.IsNullOrWhiteSpace(targetName))
+        {
+            return false;
+        }
+
+        float featureArrivalRadius = numericParameters != null && numericParameters.TryGetValue("targetArrivalRadius", out float arrivalRadius)
+            ? Mathf.Max(0.5f, arrivalRadius)
+            : Mathf.Max(minMoveHorizontalTolerance, fallbackPosTol);
+        // 感知捷径只应作为“接近最终目标后的软确认”，不能把允许到达半径继续放大。
+        // 否则会出现“离建筑还很远，但因为已感知到它，就把 MoveTo 提前判完成”的问题。
+        float perceptionReach = Mathf.Max(fallbackPosTol, Mathf.Min(featureArrivalRadius, perceivedFeatureArrivalDistance));
+
+        List<CampusFeaturePerceptionData> perceived = intelligentAgent.CurrentState.DetectedCampusFeatures;
+        if (perceived == null || perceived.Count == 0) return false;
+
+        for (int i = 0; i < perceived.Count; i++)
+        {
+            CampusFeaturePerceptionData data = perceived[i];
+            if (data == null) continue;
+
+            bool matched =
+                (!string.IsNullOrWhiteSpace(targetUid) && string.Equals(data.FeatureUid, targetUid, StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrWhiteSpace(targetName) && string.Equals(data.FeatureName, targetName, StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrWhiteSpace(targetFeature) &&
+                    (string.Equals(data.FeatureName, targetFeature, StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(data.FeatureUid, targetFeature, StringComparison.OrdinalIgnoreCase)));
+            if (!matched) continue;
+
+            Vector3 anchor = data.AnchorWorldPosition;
+            float planar = Vector2.Distance(
+                new Vector2(transform.position.x, transform.position.z),
+                new Vector2(anchor.x, anchor.z)
+            );
+            if (planar <= perceptionReach)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private Dictionary<string, string> ParseLooseStringParameters(string raw)
+    {
+        Dictionary<string, string> map = new Dictionary<string, string>();
+        if (string.IsNullOrWhiteSpace(raw)) return map;
+
+        string s = NormalizeParameterPayload(raw);
+        MatchCollection matches = Regex.Matches(
+            s,
+            @"[""']?(?<k>[A-Za-z_][A-Za-z0-9_]*)[""']?\s*[:=]\s*[""']?(?<v>[^,}\r\n]+)[""']?"
+        );
+
+        foreach (Match match in matches)
+        {
+            string key = match.Groups["k"].Value.Trim();
+            string value = match.Groups["v"].Value.Trim();
+            if (!string.IsNullOrWhiteSpace(key))
+            {
+                map[key] = value;
+            }
+        }
+
+        return map;
     }
 
     /// <summary>

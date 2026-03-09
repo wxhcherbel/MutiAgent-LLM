@@ -35,6 +35,8 @@ public class CampusGrid2D : MonoBehaviour
         public string uid = "";
         public string name = "";
         public string kind = "other";
+        public string effectiveName = "";
+        public string runtimeAlias = "";
         public Rect bounds;
         public bool boundsValid;
         public readonly List<List<Vector2>> outerRings = new List<List<Vector2>>();
@@ -97,6 +99,9 @@ public class CampusGrid2D : MonoBehaviour
     [NonSerialized] public CellType[,] cellTypeGrid;
     [NonSerialized] public string[,] cellFeatureUidGrid;
     [NonSerialized] public string[,] cellFeatureNameGrid;
+    [NonSerialized] public Dictionary<string, Vector2Int> featureAliasCellMap;
+    [NonSerialized] public Dictionary<string, string> featureAliasUidMap;
+    [NonSerialized] public Dictionary<string, string> featureAliasNameMap;
     [NonSerialized] public Rect mapBoundsXY;
 
     private Transform visualRoot;
@@ -399,7 +404,21 @@ public class CampusGrid2D : MonoBehaviour
             return true;
         }
 
+        // 3) 精确 runtime alias
+        // 这里的 alias 指 CampusJsonMapLoader 生成给 Unity 场景对象的实例名，
+        // 例如 building_7、a_3、forest_2。
+        // 它不直接存在于 cellFeatureNameGrid 中，所以要先翻译回真实 uid/name，再走网格。
+        if (TryResolveFeatureAliasCell(q, out cell, out matchedUid, out matchedName, preferWalkable, ignoreCase))
+        {
+            return true;
+        }
+
         if (cellFeatureNameGrid == null && cellFeatureUidGrid == null) return false;
+
+        if (TryResolveFeatureAliasCellByNormalized(q, out cell, out matchedUid, out matchedName, preferWalkable, ignoreCase))
+        {
+            return true;
+        }
 
         string normalizedQ = NormalizeFeatureToken(q);
         bool hasQueryBuildingId = TryExtractBuildingId(q, out string queryBuildingId);
@@ -702,6 +721,11 @@ public class CampusGrid2D : MonoBehaviour
         cellTypeGrid = new CellType[gridWidth, gridLength];
         cellFeatureUidGrid = new string[gridWidth, gridLength];
         cellFeatureNameGrid = new string[gridWidth, gridLength];
+        featureAliasCellMap = new Dictionary<string, Vector2Int>(StringComparer.OrdinalIgnoreCase);
+        featureAliasUidMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        featureAliasNameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        AssignFeatureRuntimeMetadata(features);
 
         for (int x = 0; x < gridWidth; x++)
         {
@@ -754,14 +778,16 @@ public class CampusGrid2D : MonoBehaviour
                     {
                         blockedGrid[x, z] = true;
                         cellTypeGrid[x, z] = t;
-                        AssignCellFeatureIdentity(x, z, f.uid, f.name);
+                        AssignCellFeatureIdentity(x, z, f.uid, f.effectiveName);
+                        RegisterFeatureAlias(f, x, z);
                     }
                     else
                     {
                         if (!blockedGrid[x, z])
                         {
                             cellTypeGrid[x, z] = t;
-                            AssignCellFeatureIdentity(x, z, f.uid, f.name);
+                            AssignCellFeatureIdentity(x, z, f.uid, f.effectiveName);
+                            RegisterFeatureAlias(f, x, z);
                         }
                     }
                 }
@@ -1131,6 +1157,232 @@ public class CampusGrid2D : MonoBehaviour
 
         id = m.Groups[1].Value?.Trim() ?? string.Empty;
         return !string.IsNullOrWhiteSpace(id);
+    }
+
+    private void AssignFeatureRuntimeMetadata(List<Feature2D> features)
+    {
+        if (features == null || features.Count == 0) return;
+
+        int buildingIndex = 0;
+        int sportsIndex = 0;
+        int waterIndex = 0;
+        int roadIndex = 0;
+        int expresswayIndex = 0;
+        int bridgeIndex = 0;
+        int parkingIndex = 0;
+        int greenIndex = 0;
+        int forestIndex = 0;
+
+        for (int i = 0; i < features.Count; i++)
+        {
+            Feature2D f = features[i];
+            if (f == null) continue;
+
+            f.effectiveName = GetEffectiveFeatureName(f);
+            f.runtimeAlias = BuildRuntimeAliasForFeature(
+                f,
+                ref buildingIndex,
+                ref sportsIndex,
+                ref waterIndex,
+                ref roadIndex,
+                ref expresswayIndex,
+                ref bridgeIndex,
+                ref parkingIndex,
+                ref greenIndex,
+                ref forestIndex
+            );
+        }
+    }
+
+    private static string GetEffectiveFeatureName(Feature2D feature)
+    {
+        if (feature == null) return string.Empty;
+        if (!string.IsNullOrWhiteSpace(feature.name) && feature.name.Trim() != "-")
+        {
+            return feature.name.Trim();
+        }
+
+        // 网格层保存的是“真实业务名”，不是 Unity 场景里的实例编号名。
+        // 对没有显式名字的要素，退回到 kind 默认名，便于像 building / forest 这类查询继续工作。
+        return NormalizeFeatureKindToken(feature.kind);
+    }
+
+    private static string BuildRuntimeAliasForFeature(
+        Feature2D feature,
+        ref int buildingIndex,
+        ref int sportsIndex,
+        ref int waterIndex,
+        ref int roadIndex,
+        ref int expresswayIndex,
+        ref int bridgeIndex,
+        ref int parkingIndex,
+        ref int greenIndex,
+        ref int forestIndex)
+    {
+        if (feature == null) return string.Empty;
+
+        string rawName = !string.IsNullOrWhiteSpace(feature.name) && feature.name.Trim() != "-"
+            ? feature.name.Trim()
+            : feature.uid;
+        string baseName = SanitizeFeatureAliasToken(rawName);
+        string kind = NormalizeFeatureKindToken(feature.kind);
+
+        switch (kind)
+        {
+            case "building":
+                return (!string.IsNullOrWhiteSpace(feature.name) && feature.name.Trim() != "-")
+                    ? $"{baseName}_{++buildingIndex}"
+                    : $"building_{++buildingIndex}";
+            case "road":
+                return $"{baseName}_{++roadIndex}";
+            case "expressway":
+                return $"{baseName}_{++expresswayIndex}";
+            case "bridge":
+                return $"{baseName}_{++bridgeIndex}";
+            case "water":
+                return $"{baseName}_{++waterIndex}";
+            case "forest":
+                return $"{baseName}_{++forestIndex}";
+            case "sports":
+                return $"{baseName}_{++sportsIndex}";
+            case "parking":
+                return $"{baseName}_{++parkingIndex}";
+            case "green":
+                return $"{baseName}_{++greenIndex}";
+            default:
+                return $"{baseName}_{++greenIndex}";
+        }
+    }
+
+    private static string NormalizeFeatureKindToken(string kind)
+    {
+        string k = (kind ?? string.Empty).Trim().ToLowerInvariant();
+        return string.IsNullOrWhiteSpace(k) ? "other" : k;
+    }
+
+    private static string SanitizeFeatureAliasToken(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "feature";
+
+        string s = raw.Trim().ToLowerInvariant();
+        System.Text.StringBuilder sb = new System.Text.StringBuilder(s.Length);
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+            {
+                sb.Append(c);
+            }
+            else if (c == '_' || c == '-' || char.IsWhiteSpace(c))
+            {
+                sb.Append('_');
+            }
+        }
+
+        string result = sb.ToString().Trim('_');
+        return string.IsNullOrWhiteSpace(result) ? "feature" : result;
+    }
+
+    private void RegisterFeatureAlias(Feature2D feature, int x, int z)
+    {
+        if (featureAliasCellMap == null || featureAliasUidMap == null || featureAliasNameMap == null || feature == null) return;
+        if (string.IsNullOrWhiteSpace(feature.runtimeAlias)) return;
+
+        string alias = feature.runtimeAlias.Trim();
+        if (!featureAliasCellMap.ContainsKey(alias))
+        {
+            featureAliasCellMap[alias] = new Vector2Int(x, z);
+        }
+        if (!featureAliasUidMap.ContainsKey(alias))
+        {
+            featureAliasUidMap[alias] = string.IsNullOrWhiteSpace(feature.uid) ? string.Empty : feature.uid.Trim();
+        }
+        if (!featureAliasNameMap.ContainsKey(alias))
+        {
+            featureAliasNameMap[alias] = string.IsNullOrWhiteSpace(feature.effectiveName) ? string.Empty : feature.effectiveName.Trim();
+        }
+    }
+
+    public bool TryResolveFeatureAliasCell(string alias, out Vector2Int cell, out string matchedUid, out string matchedName, bool preferWalkable = true, bool ignoreCase = true)
+    {
+        cell = new Vector2Int(-1, -1);
+        matchedUid = string.Empty;
+        matchedName = string.Empty;
+        if (string.IsNullOrWhiteSpace(alias) || featureAliasCellMap == null || featureAliasUidMap == null || featureAliasNameMap == null) return false;
+
+        string key = alias.Trim();
+        if (!featureAliasUidMap.TryGetValue(key, out matchedUid) && !featureAliasNameMap.TryGetValue(key, out matchedName))
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(matchedName) && featureAliasNameMap.TryGetValue(key, out string aliasName))
+        {
+            matchedName = aliasName;
+        }
+
+        if (!string.IsNullOrWhiteSpace(matchedUid) &&
+            (TryGetFeatureFirstCellByUid(matchedUid, out cell, preferWalkable, ignoreCase) ||
+             TryGetFeatureFirstCellByUid(matchedUid, out cell, false, ignoreCase)))
+        {
+            TryGetCellFeatureInfo(cell.x, cell.y, out string uid, out string name, out _, out _);
+            matchedUid = string.IsNullOrWhiteSpace(uid) ? matchedUid : uid;
+            matchedName = string.IsNullOrWhiteSpace(name) ? matchedName : name;
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(matchedName) &&
+            (TryGetFeatureFirstCell(matchedName, out cell, preferWalkable, ignoreCase) ||
+             TryGetFeatureFirstCell(matchedName, out cell, false, ignoreCase)))
+        {
+            TryGetCellFeatureInfo(cell.x, cell.y, out string uid, out string name, out _, out _);
+            matchedUid = string.IsNullOrWhiteSpace(uid) ? matchedUid : uid;
+            matchedName = string.IsNullOrWhiteSpace(name) ? matchedName : name;
+            return true;
+        }
+
+        if (featureAliasCellMap.TryGetValue(key, out Vector2Int aliasCell) && IsInBounds(aliasCell.x, aliasCell.y))
+        {
+            cell = aliasCell;
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryResolveFeatureAliasCellByNormalized(string query, out Vector2Int cell, out string matchedUid, out string matchedName, bool preferWalkable = true, bool ignoreCase = true)
+    {
+        cell = new Vector2Int(-1, -1);
+        matchedUid = string.Empty;
+        matchedName = string.Empty;
+        if (string.IsNullOrWhiteSpace(query) || featureAliasUidMap == null || featureAliasUidMap.Count == 0) return false;
+
+        string normalizedQuery = NormalizeFeatureToken(query);
+        if (string.IsNullOrWhiteSpace(normalizedQuery)) return false;
+
+        string bestAlias = null;
+        int bestScore = int.MaxValue;
+        foreach (KeyValuePair<string, string> kv in featureAliasUidMap)
+        {
+            string alias = kv.Key;
+            if (string.IsNullOrWhiteSpace(alias)) continue;
+
+            string normalizedAlias = NormalizeFeatureToken(alias);
+            bool exactNormalized = normalizedAlias == normalizedQuery;
+            bool contains = normalizedAlias.Contains(normalizedQuery) || normalizedQuery.Contains(normalizedAlias);
+            if (!exactNormalized && !contains) continue;
+
+            int score = exactNormalized ? 0 : 50;
+            score += Math.Abs(alias.Length - query.Trim().Length);
+            if (score < bestScore)
+            {
+                bestScore = score;
+                bestAlias = alias;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(bestAlias)) return false;
+        return TryResolveFeatureAliasCell(bestAlias, out cell, out matchedUid, out matchedName, preferWalkable, ignoreCase);
     }
 
     private static bool PointInPolygon2D(Vector2 p, List<Vector2> poly)

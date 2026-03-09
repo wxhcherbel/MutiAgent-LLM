@@ -1,0 +1,567 @@
+{
+  "$schema": "https://aka.ms/codetour-schema",
+  "title": "PlanningModule Execution Flow",
+  "description": "基于当前 PlanningModule.cs 重写的函数级执行导览。按启动、任务分解、分配、计划生成、门控放行、执行推进和状态查询顺序阅读。",
+  "steps": [
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 151,
+      "description": "从 `Start()` 开始。模块在这里拿到 `MemoryModule`、`LLMInterface`、`IntelligentAgent.Properties` 和 `CommunicationModule`，并把默认通信模式设为 `Hybrid`。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 172,
+      "description": "`SubmitMissionRequest()` 是任务入口。它只负责启动 `AnalyzeMissionDescription()` 协程。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1208,
+      "description": "`AnalyzeMissionDescription()` 是协调者主流程。它分两段向 LLM 请求：先产出 `phasePlan`，再把阶段结构压成 `agent-level taskSlots`。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1385,
+      "description": "`ExtractMissionPhasePlan()` 负责解析第 1 段 phase 结果。失败时退回最小可执行阶段计划。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1404,
+      "description": "`TryParseMissionPhasePlan()` 做严格 phase JSON 解析，兼容 `result` 包装和字段轻微漂移。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1452,
+      "description": "`ReadMissionPhasesWithAliases()` 读取 `phases` 数组，并兼容 `phaseLabel/name`、`agentBudget/budget` 等别名。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1501,
+      "description": "`NormalizePhasePlan()` 对 phase 结果做执行前规范化：补默认值、唯一化 `phaseId`、清洗依赖、约束 `agentBudget`。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1557,
+      "description": "`BuildFallbackPhasePlan()` 是 phase 级兜底，只生成一个覆盖全任务的默认阶段。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 220,
+      "description": "`ParseMissionFromLLM()` 负责把第 2 段返回整理成 `MissionAssignment`，统一收拢任务类型、通信模式、角色、槽位和协同规则。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2218,
+      "description": "`ExtractMissionAnalysisResponse()` 是任务级 JSON 提取入口。解析失败时返回 `null`，交给上层兜底。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2236,
+      "description": "`TryParseMissionAnalysisResponse()` 真正解析任务级对象，重点读取 `roles`、`taskSlots` 和 `coordinationDirectives`。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2286,
+      "description": "`ReadStringField()` 读取任务级字符串字段，只做字段别名兼容，不做自然语言猜测。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2309,
+      "description": "`ReadObjectArrayField<T>()` 读取对象数组字段，例如 `roles` 和 `coordinationDirectives`。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2332,
+      "description": "`ReadTaskSlotsWithAliases()` 负责把槽位数组按别名读出来，并兼容 `requiredAgentType/agentType` 等差异。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2371,
+      "description": "`ReadStringArrayField()` 读取字符串数组字段，例如 `viaTargets`、`dependsOnSlotIds`。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2397,
+      "description": "`ParseEnumOrDefault<TEnum>()` 把字符串枚举安全转成目标类型，失败时回默认值。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 831,
+      "description": "`ExtractMissionType()` 从结构化分析结果提取任务类型。缺失时默认 `Cooperation`。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1137,
+      "description": "`ExtractCommMode()` 只信 `recommendedCommMode` 结构化字段，缺失时默认 `Hybrid`。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 792,
+      "description": "`ExtractRolesFromResponse()` 优先采用 LLM 给出的 `roles`；若缺失，则尝试从 `taskSlots` 反推；再不行才用单一中性角色兜底。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 845,
+      "description": "`BuildRolesFromTaskSlots()` 在只有槽位没有角色时，按 `roleType + requiredAgentType` 归并出角色需求。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2779,
+      "description": "`ExtractTaskSlotsFromResponse()` 优先使用 LLM 已拆好的单智能体槽位；只有没有可用槽位时才退回机械展开。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2824,
+      "description": "`NormalizeMissionTaskSlot()` 只补槽位默认值，不重写语义。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2845,
+      "description": "`EnsureTaskSlotsAreExecutable()` 做槽位可执行性修复：保证 `slotId` 唯一、过滤悬空依赖、让槽位数量和智能体数量匹配。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2947,
+      "description": "`CompressTaskSlotsToEndToEndAssignments()` 是关键修复。它把 phase 级链式槽位压成“一人一个端到端槽位”。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3009,
+      "description": "`DeriveMissionFocusTargets()` 从槽位目标频率里抽取任务焦点目标，用来区分最终目标和中间检查点。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3036,
+      "description": "`BuildTaskSlotChain()` 从叶子槽位向前回溯依赖，恢复同一智能体被错误拆散的 phase 链。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3069,
+      "description": "`SelectRepresentativeSlotFromChain()` 在一条 phase 链里挑出真正代表核心职责的槽位。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3104,
+      "description": "`MergeTaskSlotChain()` 把链条收敛成一个端到端槽位：最终目标保留在 `target`，中间点并入 `viaTargets`。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3192,
+      "description": "`BuildTaskSlotsForMission()` 是最保守的槽位兜底，只按 `roles.requiredCount` 机械展开，不理解任务文本。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2759,
+      "description": "`CountRequiredRoleAgents()` 统计角色所需人数，防止 roles 数量偏少时把任务压成过少槽位。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 874,
+      "description": "`ReconcileRolesWithTaskSlots()` 让 `roles` 和 `taskSlots` 保持一致，避免角色人数与槽位人数脱节。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2807,
+      "description": "`ExtractMissionCoordinationDirectives()` 提取任务级协同规则；若缺失，只生成中性默认协同规则。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3266,
+      "description": "`BuildDefaultMissionCoordinationDirectives()` 构造默认任务级协同约束。合作任务默认 `LooseSync`，否则偏 `Independent`。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1587,
+      "description": "`ApplyPhasePlanHints()` 把第 1 段 phase 结果回填到最终 `MissionAssignment`，保证两段 LLM 输出语义一致。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 528,
+      "description": "`DistributeMissionToAgents()` 是协调者广播入口。这里会清空上一轮状态、初始化计数器、广播任务公告，并启动角色裁决。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3412,
+      "description": "`ShouldGateExecutionByCoordinator()` 判断是否需要协调者统一放行。多智能体任务默认开启门控。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 178,
+      "description": "第一次看 `ReceiveMissionAssignment()`。当 `specificRole == null` 时，智能体不会立刻做个人计划，而是先分析角色偏好。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 248,
+      "description": "`AnalyzeRolePreference()` 用 LLM 基于机型、角色倾向、速度、感知范围给出 1 到 3 个岗位偏好。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2121,
+      "description": "`ExtractPureJson()` 是所有解析链路共用的 JSON 截取器，会先剪掉 Markdown 代码块，再截取首个 JSON 对象或数组。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 199,
+      "description": "`SendRolePreferenceToCoordinator()` 把偏好和能力摘要发回协调者，供槽位打分裁决。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 570,
+      "description": "`WaitAndAssignRoles()` 等待角色偏好上报，然后按槽位逐个分配最适合的智能体。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 635,
+      "description": "`FindBestAgentForSlot()` 在候选智能体里找当前槽位得分最高者。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 656,
+      "description": "`CalculateSlotAssignmentScore()` 负责打分，依据偏好排序、机型匹配、速度和感知范围。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 687,
+      "description": "`FindMissionRoleForSlot()` 根据槽位的 `roleType + requiredAgentType` 反查所属角色。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 702,
+      "description": "`BuildRoleDecisionPayload()` 把裁决结果打包成 `RoleDecisionPayload`，同时挂上该槽位需要遵守的协同约束。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 731,
+      "description": "`BuildDirectivesForSlot()` 为单个槽位补出“当前智能体视角”的协同指令集合。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2065,
+      "description": "`NormalizeCoordinationDirective()` 负责把协同指令数组字段补齐并做最小合法化。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 628,
+      "description": "`SendFinalRole()` 由协调者把最终岗位和槽位发给目标智能体。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 178,
+      "description": "第二次回到 `ReceiveMissionAssignment()`。这次 `specificRole` 和 `specificSlot` 已确定，流程进入个人计划生成。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 331,
+      "description": "`AnalyzeMissionAndCreatePlan()` 为当前智能体生成 3 到 5 步的个人执行计划，并强制 LLM 输出结构化意图、路径策略和协同信息。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 454,
+      "description": "`ParseAndCreatePlan()` 把 LLM 返回真正落成 `currentPlan`，并写入记忆、打印步骤详情、发送岗位接受确认。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2408,
+      "description": "`ExtractRoleTypeFromResponse()` 从计划级响应里提取 `assignedRole`；失败时退回当前已有角色。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2444,
+      "description": "`TryParsePlanResponse()` 是计划级标准解析入口，兼容对象、纯步骤数组和字段别名。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2578,
+      "description": "`TryParsePlanResponseLoosely()` 在 JSON 截断或结构不完整时做容错解析，尽量抢救 `assignedRole`、`steps` 等关键字段。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2636,
+      "description": "`TryExtractStringFieldLoose()` 用正则从不完整 JSON 里捞字符串字段。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2652,
+      "description": "`TryExtractStringArrayFieldLoose()` 从被截断的数组里尽量提取已有元素。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2731,
+      "description": "`UnescapeJsonStringLoose()` 做松散转义恢复，给容错解析使用。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1610,
+      "description": "`ExtractStepsFromResponse()` 提取步骤列表；解析失败则回退到三步默认流程。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1641,
+      "description": "`ExtractStepActionTypesFromResponse()` 读取每步动作类型，并在缺失时按步数补默认值。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2087,
+      "description": "`BuildFilledArray()` 是多个解析兜底共用的数组补齐工具。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2095,
+      "description": "`NormalizeStepActionTypeToken()` 只做固定动作枚举的大小写归一。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1672,
+      "description": "`ExtractStepNavigationModesFromResponse()` 读取每步导航模式，缺失时按 `Direct` 兜底。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2109,
+      "description": "`NormalizeStepNavigationModeToken()` 把导航模式归一成 `AStar|Direct|None`。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1703,
+      "description": "`ExtractMissionNavigationPolicyFromResponse()` 提取任务级导航策略，缺失时回退 `Auto`。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1728,
+      "description": "`ExtractStepIntentsFromResponse()` 读取每步结构化意图；若缺失，则走结构化兜底并再做槽位一致性修复。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1823,
+      "description": "`BuildFallbackStepIntents()` 只依据 `stepActionTypes` 和 `assignedSlot` 生成中性意图，不再读自然语言猜业务语义。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1869,
+      "description": "`NormalizeStepIntent()` 补齐 `primaryTarget`、`orderedViaTargets`、`finalBehavior`、`completionCondition` 等关键字段。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2074,
+      "description": "`ResolveStepIntentTypeFromActionType()` 把动作类型映射成结构化 `StepIntentType`。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1920,
+      "description": "`RepairStepIntentsAgainstAssignedSlot()` 用 `assignedSlot.target` 和 `viaTargets` 纠偏，避免把检查点误当成最终目标。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1761,
+      "description": "`ExtractStepRoutePoliciesFromResponse()` 提取每步路径策略；缺失时走完全中性的结构化默认值。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1857,
+      "description": "`BuildFallbackRoutePolicies()` 为每一步补一份默认路径策略。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2047,
+      "description": "`MergeRoutePolicyWithAssignedSlot()` 把槽位层已有的接近侧和高度要求并入 step 路径策略。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2019,
+      "description": "`NormalizeRoutePolicy()` 负责路径策略的默认值和数组字段合法化。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1795,
+      "description": "`ExtractCoordinationDirectivesFromResponse()` 读取计划级协同指令；若计划没有返回，则继续沿用任务级协同约束。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1148,
+      "description": "`CreateDefaultPlan()` 是个人计划兜底。即使 LLM 失败，也会根据角色和槽位生成最小可执行步骤。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3309,
+      "description": "`SendRoleAcceptance()` 在本地计划建立后，向协调者回传“我已接受这个角色和槽位”。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3552,
+      "description": "`HandleRoleAcceptancePayload()` 由协调者处理接受回执，只统计当前任务、当前槽位的有效确认。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3428,
+      "description": "`TryReleaseAssignedExecution()` 是当前版本的核心门控逻辑。协调者按“已接受 + 依赖满足”增量放行执行，而不是一次性全队放行。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3481,
+      "description": "`AreSlotDependenciesSatisfied()` 只依据结构化 `dependsOnSlotIds` 判断槽位依赖是否满足。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3513,
+      "description": "`ReleaseExecutionForAssignedPlan()` 在本地打开执行门控，让动作层开始消耗当前计划。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 929,
+      "description": "`GetCurrentNavigationPolicy()` 对外暴露任务级导航策略。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 938,
+      "description": "`GetCurrentMissionType()` 对外返回当前任务类型，优先看 `currentPlan`，其次看 `currentMission`。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 949,
+      "description": "`GetCurrentStepDescription()` 返回当前步骤文本。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 961,
+      "description": "`GetCurrentStepIntent()` 返回当前步骤的结构化意图；缺失时现场做中性归一。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 979,
+      "description": "`GetCurrentStepRoutePolicy()` 返回当前步骤的路径策略；缺失时给默认策略。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 996,
+      "description": "`GetCurrentCoordinationDirectives()` 返回当前计划或当前任务的协同约束数组。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1015,
+      "description": "`IsMovementLikeStep()` 依据 `stepActionTypes/stepNavigationModes` 判断某步是否更像移动步骤。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1031,
+      "description": "`IsCommunicationOrObservationStep()` 判断某步是否是通信或观察步骤。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1043,
+      "description": "`IsLikelyLocalStep()` 判断当前步骤是否偏局部机动，即 `Direct` 导航。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1054,
+      "description": "`HasGlobalTargetHint()` 判断步骤是否带有全局导航提示，即 `AStar`。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1065,
+      "description": "`ShouldPreferAStarForStep()` 直接判断某步是否建议优先 A*。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1075,
+      "description": "`ShouldPreferAStarForCurrentStep()` 是对当前步骤的快捷判断接口。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1083,
+      "description": "`ResolveStepIndex()` 把步骤文本映射到当前计划中的索引。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1116,
+      "description": "`GetStepActionTypeHint()` 返回某一步的动作意图提示。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 1126,
+      "description": "`GetStepNavigationModeHint()` 返回某一步的导航模式提示。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3335,
+      "description": "`GetCurrentTask()` 对外返回当前计划对象；若任务结束则给一个空任务占位。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3344,
+      "description": "`GetMissionProgress()` 返回当前角色和步骤进度字符串。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3355,
+      "description": "`BuildCurrentCoordinationSummary()` 把全部协同约束压缩成日志和 prompt 可读摘要。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3374,
+      "description": "`GetCurrentCoordinationSummary()` 对外暴露当前协同摘要。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3384,
+      "description": "`GetCurrentAssignedSlotSummary()` 对外暴露当前槽位摘要，供动作层理解自己在执行哪个岗位。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3403,
+      "description": "`IsExecutionReleased()` 对外暴露本地执行门控状态，动作层应先检查它。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3632,
+      "description": "`CompleteCurrentTask()` 在每步完成后推进 `currentStep`。若本地步骤已全部结束，则上报槽位完成；否则上报步骤完成。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3668,
+      "description": "`ReportStepCompletion()` 向协调者发送步骤完成与下一步信息。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3695,
+      "description": "`ReportMissionCompletion()` 在本地槽位完成后向协调者发送 `mission_completed`。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3576,
+      "description": "`HandleTaskProgressPayload()` 是协调者侧的进度入口。它记录槽位完成，并在必要时继续释放后继槽位。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3608,
+      "description": "`TryFinalizeCoordinatedMission()` 检查是否所有已分配槽位都已完成，只有全部完成才把整队任务收口。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3530,
+      "description": "`IsWaitingForTeamCompletion()` 判断当前协调者是否已做完本地步骤、但仍在等全队收口。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3541,
+      "description": "`IsCurrentMissionCoordinator()` 判断当前智能体是否是本轮任务协调者。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3719,
+      "description": "`HasActiveMission()` 告诉外部模块当前是否还有可执行任务，且本地门控是否已放行。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3727,
+      "description": "`GetMissionPriority()` 返回当前任务优先级。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 3283,
+      "description": "`CreateDefaultMission()` 是整个任务解析链路的总兜底。两段 LLM 任一失败时，就退回默认任务和默认计划。"
+    },
+    {
+      "file": "LLM_Modules/PlanningModule.cs",
+      "line": 2742,
+      "description": "`CreateRole()` 是默认任务和机械展开共用的角色构造辅助方法。"
+    }
+  ]
+}

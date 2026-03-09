@@ -1,4 +1,5 @@
 using UnityEngine;
+using System;
 using System.Collections.Generic;
 using System.Net.WebSockets;
 using System.Reflection;
@@ -63,6 +64,16 @@ public class CommunicationModule : MonoBehaviour
         };
 
         SendMessage(message);
+    }
+
+    /// <summary>
+    /// 发送结构化消息。
+    /// 调用方传入结构化载荷对象，通信模块统一完成 JSON 序列化。
+    /// </summary>
+    public void SendStructuredMessage<TPayload>(string receiverID, MessageType messageType, TPayload payload, int priority = 1)
+    {
+        string content = payload != null ? JsonUtility.ToJson(payload) : "{}";
+        SendMessage(receiverID, messageType, content, priority);
     }
 
     /// <summary>
@@ -207,6 +218,9 @@ public class CommunicationModule : MonoBehaviour
             case MessageType.TaskUpdate:
                 HandleTaskUpdate(message);
                 break;
+            case MessageType.TaskCompletion:
+                HandleTaskCompletion(message);
+                break;
             case MessageType.ResourceRequest:
                 HandleResourceRequest(message);
                 break;
@@ -262,9 +276,23 @@ public class CommunicationModule : MonoBehaviour
     {
         try
         {
-            // 1. 解析 JSON 消息内容
-            MissionAssignment mission = JsonUtility.FromJson<MissionAssignment>(message.Content);
-            
+            MissionAssignment mission = null;
+
+            if (TryParseMessageContent<TaskAnnouncementPayload>(message, out TaskAnnouncementPayload taskPayload) &&
+                taskPayload != null &&
+                taskPayload.mission != null)
+            {
+                mission = taskPayload.mission;
+                if (taskPayload.missionDirectives != null && taskPayload.missionDirectives.Length > 0)
+                {
+                    mission.coordinationDirectives = taskPayload.missionDirectives;
+                }
+            }
+            else
+            {
+                mission = JsonUtility.FromJson<MissionAssignment>(message.Content);
+            }
+             
             if (mission == null)
             {
                 Debug.LogError($"{agent.Properties.AgentID} 无法解析任务消息: {message.Content}");
@@ -297,11 +325,68 @@ public class CommunicationModule : MonoBehaviour
     }
 
     /// <summary>
+    /// 尝试把消息内容解析成结构化载荷。
+    /// 若解析失败，调用方可以继续回退到旧版裸字符串兼容逻辑。
+    /// </summary>
+    public bool TryParseMessageContent<TPayload>(AgentMessage message, out TPayload payload)
+    {
+        payload = default(TPayload);
+        if (message == null || string.IsNullOrWhiteSpace(message.Content)) return false;
+
+        try
+        {
+            payload = JsonUtility.FromJson<TPayload>(message.Content);
+            return payload != null;
+        }
+        catch
+        {
+            payload = default(TPayload);
+            return false;
+        }
+    }
+
+    /// <summary>
     /// 处理任务进度更新（非任务分配）。
     /// </summary>
     private void HandleTaskUpdate(AgentMessage message)
     {
+        if (TryParseMessageContent<TaskProgressPayload>(message, out TaskProgressPayload payload) && payload != null)
+        {
+            if (planningModule != null &&
+                string.Equals(payload.status, "execution_released", StringComparison.OrdinalIgnoreCase))
+            {
+                planningModule.ReleaseExecutionForAssignedPlan(payload.slotId);
+                Debug.Log($"{agent.Properties.AgentID} 收到统一执行放行: slot={payload.slotId}");
+                return;
+            }
+
+            if (planningModule != null)
+            {
+                planningModule.HandleTaskProgressPayload(payload);
+            }
+            Debug.Log($"{agent.Properties.AgentID} 收到任务进度更新 from {message.SenderID}: mission={payload.missionDescription}, status={payload.status}, step={payload.completedStep}, next={payload.nextStep}");
+            return;
+        }
+
         Debug.Log($"{agent.Properties.AgentID} 收到任务进度更新 from {message.SenderID}: {message.Content}");
+    }
+
+    /// <summary>
+    /// 处理任务完成消息。
+    /// </summary>
+    private void HandleTaskCompletion(AgentMessage message)
+    {
+        if (TryParseMessageContent<TaskProgressPayload>(message, out TaskProgressPayload payload) && payload != null)
+        {
+            if (planningModule != null)
+            {
+                planningModule.HandleTaskProgressPayload(payload);
+            }
+            Debug.Log($"{agent.Properties.AgentID} 收到任务完成消息 from {message.SenderID}: mission={payload.missionDescription}, role={payload.role}, status={payload.status}");
+            return;
+        }
+
+        Debug.Log($"{agent.Properties.AgentID} 收到任务完成消息 from {message.SenderID}: {message.Content}");
     }
 
     /// <summary>
@@ -337,11 +422,19 @@ public class CommunicationModule : MonoBehaviour
     private void HandleRolePreference(AgentMessage message)
     {
         Debug.Log($"{agent.Properties.AgentID} 收到角色偏好消息: {message.Content}");
-        // 解析角色偏好并存储或处理
+        if (planningModule == null) return;
+
+        if (TryParseMessageContent<RolePreferencePayload>(message, out RolePreferencePayload payload) && payload != null)
+        {
+            planningModule.receivedPreferencePayloads[message.SenderID] = payload;
+            planningModule.receivedPreferences[message.SenderID] = payload.preferences ?? new RoleType[0];
+            return;
+        }
+
         if (message.Type == MessageType.RolePreference)
         {
             var pref = JsonUtility.FromJson<RolePreferenceWrapper>(message.Content);
-            if (pref != null && pref.preferences != null && planningModule != null)
+            if (pref != null && pref.preferences != null)
             {
                 planningModule.receivedPreferences[message.SenderID] = pref.preferences;
             }
@@ -352,6 +445,24 @@ public class CommunicationModule : MonoBehaviour
     {
         Debug.Log($"{agent.Properties.AgentID} 收到角色确认消息: {message.Content}");
         if (planningModule == null) return;
+
+        if (TryParseMessageContent<RoleDecisionPayload>(message, out RoleDecisionPayload payload) && payload != null)
+        {
+            if (planningModule.currentMission != null && payload.directives != null && payload.directives.Length > 0)
+            {
+                planningModule.currentMission.coordinationDirectives = payload.directives;
+            }
+            else if (planningModule.currentMission != null && payload.directive != null)
+            {
+                planningModule.currentMission.coordinationDirectives = new[] { payload.directive };
+            }
+            if (planningModule.currentMission != null)
+            {
+                planningModule.ReceiveMissionAssignment(planningModule.currentMission, payload.assignedRole, payload.assignedSlot);
+            }
+            return;
+        }
+
         if (!System.Enum.TryParse<RoleType>(message.Content, true, out RoleType finalRole))
         {
             Debug.LogWarning($"{agent.Properties.AgentID} 无法解析角色确认: {message.Content}");
@@ -365,6 +476,16 @@ public class CommunicationModule : MonoBehaviour
     /// </summary>
     private void HandleRoleAssignment(AgentMessage message)
     {
+        if (TryParseMessageContent<RoleAcceptancePayload>(message, out RoleAcceptancePayload payload) && payload != null)
+        {
+            if (planningModule != null)
+            {
+                planningModule.HandleRoleAcceptancePayload(payload);
+            }
+            Debug.Log($"{agent.Properties.AgentID} 收到角色分配回执 from {message.SenderID}: acceptedRole={payload.acceptedRole}, agentType={payload.agentType}");
+            return;
+        }
+
         Debug.Log($"{agent.Properties.AgentID} 收到角色分配回执 from {message.SenderID}: {message.Content}");
     }
 

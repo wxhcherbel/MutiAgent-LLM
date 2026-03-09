@@ -34,6 +34,9 @@ public class ActionDecisionModule : MonoBehaviour
     [Range(1, 6)] public int reactiveAStarSegmentWaypoints = 2; // 每次只执行前N个A*子目标，下一轮再重规划
     [Min(0.5f)] public float stepTargetReachDistance = 8f;       // 判定“已到达步骤目标”的平面距离阈值
     [Min(0.2f)] public float stepTargetReachHeightTolerance = 2f; // 判定“已到达步骤目标”的高度阈值
+    [Min(1f)] public float featureArrivalMinRadius = 6f;         // 建筑/地点目标的最小接近半径
+    [Min(0.5f)] public float featureArrivalCellRadiusScale = 0.75f; // 按网格覆盖范围估算建筑接近半径时的缩放系数
+    [Min(1f)] public float featureArrivalMaxRadius = 10f;        // 建筑/地点目标的最大接近半径，防止“大建筑半径过大导致过早判到达”
 
     [Header("决策性能优化")]
     public bool reuseHighLevelDecisionForSameStep = true;        // 同一步内复用第一阶段高层决策，减少重复 LLM 请求
@@ -71,12 +74,16 @@ public class ActionDecisionModule : MonoBehaviour
 
     /// <summary>
     /// A* 粗路径上下文：
-    /// 用于把“全局粗路径”喂给 LLM，让 LLM 在此基础上结合局部障碍细化 waypoint。
+    /// 用于描述系统已经生成的“全局粗路径”。
+    /// 在当前设计中，粗路径主要服务于：
+    /// 1) 系统局部规划/局部避障；
+    /// 2) 调试可视化；
+    /// 3) 必要时向上层暴露路径摘要，而不是让 LLM 直接输出几何 waypoint。
     /// </summary>
     private struct CoarsePathContext
     {
         public bool HasPath;                  // 是否成功生成粗路径
-        public string TargetFeatureName;      // 推断出的目标地点名（如 building_5）
+        public string TargetFeatureName;      // 推断出的目标地点名（如 x_5）
         public Vector3 GoalWorld;             // 粗路径终点世界坐标
         public List<Vector3> CoarseWaypoints; // 粗路径抽样后的世界坐标点
         public string WaypointsInline;        // waypoints 的紧凑串（x z;x z;...）
@@ -253,6 +260,233 @@ public class ActionDecisionModule : MonoBehaviour
         return $"missionPolicy={p},stepMove={(decision.IsMovementStep ? 1 : 0)},allowAStar={(decision.AllowAStarByStep ? 1 : 0)},rule={decision.Reason}";
     }
 
+    private StepIntentDefinition ResolveEffectiveStepIntent(string currentStep, List<ActionData> highLevelActionData, StepTargetBinding binding)
+    {
+        StepIntentDefinition plannedIntent = planningModule != null ? planningModule.GetCurrentStepIntent() : null;
+        if (plannedIntent == null)
+        {
+            plannedIntent = new StepIntentDefinition
+            {
+                stepText = currentStep,
+                intentType = StepIntentType.Navigate,
+                primaryTarget = binding.HasTarget ? binding.RawQuery : "none",
+                orderedViaTargets = new string[0],
+                avoidTargets = new string[0],
+                preferTargets = new string[0],
+                requestedTeammateIds = new string[0],
+                observationFocus = "none",
+                communicationGoal = "none",
+                finalBehavior = "arrive",
+                completionCondition = currentStep,
+                notes = "action-decision-fallback"
+            };
+        }
+
+        if ((string.IsNullOrWhiteSpace(plannedIntent.primaryTarget) || plannedIntent.primaryTarget == "none") && binding.HasTarget)
+        {
+            plannedIntent.primaryTarget = binding.RawQuery;
+        }
+
+        if (plannedIntent.intentType == StepIntentType.Unknown &&
+            highLevelActionData != null &&
+            highLevelActionData.Any(a => IsMovementLikeActionData(a)))
+        {
+            plannedIntent.intentType = StepIntentType.Navigate;
+        }
+
+        plannedIntent.orderedViaTargets = plannedIntent.orderedViaTargets ?? new string[0];
+        plannedIntent.avoidTargets = plannedIntent.avoidTargets ?? new string[0];
+        plannedIntent.preferTargets = plannedIntent.preferTargets ?? new string[0];
+        plannedIntent.requestedTeammateIds = plannedIntent.requestedTeammateIds ?? new string[0];
+        plannedIntent.stepText = string.IsNullOrWhiteSpace(plannedIntent.stepText) ? currentStep : plannedIntent.stepText;
+        return plannedIntent;
+    }
+
+    private RoutePolicyDefinition ResolveEffectiveRoutePolicy()
+    {
+        RoutePolicyDefinition routePolicy = planningModule != null ? planningModule.GetCurrentStepRoutePolicy() : null;
+        if (routePolicy == null)
+        {
+            routePolicy = new RoutePolicyDefinition
+            {
+                approachSide = RouteApproachSide.Any,
+                altitudeMode = RouteAltitudeMode.Default,
+                clearance = RouteClearancePreference.Medium,
+                avoidNodeTypes = new SmallNodeType[0],
+                avoidFeatureNames = new string[0],
+                preferFeatureNames = new string[0],
+                keepTargetVisible = false,
+                preferOpenSpace = false,
+                allowGlobalAStar = true,
+                allowLocalDetour = true,
+                slowNearTarget = true,
+                holdForTeammates = false,
+                blockedPolicy = BlockedPolicyType.Replan,
+                maxTeammatesInCorridor = 0,
+                notes = "default"
+            };
+        }
+
+        routePolicy.avoidNodeTypes = routePolicy.avoidNodeTypes ?? new SmallNodeType[0];
+        routePolicy.avoidFeatureNames = routePolicy.avoidFeatureNames ?? new string[0];
+        routePolicy.preferFeatureNames = routePolicy.preferFeatureNames ?? new string[0];
+        return routePolicy;
+    }
+
+    private string BuildStepIntentSummary(StepIntentDefinition stepIntent)
+    {
+        if (stepIntent == null) return "none";
+        string via = stepIntent.orderedViaTargets != null && stepIntent.orderedViaTargets.Length > 0
+            ? string.Join(">", stepIntent.orderedViaTargets)
+            : "none";
+        return $"type={stepIntent.intentType},target={stepIntent.primaryTarget},via={via},final={stepIntent.finalBehavior}";
+    }
+
+    private string BuildRoutePolicySummary(RoutePolicyDefinition routePolicy)
+    {
+        if (routePolicy == null) return "none";
+        string avoidNodes = routePolicy.avoidNodeTypes != null && routePolicy.avoidNodeTypes.Length > 0
+            ? string.Join("|", routePolicy.avoidNodeTypes.Select(t => t.ToString()).ToArray())
+            : "none";
+        string avoidFeatures = routePolicy.avoidFeatureNames != null && routePolicy.avoidFeatureNames.Length > 0
+            ? string.Join("|", routePolicy.avoidFeatureNames)
+            : "none";
+        return $"side={routePolicy.approachSide},alt={routePolicy.altitudeMode},clear={routePolicy.clearance},avoidNodes={avoidNodes},avoidFeatures={avoidFeatures},astar={(routePolicy.allowGlobalAStar ? 1 : 0)},detour={(routePolicy.allowLocalDetour ? 1 : 0)}";
+    }
+
+    /// <summary>
+    /// 将当前计划中的协同约束压缩成给 LLM 的稳定输入。
+    /// 这里的目标不是让系统解释协同语义，而是把 PlanningModule 已经结构化好的结果原样交给 LLM。
+    /// </summary>
+    private string BuildCoordinationPromptSummary(TeamCoordinationDirective[] directives)
+    {
+        if (directives == null || directives.Length == 0) return "none";
+
+        List<string> parts = new List<string>();
+        for (int i = 0; i < directives.Length; i++)
+        {
+            TeamCoordinationDirective d = directives[i];
+            if (d == null) continue;
+            string yields = d.yieldToAgentIds != null && d.yieldToAgentIds.Length > 0 ? string.Join("|", d.yieldToAgentIds) : "none";
+            string syncPoints = d.syncPointTargets != null && d.syncPointTargets.Length > 0 ? string.Join("|", d.syncPointTargets) : "none";
+            parts.Add($"#{i + 1}:mode={d.coordinationMode},leader={d.leaderAgentId},shared={d.sharedTarget},corridor={d.corridorReservationKey},yieldTo={yields},syncPoints={syncPoints},formation={d.formationSlot}");
+        }
+
+        return parts.Count > 0 ? string.Join(" || ", parts) : "none";
+    }
+
+    /// <summary>
+    /// 给高层动作决策列出“当前允许引用的队友 ID”。
+    /// 这些 ID 全部来自结构化 stepIntent / coordinationDirectives，而不是系统从文本里猜队友名。
+    /// </summary>
+    private string BuildTeammateReferenceSummary(StepIntentDefinition stepIntent, TeamCoordinationDirective[] directives)
+    {
+        HashSet<string> ids = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+
+        if (stepIntent != null && stepIntent.requestedTeammateIds != null)
+        {
+            for (int i = 0; i < stepIntent.requestedTeammateIds.Length; i++)
+            {
+                string id = stepIntent.requestedTeammateIds[i];
+                if (!string.IsNullOrWhiteSpace(id)) ids.Add(id.Trim());
+            }
+        }
+
+        if (directives != null)
+        {
+            for (int i = 0; i < directives.Length; i++)
+            {
+                TeamCoordinationDirective d = directives[i];
+                if (d == null) continue;
+                if (!string.IsNullOrWhiteSpace(d.leaderAgentId)) ids.Add(d.leaderAgentId.Trim());
+                if (d.yieldToAgentIds != null)
+                {
+                    for (int j = 0; j < d.yieldToAgentIds.Length; j++)
+                    {
+                        string id = d.yieldToAgentIds[j];
+                        if (!string.IsNullOrWhiteSpace(id)) ids.Add(id.Trim());
+                    }
+                }
+            }
+        }
+
+        return ids.Count > 0 ? string.Join("|", ids) : "none";
+    }
+
+    /// <summary>
+    /// 只根据 PlanningModule 已经产出的结构化结果构建 step_target 绑定。
+    /// 可以把它理解成“最后一跳的取值规则”：
+    /// 1) 当前 stepIntent.primaryTarget 最具体，所以优先用它；
+    /// 2) 如果 step 没写清楚，就退回到 assignedSlot.target；
+    /// 3) 如果槽位也没写清楚，再尝试任务级协同里的 sharedTarget。
+    /// 换句话说，ActionDecision 在这里不再直接读用户原始自然语言，
+    /// 而是只信 PlanningModule 已经整理好的结构化目标字段。
+    /// </summary>
+    private StepTargetBinding ResolveStructuredStepTargetBinding()
+    {
+        // 先准备一个“空绑定”。
+        // 如果后面三层来源都拿不到目标，就把这个空结果返回给上层。
+        StepTargetBinding empty = new StepTargetBinding
+        {
+            HasTarget = false,
+            TargetRef = "step_target",
+            TargetKind = "None",
+            RawQuery = string.Empty,
+            Uid = string.Empty,
+            Name = string.Empty,
+            Source = "None",
+            WorldPos = transform.position,
+            GridCell = new Vector2Int(-1, -1),
+            Summary = "none"
+        };
+
+        if (planningModule == null) return empty;
+
+        // 第一优先级：当前 step 自己声明的 primaryTarget。
+        // 这是“这一小步现在最想处理谁”的直接答案，粒度最细。
+        StepIntentDefinition stepIntent = planningModule.GetCurrentStepIntent();
+        if (stepIntent != null &&
+            !string.IsNullOrWhiteSpace(stepIntent.primaryTarget) &&
+            !string.Equals(stepIntent.primaryTarget, "none", System.StringComparison.OrdinalIgnoreCase) &&
+            TryBuildStepTargetBindingFromTarget(stepIntent.primaryTarget, out StepTargetBinding fromIntent))
+        {
+            fromIntent.Source = $"StructuredStepIntent:{fromIntent.Source}";
+            return fromIntent;
+        }
+
+        // 第二优先级：回退到当前槽位的最终目标。
+        // 如果 step 没写清楚，至少槽位通常还知道“这一整轮任务最后要去哪儿”。
+        MissionTaskSlot assignedSlot = planningModule.currentPlan != null ? planningModule.currentPlan.assignedSlot : null;
+        if (assignedSlot != null &&
+            !string.IsNullOrWhiteSpace(assignedSlot.target) &&
+            !string.Equals(assignedSlot.target, "none", System.StringComparison.OrdinalIgnoreCase) &&
+            TryBuildStepTargetBindingFromTarget(assignedSlot.target, out StepTargetBinding fromSlot))
+        {
+            fromSlot.Source = $"AssignedSlot:{fromSlot.Source}";
+            return fromSlot;
+        }
+
+        // 第三优先级：再退回到协同指令里的 sharedTarget。
+        // 这通常出现在“全队围绕同一个共享目标协作”的任务里。
+        TeamCoordinationDirective[] directives = planningModule.GetCurrentCoordinationDirectives();
+        if (directives != null)
+        {
+            for (int i = 0; i < directives.Length; i++)
+            {
+                TeamCoordinationDirective directive = directives[i];
+                if (directive == null || string.IsNullOrWhiteSpace(directive.sharedTarget)) continue;
+                if (TryBuildStepTargetBindingFromTarget(directive.sharedTarget, out StepTargetBinding fromDirective))
+                {
+                    fromDirective.Source = $"CoordinationDirective:{fromDirective.Source}";
+                    return fromDirective;
+                }
+            }
+        }
+
+        // 三层都没拿到，就承认当前没有稳定可绑定目标。
+        return empty;
+    }
+
     /// <summary>
     /// 基于系统已绑定的目标预构建 A* 粗路径（若可行）。
     /// 规则：
@@ -260,7 +494,7 @@ public class ActionDecisionModule : MonoBehaviour
     /// 2) 仅对适合全局寻路的目标（地点/坐标/静态节点）构建；
     /// 3) 动态小节点和队友目标默认不预建粗路径，交给第二阶段局部滚动决策。
     /// </summary>
-    private CoarsePathContext BuildCoarsePathContextForStep(string currentStep, StepNavigationDecision navDecision, StepTargetBinding stepTarget)
+    private CoarsePathContext BuildCoarsePathContextForStep(string currentStep, StepNavigationDecision navDecision, StepTargetBinding stepTarget, StepIntentDefinition stepIntent, RoutePolicyDefinition routePolicy)
     {
         if (!keepCoarsePathUntilMissionComplete)
         {
@@ -282,37 +516,20 @@ public class ActionDecisionModule : MonoBehaviour
             ctx.Summary = "当前step非移动步骤，无粗路径";
             return ctx;
         }
+        if (routePolicy != null && !routePolicy.allowGlobalAStar)
+        {
+            ctx.Summary = "当前step路径策略关闭了全局A*，交由局部执行层处理";
+            return ctx;
+        }
         if (campusGrid == null || campusGrid.blockedGrid == null || campusGrid.cellTypeGrid == null)
         {
             ctx.Summary = "CampusGrid2D 不可用";
             return ctx;
         }
 
-        string featureName = string.Empty;
-        string goalSource = string.Empty;
-        Vector2Int goalCell = new Vector2Int(-1, -1);
-
         if (stepTarget.HasTarget && !ShouldBuildCoarsePathForTarget(stepTarget))
         {
             ctx.Summary = $"目标类型={stepTarget.TargetKind}，本轮不构建A*粗路径，交由局部滚动决策";
-            return ctx;
-        }
-
-        if (stepTarget.HasTarget && ShouldBuildCoarsePathForTarget(stepTarget))
-        {
-            if (TryResolveWalkableCell(stepTarget.WorldPos, out goalCell))
-            {
-                featureName = !string.IsNullOrWhiteSpace(stepTarget.Uid)
-                    ? stepTarget.Uid
-                    : (!string.IsNullOrWhiteSpace(stepTarget.Name) ? stepTarget.Name : stepTarget.RawQuery);
-                goalSource = $"StepTarget:{stepTarget.Source}";
-            }
-        }
-
-        if (goalCell.x < 0 &&
-            !TryResolveGoalCellForCoarsePath(currentStep, out featureName, out goalCell, out goalSource))
-        {
-            ctx.Summary = "未在感知库/CampusGrid中解析到目标，无法预构建粗路径";
             return ctx;
         }
 
@@ -322,68 +539,205 @@ public class ActionDecisionModule : MonoBehaviour
             return ctx;
         }
 
-        // 目标地点可能是建筑内部阻塞格：先映射到最近可通行格，再做粗路径。
-        if (!campusGrid.IsWalkable(goalCell.x, goalCell.y))
+        if (!TryBuildRouteAnchorCells(currentStep, stepTarget, stepIntent, out List<string> routeAnchorNames, out List<Vector2Int> routeAnchorCells, out string goalSource))
         {
-            if (!campusGrid.TryFindNearestWalkable(goalCell, 10, out Vector2Int nearGoal))
-            {
-                ctx.Summary = $"目标地点不可达: {featureName}";
-                return ctx;
-            }
-            goalCell = nearGoal;
+            ctx.Summary = "未在结构化意图/CampusGrid中解析到目标，无法预构建粗路径";
+            return ctx;
         }
 
-        List<Vector2Int> gridPath = campusGrid.FindPathAStar(startCell, goalCell);
-        if (gridPath == null || gridPath.Count < 2)
+        List<Vector2Int> gridPath = new List<Vector2Int>();
+        List<int> anchorEndGridIndices = new List<int>();
+        Vector2Int cursor = startCell;
+        for (int i = 0; i < routeAnchorCells.Count; i++)
         {
-            ctx.Summary = $"A*失败: {featureName}";
-            return ctx;
+            Vector2Int goalCell = routeAnchorCells[i];
+            string featureName = routeAnchorNames[i];
+
+            if (goalCell == cursor)
+            {
+                continue;
+            }
+
+            if (!campusGrid.IsWalkable(goalCell.x, goalCell.y))
+            {
+                if (!campusGrid.TryFindNearestWalkable(goalCell, 10, out Vector2Int nearGoal))
+                {
+                    ctx.Summary = $"目标地点不可达: {featureName}";
+                    return ctx;
+                }
+                goalCell = nearGoal;
+            }
+
+            List<Vector2Int> segmentPath = campusGrid.FindPathAStar(cursor, goalCell);
+            if (segmentPath == null || segmentPath.Count < 2)
+            {
+                ctx.Summary = $"A*失败: {featureName}";
+                return ctx;
+            }
+
+            if (gridPath.Count > 0 && segmentPath.Count > 0)
+            {
+                segmentPath.RemoveAt(0);
+            }
+
+            gridPath.AddRange(segmentPath);
+            if (gridPath.Count > 0)
+            {
+                // 记录每一段锚点（via / 最终目标）在整条网格路径中的结束位置。
+                // 后续即使做 waypoint 压缩，也必须保住这些“结构化检查点”，
+                // 否则就会出现“系统算过粗路径，但执行时没有真正经过检查点”的问题。
+                anchorEndGridIndices.Add(gridPath.Count - 1);
+            }
+            cursor = goalCell;
         }
 
         float y = ResolveWaypointY(transform.position);
         int stride = Mathf.Max(1, astarWaypointStride);
         List<Vector3> waypoints = new List<Vector3>();
+        List<int> waypointSourceGridIndices = new List<int>();
 
         // 关键：粗路径第一个点固定为无人机当前位置，保证可视化从机体起始。
         Vector3 startWorld = transform.position;
         startWorld.y = y;
         waypoints.Add(startWorld);
+        waypointSourceGridIndices.Add(-1);
 
+        HashSet<int> sampledGridIndices = new HashSet<int>();
         for (int i = stride; i < gridPath.Count; i += stride)
         {
-            Vector2Int c = gridPath[i];
-            Vector3 wp = campusGrid.GridToWorldCenter(c.x, c.y, astarWaypointYOffset);
-            wp.y = y;
-            waypoints.Add(wp);
+            sampledGridIndices.Add(i);
+        }
+        for (int i = 0; i < anchorEndGridIndices.Count; i++)
+        {
+            sampledGridIndices.Add(anchorEndGridIndices[i]);
         }
 
-        Vector3 final = campusGrid.GridToWorldCenter(goalCell.x, goalCell.y, astarWaypointYOffset);
+        foreach (int idx in sampledGridIndices.OrderBy(v => v))
+        {
+            if (idx < 0 || idx >= gridPath.Count) continue;
+            Vector2Int c = gridPath[idx];
+            Vector3 wp = campusGrid.GridToWorldCenter(c.x, c.y, astarWaypointYOffset);
+            wp.y = y;
+            if (waypoints.Count == 0 || Vector3.Distance(waypoints[waypoints.Count - 1], wp) > 0.1f)
+            {
+                waypoints.Add(wp);
+                waypointSourceGridIndices.Add(idx);
+            }
+        }
+
+        Vector2Int finalGoalCell = routeAnchorCells[routeAnchorCells.Count - 1];
+        Vector3 final = campusGrid.GridToWorldCenter(finalGoalCell.x, finalGoalCell.y, astarWaypointYOffset);
         final.y = y;
         if (waypoints.Count == 0 || Vector3.Distance(waypoints[waypoints.Count - 1], final) > Mathf.Max(0.5f, campusGrid.cellSize * 0.5f))
         {
             waypoints.Add(final);
+            waypointSourceGridIndices.Add(gridPath.Count - 1);
         }
 
         int maxCount = Mathf.Max(2, astarMaxWaypoints);
+        maxCount = Mathf.Max(maxCount, anchorEndGridIndices.Count + 2);
         if (waypoints.Count > maxCount)
         {
-            waypoints = DownsampleWaypoints(waypoints, maxCount);
+            HashSet<int> preserveWaypointIndices = new HashSet<int> { 0, waypoints.Count - 1 };
+            for (int i = 0; i < anchorEndGridIndices.Count; i++)
+            {
+                int gridIdx = anchorEndGridIndices[i];
+                if (gridIdx < 0) continue;
+                for (int j = 0; j < waypointSourceGridIndices.Count; j++)
+                {
+                    if (waypointSourceGridIndices[j] == gridIdx)
+                    {
+                        preserveWaypointIndices.Add(j);
+                        break;
+                    }
+                }
+            }
+
+            waypoints = DownsampleWaypointsPreserveIndices(waypoints, maxCount, preserveWaypointIndices, out List<int> keptIndices);
+            waypointSourceGridIndices = keptIndices
+                .Where(idx => idx >= 0 && idx < waypointSourceGridIndices.Count)
+                .Select(idx => waypointSourceGridIndices[idx])
+                .ToList();
         }
 
         ctx.HasPath = waypoints.Count > 0;
-        ctx.TargetFeatureName = featureName;
+        ctx.TargetFeatureName = string.Join("->", routeAnchorNames.ToArray());
         ctx.GoalWorld = final;
         ctx.CoarseWaypoints = waypoints;
         ctx.WaypointsInline = BuildWaypointInlineString(waypoints);
         ctx.Summary = ctx.HasPath
-            ? $"target={featureName},source={goalSource},avoid=CampusGridBlocked,gridPath={gridPath.Count},coarseWp={waypoints.Count},waypoints={ctx.WaypointsInline}"
-            : $"A*失败: {featureName}";
+            ? $"target={ctx.TargetFeatureName},source={goalSource},policy={BuildRoutePolicySummary(routePolicy)},gridPath={gridPath.Count},coarseWp={waypoints.Count},waypoints={ctx.WaypointsInline}"
+            : $"A*失败: {ctx.TargetFeatureName}";
 
         if (ctx.HasPath)
         {
             UpdateCoarsePathVisualization(waypoints);
         }
         return ctx;
+    }
+
+    private bool TryBuildRouteAnchorCells(string currentStep, StepTargetBinding stepTarget, StepIntentDefinition stepIntent, out List<string> routeAnchorNames, out List<Vector2Int> routeAnchorCells, out string source)
+    {
+        routeAnchorNames = new List<string>();
+        routeAnchorCells = new List<Vector2Int>();
+        source = "none";
+
+        if (stepIntent != null && stepIntent.orderedViaTargets != null)
+        {
+            for (int i = 0; i < stepIntent.orderedViaTargets.Length; i++)
+            {
+                string viaTarget = stepIntent.orderedViaTargets[i];
+                if (TryResolveRouteAnchorCell(viaTarget, out string viaName, out Vector2Int viaCell, out string viaSource))
+                {
+                    routeAnchorNames.Add(viaName);
+                    routeAnchorCells.Add(viaCell);
+                    source = source == "none" ? viaSource : $"{source}>{viaSource}";
+                }
+            }
+        }
+
+        if (stepTarget.HasTarget && ShouldBuildCoarsePathForTarget(stepTarget) && TryResolveWalkableCell(stepTarget.WorldPos, out Vector2Int boundCell))
+        {
+            string boundName = !string.IsNullOrWhiteSpace(stepTarget.Uid)
+                ? stepTarget.Uid
+                : (!string.IsNullOrWhiteSpace(stepTarget.Name) ? stepTarget.Name : stepTarget.RawQuery);
+            routeAnchorNames.Add(boundName);
+            routeAnchorCells.Add(boundCell);
+            source = source == "none" ? $"StepTarget:{stepTarget.Source}" : $"{source}>StepTarget:{stepTarget.Source}";
+        }
+        else if (stepIntent != null &&
+                 !string.IsNullOrWhiteSpace(stepIntent.primaryTarget) &&
+                 !string.Equals(stepIntent.primaryTarget, "none", System.StringComparison.OrdinalIgnoreCase) &&
+                 TryResolveRouteAnchorCell(stepIntent.primaryTarget, out string primaryName, out Vector2Int primaryCell, out string primarySource))
+        {
+            routeAnchorNames.Add(primaryName);
+            routeAnchorCells.Add(primaryCell);
+            source = source == "none" ? primarySource : $"{source}>{primarySource}";
+        }
+        return routeAnchorCells.Count > 0;
+    }
+
+    private bool TryResolveRouteAnchorCell(string targetQuery, out string targetName, out Vector2Int goalCell, out string source)
+    {
+        targetName = string.Empty;
+        goalCell = new Vector2Int(-1, -1);
+        source = "none";
+
+        if (string.IsNullOrWhiteSpace(targetQuery)) return false;
+
+        if (TryBuildStepTargetBindingFromTarget(targetQuery, out StepTargetBinding binding) &&
+            binding.HasTarget &&
+            ShouldBuildCoarsePathForTarget(binding) &&
+            TryResolveWalkableCell(binding.WorldPos, out goalCell))
+        {
+            targetName = !string.IsNullOrWhiteSpace(binding.Uid)
+                ? binding.Uid
+                : (!string.IsNullOrWhiteSpace(binding.Name) ? binding.Name : binding.RawQuery);
+            source = binding.Source;
+            return true;
+        }
+
+        return TryResolveGoalCellForCoarsePath(targetQuery, out targetName, out goalCell, out source);
     }
 
     private bool ShouldBuildCoarsePathForTarget(StepTargetBinding stepTarget)
@@ -555,73 +909,59 @@ public class ActionDecisionModule : MonoBehaviour
     }
 
     /// <summary>
-    /// 为粗路径构建解析目标网格：
-    /// 优先使用已感知目标（地点/小节点），失败后再回退 CampusGrid2D 全局地点解析。
+    /// 为粗路径构建解析目标网格。
+    /// 输入必须是已经结构化过的 target token，例如：
+    /// label:x_2 / world(10,20) / nodeId / AgentID。
+    /// 这里不再从自然语言 step 文本中抽取目标词。
     /// </summary>
-    private bool TryResolveGoalCellForCoarsePath(string stepText, out string targetName, out Vector2Int goalCell, out string source)
+    private bool TryResolveGoalCellForCoarsePath(string targetQuery, out string targetName, out Vector2Int goalCell, out string source)
     {
         targetName = string.Empty;
         goalCell = new Vector2Int(-1, -1);
         source = string.Empty;
+        if (string.IsNullOrWhiteSpace(targetQuery)) return false;
 
-        List<string> queries = BuildTargetQueryCandidates(stepText);
-        if (queries.Count == 0) return false;
+        string q = targetQuery.Trim();
 
-        for (int i = 0; i < queries.Count; i++)
+        if (ContainsSelfReference(q) && TryResolveWalkableCell(transform.position, out goalCell))
         {
-            string q = queries[i];
-            if (string.IsNullOrWhiteSpace(q)) continue;
+            targetName = "self";
+            source = "Self";
+            return true;
+        }
 
-            if (TryResolvePerceivedCampusFeatureTarget(q, out Vector3 perceivedFeaturePos) &&
-                TryResolveWalkableCell(perceivedFeaturePos, out goalCell))
-            {
-                targetName = q;
-                source = "PerceivedCampus";
-                return true;
-            }
+        if (TryParseWorldTarget(q, out Vector3 worldPos) &&
+            TryResolveWalkableCell(worldPos, out goalCell))
+        {
+            targetName = q;
+            source = "WorldCoordinate";
+            return true;
+        }
 
-            if (TryResolveSmallNodeTargetWorld(q, out Vector3 smallNodePos) &&
-                TryResolveWalkableCell(smallNodePos, out goalCell))
-            {
-                targetName = q;
-                source = "PerceivedSmallNode";
-                return true;
-            }
+        if (TryResolvePerceivedCampusFeatureTarget(q, out Vector3 perceivedFeaturePos) &&
+            TryResolveWalkableCell(perceivedFeaturePos, out goalCell))
+        {
+            targetName = q;
+            source = "PerceivedCampus";
+            return true;
+        }
 
-            if (TryResolveCampusSceneObjectExact(q, out Vector3 sceneObjPos) &&
-                TryResolveWalkableCell(sceneObjPos, out goalCell))
-            {
-                targetName = q;
-                source = "CampusSceneObjectExact";
-                return true;
-            }
+        if (TryResolveSmallNodeTargetWorld(q, out Vector3 smallNodePos) &&
+            TryResolveWalkableCell(smallNodePos, out goalCell))
+        {
+            targetName = q;
+            source = "PerceivedSmallNode";
+            return true;
+        }
 
-            if (TryResolveFeatureNameToCell(q, out goalCell))
-            {
-                targetName = q;
-                source = "CampusGrid";
-                return true;
-            }
+        if (TryResolveFeatureNameToCell(q, out goalCell))
+        {
+            targetName = q;
+            source = "CampusGrid";
+            return true;
         }
 
         return false;
-    }
-
-    /// <summary>
-    /// 构建目标查询候选：当前 step + mission 文本中的显式目标词。
-    /// </summary>
-    private List<string> BuildTargetQueryCandidates(string stepText)
-    {
-        HashSet<string> queries = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
-
-        if (ContainsSelfReference(stepText))
-        {
-            queries.Add("self");
-        }
-
-        AddTargetQueriesFromText(stepText, queries);
-
-        return queries.Where(q => !string.IsNullOrWhiteSpace(q)).ToList();
     }
 
     /// <summary>
@@ -684,46 +1024,6 @@ public class ActionDecisionModule : MonoBehaviour
         return binding;
     }
 
-    /// <summary>
-    /// 从文本里提取显式目标词（building_x / feature:xxx / 场景已知地点名）。
-    /// </summary>
-    private void AddTargetQueriesFromText(string text, HashSet<string> output)
-    {
-        if (string.IsNullOrWhiteSpace(text) || output == null) return;
-        string lower = text.ToLowerInvariant();
-
-        if (TryExtractFeatureNameFromStep(text, out string explicitFeature) && !string.IsNullOrWhiteSpace(explicitFeature))
-        {
-            output.Add(explicitFeature.Trim());
-        }
-
-        System.Text.RegularExpressions.MatchCollection buildingMatches = System.Text.RegularExpressions.Regex.Matches(
-            lower,
-            @"(?:building|楼|建筑)\s*[_\-:：]?\s*(\d+)"
-        );
-        for (int i = 0; i < buildingMatches.Count; i++)
-        {
-            string id = buildingMatches[i].Groups[1].Value;
-            if (!string.IsNullOrWhiteSpace(id))
-            {
-                output.Add($"building_{id}");
-            }
-        }
-
-        System.Text.RegularExpressions.MatchCollection prefixed = System.Text.RegularExpressions.Regex.Matches(
-            text,
-            @"(?:feature|building)\s*[:：]\s*([^\s,，。;；]+)",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase
-        );
-        for (int i = 0; i < prefixed.Count; i++)
-        {
-            string token = prefixed[i].Groups[1].Value?.Trim();
-            if (!string.IsNullOrWhiteSpace(token))
-            {
-                output.Add(token);
-            }
-        }
-    }
 
     /// <summary>
     /// 从已感知小节点中解析目标世界坐标（按 nodeId / displayName / sceneName 匹配）。
@@ -774,75 +1074,6 @@ public class ActionDecisionModule : MonoBehaviour
     }
 
     /// <summary>
-    /// 从当前 step 文本中提取地点名（优先匹配 CampusGrid2D 中已知地点）。
-    /// </summary>
-    private bool TryExtractFeatureNameFromStep(string stepText, out string featureName)
-    {
-        featureName = string.Empty;
-        if (campusGrid == null || string.IsNullOrWhiteSpace(stepText)) return false;
-
-        string text = stepText.Trim();
-
-        // 1) 优先提取前缀目标（building:xxx / feature:xxx）
-        System.Text.RegularExpressions.Match prefixed = System.Text.RegularExpressions.Regex.Match(
-            text,
-            @"(?:feature|building)\s*[:：]\s*([^\s,，。;；]+)",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase
-        );
-        if (prefixed.Success)
-        {
-            string token = prefixed.Groups[1].Value?.Trim();
-            if (!string.IsNullOrWhiteSpace(token))
-            {
-                featureName = token;
-                return true;
-            }
-        }
-
-        // 2) 常见建筑编号表达（building_5 / building-5 / 楼5 / 建筑5）
-        System.Text.RegularExpressions.Match buildingId = System.Text.RegularExpressions.Regex.Match(
-            text,
-            @"(?:building|楼|建筑)\s*[_\-:：]?\s*(\d+)",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase
-        );
-        if (buildingId.Success)
-        {
-            string id = buildingId.Groups[1].Value?.Trim();
-            if (!string.IsNullOrWhiteSpace(id))
-            {
-                featureName = $"building_{id}";
-                return true;
-            }
-        }
-
-        if (campusGrid.cellFeatureNameGrid == null) return false;
-
-        HashSet<string> names = new HashSet<string>();
-        for (int x = 0; x < campusGrid.gridWidth; x++)
-        {
-            for (int z = 0; z < campusGrid.gridLength; z++)
-            {
-                string n = campusGrid.cellFeatureNameGrid[x, z];
-                if (!string.IsNullOrWhiteSpace(n)) names.Add(n);
-            }
-        }
-
-        if (names.Count == 0) return false;
-
-        string lowerStep = stepText.ToLowerInvariant();
-        foreach (string n in names)
-        {
-            if (lowerStep.Contains(n.ToLowerInvariant()))
-            {
-                featureName = n;
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /// <summary>
     /// 把 waypoint 列表序列化成 "x z;x z;..."，便于放入参数文本。
     /// </summary>
     private static string BuildWaypointInlineString(List<Vector3> waypoints)
@@ -858,32 +1089,49 @@ public class ActionDecisionModule : MonoBehaviour
     }
 
     /// <summary>
-    /// 两阶段决策主入口：
-    /// 1) 第一阶段让 LLM 解析 step 的高层动作与 target；
-    /// 2) 系统把 target 绑定到确定坐标并生成粗路径；
-    /// 3) 第二阶段只让 LLM 细化当前这一小段局部 MoveTo；
-    /// 4) 执行后若未到最终目标，则保留在当前 step 继续滚动重规划。
+    /// 多层决策主入口：
+    /// 1) 第一阶段让 LLM 解析 step 的高层动作与自然语言 target；
+    /// 2) 系统读取 PlanningModule 已生成的结构化 StepIntent/RoutePolicy；
+    /// 3) 系统根据 target + 经过点 + 路径策略生成粗路径；
+    /// 4) 系统局部执行层再结合实时感知进行滚动避障和轨迹跟踪；
+    /// 5) 执行后若未到最终目标，则保留在当前 step 继续滚动重规划。
     /// </summary>
     public IEnumerator<object> DecideNextAction()
     {
         SyncCampusGridReference();
         lastIssuedSequenceContainsMovement = false;
+        // 动作层必须尊重 PlanningModule 的执行门控。
+        // 即使上层调度器直接调用了 DecideNextAction，只要协调者还没放行，本轮也不能偷跑。
+        if (planningModule == null || !planningModule.HasActiveMission())
+        {
+            yield break;
+        }
+
         string currentStep = GetCurrentStepDescription();
         if (currentStep == "无活跃任务" || currentStep == "任务已完成")
         {
             yield break;
         }
         StepNavigationDecision navDecision = BuildStepNavigationDecision(currentStep);
+        StepTargetBinding structuredBinding = ResolveStructuredStepTargetBinding();
         List<ActionData> highLevelActionData;
         bool reusedHighLevelDecision = TryGetCachedHighLevelDecision(currentStep, out highLevelActionData, out lastStepTargetBinding);
+        if (structuredBinding.HasTarget)
+        {
+            lastStepTargetBinding = structuredBinding;
+        }
+
         if (!reusedHighLevelDecision)
         {
-            string highLevelPrompt = BuildHighLevelDecisionPrompt(currentStep, navDecision);
+            string highLevelPrompt = BuildHighLevelDecisionPrompt(currentStep, navDecision, structuredBinding);
             string highLevelResponse = string.Empty;
             yield return llmInterface.SendRequest(highLevelPrompt, result =>
             {
                 highLevelResponse = result ?? string.Empty;
-            }, temperature: 0.1f, maxTokens: 420);
+            }, temperature: 0.1f, maxTokens: 520);
+
+            string agentIdForLog = agentProperties != null ? agentProperties.AgentID : gameObject.name;
+            Debug.Log($"[ActionDecision][Stage1][{agentIdForLog}] LLM 原始返回:\n{highLevelResponse}");
 
             if (string.IsNullOrWhiteSpace(highLevelResponse))
             {
@@ -898,41 +1146,25 @@ public class ActionDecisionModule : MonoBehaviour
                 yield break;
             }
 
-            lastStepTargetBinding = ResolveStepTargetBindingFromActionData(highLevelActionData, currentStep);
+            // step 的主目标优先来自 PlanningModule 的结构化绑定；
+            // 只有当规划层没有给出目标时，才允许使用高层动作里显式声明的 target。
+            lastStepTargetBinding = ResolveStepTargetBindingFromActionData(highLevelActionData);
             UpdateHighLevelDecisionCache(currentStep, highLevelActionData, lastStepTargetBinding);
         }
 
         ApplyHighLevelIntentToNavigationDecision(ref navDecision, highLevelActionData, lastStepTargetBinding);
-        Debug.Log($"[ActionDecision][Stage1] step={currentStep} reused={(reusedHighLevelDecision ? 1 : 0)} target={(lastStepTargetBinding.HasTarget ? lastStepTargetBinding.Summary : "none")} nav={BuildNavigationPromptSummary(navDecision)}");
+        string agentId = agentProperties != null ? agentProperties.AgentID : gameObject.name;
+        Debug.Log($"[ActionDecision][Stage1][{agentId}] step={currentStep} reused={(reusedHighLevelDecision ? 1 : 0)} target={(lastStepTargetBinding.HasTarget ? lastStepTargetBinding.Summary : "none")} nav={BuildNavigationPromptSummary(navDecision)}");
 
-        CoarsePathContext coarsePath = BuildCoarsePathContextForStep(currentStep, navDecision, lastStepTargetBinding);
+        StepIntentDefinition stepIntent = ResolveEffectiveStepIntent(currentStep, highLevelActionData, lastStepTargetBinding);
+        RoutePolicyDefinition routePolicy = ResolveEffectiveRoutePolicy();
+        TeamCoordinationDirective[] coordinationDirectives = planningModule != null ? planningModule.GetCurrentCoordinationDirectives() : new TeamCoordinationDirective[0];
+        Debug.Log($"[ActionDecision][Policy][{agentId}] intent={BuildStepIntentSummary(stepIntent)} routePolicy={BuildRoutePolicySummary(routePolicy)}");
+
+        CoarsePathContext coarsePath = BuildCoarsePathContextForStep(currentStep, navDecision, lastStepTargetBinding, stepIntent, routePolicy);
         List<ActionCommand> actionSequence = BuildActionCommandsFromActionData(highLevelActionData);
-        bool deterministicStaticNavigation = ShouldPreferDeterministicStaticNavigation(lastStepTargetBinding, coarsePath);
-
-        if (!deterministicStaticNavigation && ShouldRequestWaypointRefinement(actionSequence, lastStepTargetBinding))
-        {
-            string waypointPrompt = BuildWaypointRefinementPrompt(currentStep, navDecision, lastStepTargetBinding, coarsePath, highLevelActionData);
-            string waypointResponse = string.Empty;
-            yield return llmInterface.SendRequest(waypointPrompt, result =>
-            {
-                waypointResponse = result ?? string.Empty;
-            }, temperature: 0.1f, maxTokens: 320);
-
-            if (!string.IsNullOrWhiteSpace(waypointResponse))
-            {
-                List<ActionData> waypointActionData = ParseActionDataSequenceFromJSON(waypointResponse);
-                if (waypointActionData != null && waypointActionData.Count > 0)
-                {
-                    List<ActionCommand> refinedMovement = BuildActionCommandsFromActionData(waypointActionData);
-                    actionSequence = MergeRefinedMovementActions(actionSequence, refinedMovement);
-                    Debug.Log($"[ActionDecision][Stage2] refinedMoveCount={refinedMovement.Count} coarsePath={(coarsePath.HasPath ? coarsePath.Summary : "none")}");
-                }
-            }
-        }
-        else if (deterministicStaticNavigation)
-        {
-            Debug.Log($"[ActionDecision] step={currentStep} 使用系统静态导航快速路径，跳过第二阶段 waypoint 细化");
-        }
+        actionSequence = ApplyRoutePolicyToActionSequence(actionSequence, stepIntent, routePolicy);
+        actionSequence = ApplyCoordinationDirectivesToActionSequence(actionSequence, coordinationDirectives);
 
         actionSequence = ApplyCoarsePathFallbackIfNeeded(actionSequence, coarsePath);
         actionSequence = ExpandMoveActionsByAStar(actionSequence, navDecision);
@@ -1181,113 +1413,6 @@ public class ActionDecisionModule : MonoBehaviour
     }
 
     /// <summary>
-    /// 当第一阶段 LLM 没有给出可解析的 target 时，
-    /// 回退到 step/mission 文本做 deterministic 目标绑定。
-    /// </summary>
-    private StepTargetBinding ResolveStepTargetBinding(string currentStep)
-    {
-        StepTargetBinding binding = new StepTargetBinding
-        {
-            HasTarget = false,
-            TargetRef = "step_target",
-            TargetKind = "None",
-            RawQuery = string.Empty,
-            Uid = string.Empty,
-            Name = string.Empty,
-            Source = "None",
-            WorldPos = transform.position,
-            GridCell = new Vector2Int(-1, -1),
-            Summary = "none"
-        };
-
-        if (string.IsNullOrWhiteSpace(currentStep))
-        {
-            return binding;
-        }
-
-        if (ContainsSelfReference(currentStep))
-        {
-            return BuildSelfTargetBinding(currentStep, "StepText:SelfReference");
-        }
-
-        List<string> queries = BuildTargetQueryCandidates(currentStep);
-        if (queries.Count == 0)
-        {
-            binding.Summary = "none (未从step提取到显式目标词)";
-            return binding;
-        }
-
-        for (int i = 0; i < queries.Count; i++)
-        {
-            string q = queries[i];
-            if (string.IsNullOrWhiteSpace(q)) continue;
-
-            if (TryResolveCampusFeatureTarget(q, out Vector3 featurePos, out string featureSource, out string normalized))
-            {
-                binding.HasTarget = true;
-                binding.TargetKind = "Feature";
-                binding.RawQuery = q;
-                binding.Source = featureSource;
-                binding.WorldPos = featurePos;
-                binding.Name = normalized ?? string.Empty;
-
-                if (TryResolveWalkableCell(featurePos, out Vector2Int c))
-                {
-                    binding.GridCell = c;
-                    if (campusGrid != null &&
-                        campusGrid.TryGetCellFeatureInfo(c.x, c.y, out string uid, out string name, out _, out _))
-                    {
-                        binding.Uid = uid ?? string.Empty;
-                        if (string.IsNullOrWhiteSpace(binding.Name)) binding.Name = name ?? string.Empty;
-                    }
-                }
-
-                if (string.IsNullOrWhiteSpace(binding.Uid)) binding.Uid = normalized ?? string.Empty;
-                binding.Summary =
-                    $"ref={binding.TargetRef},kind={binding.TargetKind},query={binding.RawQuery},uid={binding.Uid},name={binding.Name},source={binding.Source},world=({binding.WorldPos.x:F1},{binding.WorldPos.z:F1}),grid=({binding.GridCell.x},{binding.GridCell.y})";
-                return binding;
-            }
-
-            if (TryResolveCampusSceneObjectExact(q, out Vector3 scenePos))
-            {
-                binding.HasTarget = true;
-                binding.TargetKind = "Feature";
-                binding.RawQuery = q;
-                binding.Source = "CampusSceneObjectExact";
-                binding.WorldPos = scenePos;
-                binding.Name = q;
-                binding.Uid = q;
-                if (TryResolveWalkableCell(scenePos, out Vector2Int c))
-                {
-                    binding.GridCell = c;
-                }
-                binding.Summary =
-                    $"ref={binding.TargetRef},kind={binding.TargetKind},query={binding.RawQuery},uid={binding.Uid},name={binding.Name},source={binding.Source},world=({binding.WorldPos.x:F1},{binding.WorldPos.z:F1}),grid=({binding.GridCell.x},{binding.GridCell.y})";
-                return binding;
-            }
-
-            if (TryParseWorldTarget(q, out Vector3 worldPos))
-            {
-                binding.HasTarget = true;
-                binding.TargetKind = "World";
-                binding.RawQuery = q;
-                binding.Source = "WorldCoordinate";
-                binding.WorldPos = worldPos;
-                if (TryResolveWalkableCell(worldPos, out Vector2Int c))
-                {
-                    binding.GridCell = c;
-                }
-                binding.Summary =
-                    $"ref={binding.TargetRef},kind={binding.TargetKind},query={binding.RawQuery},source={binding.Source},world=({binding.WorldPos.x:F1},{binding.WorldPos.z:F1}),grid=({binding.GridCell.x},{binding.GridCell.y})";
-                return binding;
-            }
-        }
-
-        binding.Summary = $"none (queries={string.Join(",", queries.Take(4))})";
-        return binding;
-    }
-
-    /// <summary>
     /// 给 LLM 的“步骤主目标锚点”摘要。
     /// </summary>
     private static string BuildStepTargetBindingSummary(StepTargetBinding binding)
@@ -1515,7 +1640,17 @@ public class ActionDecisionModule : MonoBehaviour
                 continue;
             }
 
-            // 第一优先级（可选）：LLM 显式给 waypoint
+            // 第一优先级：系统粗路径。
+            // 这类路径来自结构化 viaTargets/target 计算结果，必须优先落到执行层。
+            if (TryBuildSystemWaypointsFromParameters(action, out List<Vector3> systemWaypoints))
+            {
+                AppendWaypointsAsMoveActions(action, systemWaypoints, expanded, "SystemCoarsePath");
+                virtualStart = systemWaypoints[systemWaypoints.Count - 1];
+                expandedAny = true;
+                continue;
+            }
+
+            // 第二优先级（可选）：LLM 显式给 waypoint
             if (preferLlmWaypoints && !disableLlmLongWaypoints &&
                 TryBuildLlmWaypointsFromParameters(action, out List<Vector3> llmWaypoints))
             {
@@ -1525,7 +1660,7 @@ public class ActionDecisionModule : MonoBehaviour
                 continue;
             }
 
-            // 第二优先级：A* 兜底
+            // 第三优先级：A* 兜底
             if (!allowAStarFallbackWhenNoLlmWaypoints || !enableAStarPathExpansion)
             {
                 expanded.Add(action);
@@ -1563,7 +1698,8 @@ public class ActionDecisionModule : MonoBehaviour
 
         if (expandedAny)
         {
-            Debug.Log($"[ActionDecision] 路径点展开完成: 原动作={inputActions.Count}, 展开后={expanded.Count}");
+            string agentId = agentProperties != null ? agentProperties.AgentID : gameObject.name;
+            Debug.Log($"[ActionDecision][PathExpand][{agentId}] 路径点展开完成: 原动作={inputActions.Count}, 展开后={expanded.Count}");
             return expanded;
         }
         return inputActions;
@@ -1675,6 +1811,40 @@ public class ActionDecisionModule : MonoBehaviour
     }
 
     /// <summary>
+    /// 解析系统生成的粗路径 waypoint。
+    /// 这些 waypoint 来自系统基于结构化 target/viaTargets 计算出的粗路径，
+    /// 不是 LLM 自由发挥的长路径，因此即使关闭了 LLM 长 waypoint，也必须允许执行。
+    /// </summary>
+    private bool TryBuildSystemWaypointsFromParameters(ActionCommand moveAction, out List<Vector3> waypoints)
+    {
+        waypoints = new List<Vector3>();
+        if (moveAction == null) return false;
+
+        Dictionary<string, string> pmap = ParseLooseParameterMap(moveAction.Parameters);
+        if (!pmap.TryGetValue("segmentSource", out string segmentSource) ||
+            !string.Equals(segmentSource, "SystemCoarsePath", System.StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!pmap.TryGetValue("systemWaypoints", out string systemWaypoints) || string.IsNullOrWhiteSpace(systemWaypoints))
+        {
+            return false;
+        }
+
+        ActionCommand shadow = new ActionCommand
+        {
+            ActionType = moveAction.ActionType,
+            TargetObject = moveAction.TargetObject,
+            TargetPosition = moveAction.TargetPosition,
+            TargetRotation = moveAction.TargetRotation,
+            Parameters = $"waypoints:{systemWaypoints}"
+        };
+
+        return TryBuildLlmWaypointsFromParameters(shadow, out waypoints);
+    }
+
+    /// <summary>
     /// 当 LLM 未输出 waypoint 且已有粗路径时，把粗路径注入到第一条 MoveTo。
     /// 作用：保证“先A*粗路径，再局部细化”的链路在异常输出下仍可执行。
     /// </summary>
@@ -1689,14 +1859,22 @@ public class ActionDecisionModule : MonoBehaviour
             if (a == null || a.ActionType != PrimitiveActionType.MoveTo) continue;
 
             Dictionary<string, string> existingMap = ParseLooseParameterMap(a.Parameters);
+            bool hasViaTargets = existingMap.TryGetValue("viaTargets", out string viaTargets) && !string.IsNullOrWhiteSpace(viaTargets);
+            bool requiresApproachSide = existingMap.TryGetValue("approachSide", out string approachSide) &&
+                                        !string.IsNullOrWhiteSpace(approachSide) &&
+                                        !string.Equals(approachSide, "Any", System.StringComparison.OrdinalIgnoreCase);
+            bool isFeatureTarget = existingMap.TryGetValue("targetKind", out string targetKind) &&
+                                   string.Equals(targetKind, "Feature", System.StringComparison.OrdinalIgnoreCase);
+            bool mustRespectStructuredRoute = hasViaTargets || requiresApproachSide || isFeatureTarget || coarsePath.CoarseWaypoints.Count > 2;
+
             if (existingMap.TryGetValue("pathMode", out string existingMode) &&
-                (string.Equals(existingMode, "Direct", System.StringComparison.OrdinalIgnoreCase) ||
-                 string.Equals(existingMode, "LLMReactiveSegment", System.StringComparison.OrdinalIgnoreCase)))
+                string.Equals(existingMode, "LLMReactiveSegment", System.StringComparison.OrdinalIgnoreCase))
             {
                 return actions;
             }
             if (existingMap.TryGetValue("segmentSource", out string segmentSource) &&
-                string.Equals(segmentSource, "LLMReactiveSegment", System.StringComparison.OrdinalIgnoreCase))
+                (string.Equals(segmentSource, "LLMReactiveSegment", System.StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(segmentSource, "SystemCoarsePath", System.StringComparison.OrdinalIgnoreCase)))
             {
                 return actions;
             }
@@ -1707,15 +1885,20 @@ public class ActionDecisionModule : MonoBehaviour
                 return actions;
             }
 
+            if (!mustRespectStructuredRoute &&
+                existingMap.TryGetValue("pathMode", out existingMode) &&
+                string.Equals(existingMode, "Direct", System.StringComparison.OrdinalIgnoreCase))
+            {
+                return actions;
+            }
+
             Dictionary<string, string> inject = new Dictionary<string, string>
             {
                 ["pathMode"] = "AStarHint",
-                ["targetFeature"] = coarsePath.TargetFeatureName
+                ["targetFeature"] = coarsePath.TargetFeatureName,
+                ["segmentSource"] = "SystemCoarsePath",
+                ["systemWaypoints"] = coarsePath.WaypointsInline
             };
-            if (!disableLlmLongWaypoints)
-            {
-                inject["waypoints"] = coarsePath.WaypointsInline;
-            }
 
             a.Parameters = MergeParameters(a.Parameters, inject);
             if (a.TargetPosition == transform.position || Vector3.Distance(a.TargetPosition, transform.position) < 0.5f)
@@ -1723,6 +1906,86 @@ public class ActionDecisionModule : MonoBehaviour
                 a.TargetPosition = coarsePath.GoalWorld;
             }
             return actions;
+        }
+
+        return actions;
+    }
+
+    private List<ActionCommand> ApplyRoutePolicyToActionSequence(List<ActionCommand> actions, StepIntentDefinition stepIntent, RoutePolicyDefinition routePolicy)
+    {
+        if (actions == null || actions.Count == 0 || routePolicy == null) return actions;
+
+        string viaTargets = stepIntent != null && stepIntent.orderedViaTargets != null && stepIntent.orderedViaTargets.Length > 0
+            ? string.Join("|", stepIntent.orderedViaTargets)
+            : string.Empty;
+        string avoidNodeTypes = routePolicy.avoidNodeTypes != null && routePolicy.avoidNodeTypes.Length > 0
+            ? string.Join("|", routePolicy.avoidNodeTypes.Select(t => t.ToString()).ToArray())
+            : string.Empty;
+        string avoidFeatures = routePolicy.avoidFeatureNames != null && routePolicy.avoidFeatureNames.Length > 0
+            ? string.Join("|", routePolicy.avoidFeatureNames)
+            : string.Empty;
+
+        for (int i = 0; i < actions.Count; i++)
+        {
+            ActionCommand action = actions[i];
+            if (action == null || action.ActionType != PrimitiveActionType.MoveTo) continue;
+
+            Dictionary<string, string> policyMap = new Dictionary<string, string>
+            {
+                ["approachSide"] = routePolicy.approachSide.ToString(),
+                ["altitudeMode"] = routePolicy.altitudeMode.ToString(),
+                ["clearance"] = routePolicy.clearance.ToString(),
+                ["keepTargetVisible"] = routePolicy.keepTargetVisible ? "1" : "0",
+                ["preferOpenSpace"] = routePolicy.preferOpenSpace ? "1" : "0",
+                ["allowLocalDetour"] = routePolicy.allowLocalDetour ? "1" : "0",
+                ["slowNearTarget"] = routePolicy.slowNearTarget ? "1" : "0",
+                ["holdForTeammates"] = routePolicy.holdForTeammates ? "1" : "0",
+                ["blockedPolicy"] = routePolicy.blockedPolicy.ToString()
+            };
+
+            if (!string.IsNullOrWhiteSpace(viaTargets)) policyMap["viaTargets"] = viaTargets;
+            if (!string.IsNullOrWhiteSpace(avoidNodeTypes)) policyMap["avoidNodeTypes"] = avoidNodeTypes;
+            if (!string.IsNullOrWhiteSpace(avoidFeatures)) policyMap["avoidFeatureNames"] = avoidFeatures;
+            if (routePolicy.maxTeammatesInCorridor > 0) policyMap["maxTeammatesInCorridor"] = routePolicy.maxTeammatesInCorridor.ToString();
+
+            action.Parameters = MergeParameters(action.Parameters, policyMap);
+        }
+
+        return actions;
+    }
+
+    /// <summary>
+    /// 把 PlanningModule 的结构化协同约束并入动作参数。
+    /// 这样做的目的不是让系统重新解释协同语义，而是把上游已经定好的约束透明地下传给执行层/日志层。
+    /// </summary>
+    private List<ActionCommand> ApplyCoordinationDirectivesToActionSequence(List<ActionCommand> actions, TeamCoordinationDirective[] directives)
+    {
+        if (actions == null || actions.Count == 0 || directives == null || directives.Length == 0) return actions;
+
+        string modes = string.Join("|", directives.Where(d => d != null).Select(d => d.coordinationMode.ToString()).Distinct().ToArray());
+        string leaders = string.Join("|", directives.Where(d => d != null && !string.IsNullOrWhiteSpace(d.leaderAgentId)).Select(d => d.leaderAgentId).Distinct().ToArray());
+        string sharedTargets = string.Join("|", directives.Where(d => d != null && !string.IsNullOrWhiteSpace(d.sharedTarget)).Select(d => d.sharedTarget).Distinct().ToArray());
+        string corridors = string.Join("|", directives.Where(d => d != null && !string.IsNullOrWhiteSpace(d.corridorReservationKey)).Select(d => d.corridorReservationKey).Distinct().ToArray());
+        string yields = string.Join("|", directives.Where(d => d != null && d.yieldToAgentIds != null).SelectMany(d => d.yieldToAgentIds).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToArray());
+        string formations = string.Join("|", directives.Where(d => d != null && !string.IsNullOrWhiteSpace(d.formationSlot)).Select(d => d.formationSlot).Distinct().ToArray());
+
+        for (int i = 0; i < actions.Count; i++)
+        {
+            ActionCommand action = actions[i];
+            if (action == null) continue;
+
+            Dictionary<string, string> coordinationMap = new Dictionary<string, string>();
+            if (!string.IsNullOrWhiteSpace(modes)) coordinationMap["coordinationModes"] = modes;
+            if (!string.IsNullOrWhiteSpace(leaders)) coordinationMap["leaderAgentIds"] = leaders;
+            if (!string.IsNullOrWhiteSpace(sharedTargets)) coordinationMap["sharedTargets"] = sharedTargets;
+            if (!string.IsNullOrWhiteSpace(corridors)) coordinationMap["corridorReservationKeys"] = corridors;
+            if (!string.IsNullOrWhiteSpace(yields)) coordinationMap["yieldToAgentIds"] = yields;
+            if (!string.IsNullOrWhiteSpace(formations)) coordinationMap["formationSlots"] = formations;
+
+            if (coordinationMap.Count > 0)
+            {
+                action.Parameters = MergeParameters(action.Parameters, coordinationMap);
+            }
         }
 
         return actions;
@@ -1800,7 +2063,7 @@ public class ActionDecisionModule : MonoBehaviour
             if (IsDynamicOrChasingTarget(pmap)) return false;
         }
 
-        // 目标是地点（building/feature）时，默认走 A* 粗路径。
+        // 目标是静态地点时，默认走 A* 粗路径。
         if (pmap.TryGetValue("targetKind", out targetKind) &&
             string.Equals(targetKind, "Feature", System.StringComparison.OrdinalIgnoreCase))
         {
@@ -1932,6 +2195,7 @@ public class ActionDecisionModule : MonoBehaviour
         int total = waypoints.Count;
         for (int i = 0; i < waypoints.Count; i++)
         {
+            bool isFinalWaypoint = i == total - 1;
             Dictionary<string, string> astarInfo = new Dictionary<string, string>
             {
                 ["pathMode"] = string.IsNullOrWhiteSpace(pathMode) ? "Path" : pathMode,
@@ -1943,6 +2207,17 @@ public class ActionDecisionModule : MonoBehaviour
                 ["vertTol"] = "0.7",
                 ["settleTime"] = "0.05"
             };
+
+            if (!isFinalWaypoint)
+            {
+                // 关键修复：
+                // 中间 waypoint 的完成条件必须只看“当前 waypoint 是否到达”，
+                // 不能沿用最终目标建筑的 targetArrivalRadius / 感知到达捷径。
+                // 否则会出现“刚到检查点附近，就把后续 waypoint 和整个 step 一起判完成”的问题。
+                astarInfo["useWaypointToleranceOnly"] = "1";
+                astarInfo["disableFeaturePerceptionArrival"] = "1";
+                astarInfo["targetArrivalRadius"] = "0";
+            }
 
             ActionCommand waypointMove = new ActionCommand
             {
@@ -1975,6 +2250,69 @@ public class ActionDecisionModule : MonoBehaviour
             result.Add(source[idx]);
         }
         return result;
+    }
+
+    /// <summary>
+    /// 压缩 waypoint 时保留关键索引。
+    /// 典型场景是：
+    /// 1) 起点；
+    /// 2) viaTargets 对应的检查点；
+    /// 3) 最终目标点。
+    /// 这样即使为了减少动作数量做采样，也不会把结构化路线要求压掉。
+    /// </summary>
+    private static List<Vector3> DownsampleWaypointsPreserveIndices(List<Vector3> source, int maxCount, IEnumerable<int> preserveIndices, out List<int> keptSourceIndices)
+    {
+        keptSourceIndices = new List<int>();
+        if (source == null || source.Count == 0) return new List<Vector3>();
+        if (maxCount <= 1)
+        {
+            keptSourceIndices.Add(source.Count - 1);
+            return new List<Vector3> { source[source.Count - 1] };
+        }
+        if (source.Count <= maxCount)
+        {
+            keptSourceIndices.AddRange(Enumerable.Range(0, source.Count));
+            return new List<Vector3>(source);
+        }
+
+        List<int> preserved = (preserveIndices ?? Enumerable.Empty<int>())
+            .Where(i => i >= 0 && i < source.Count)
+            .Distinct()
+            .OrderBy(i => i)
+            .ToList();
+
+        if (preserved.Count == 0)
+        {
+            List<Vector3> fallback = DownsampleWaypoints(source, maxCount);
+            for (int i = 0; i < fallback.Count; i++)
+            {
+                float t = fallback.Count == 1 ? 1f : (float)i / (fallback.Count - 1);
+                keptSourceIndices.Add(Mathf.RoundToInt(t * (source.Count - 1)));
+            }
+            return fallback;
+        }
+
+        if (preserved.Count > maxCount)
+        {
+            preserved = preserved.Take(maxCount).ToList();
+        }
+
+        int remainingSlots = maxCount - preserved.Count;
+        List<int> candidates = Enumerable.Range(0, source.Count)
+            .Where(i => !preserved.Contains(i))
+            .ToList();
+
+        HashSet<int> selected = new HashSet<int>(preserved);
+        for (int i = 0; i < remainingSlots && candidates.Count > 0; i++)
+        {
+            float t = remainingSlots == 1 ? 0.5f : (float)i / (remainingSlots - 1);
+            int idx = Mathf.RoundToInt(t * (candidates.Count - 1));
+            selected.Add(candidates[idx]);
+        }
+
+        List<int> ordered = selected.OrderBy(i => i).Take(maxCount).ToList();
+        keptSourceIndices.AddRange(ordered);
+        return ordered.Select(i => source[i]).ToList();
     }
 
     /// <summary>
@@ -2024,16 +2362,39 @@ public class ActionDecisionModule : MonoBehaviour
     /// 第一阶段：只做高层动作和 target 语义解析。
     /// 不要求 LLM 输出具体 world waypoint，避免在动态环境下给死整条路径。
     /// </summary>
-    private string BuildHighLevelDecisionPrompt(string currentStep, StepNavigationDecision navDecision)
+    private string BuildHighLevelDecisionPrompt(string currentStep, StepNavigationDecision navDecision, StepTargetBinding structuredBinding)
     {
         string role = agentProperties != null ? agentProperties.Role.ToString() : "Unknown";
+        StepIntentDefinition stepIntent = planningModule != null ? planningModule.GetCurrentStepIntent() : null;
+        RoutePolicyDefinition routePolicy = planningModule != null ? planningModule.GetCurrentStepRoutePolicy() : null;
+        TeamCoordinationDirective[] directives = planningModule != null ? planningModule.GetCurrentCoordinationDirectives() : new TeamCoordinationDirective[0];
+        string assignedSlotSummary = planningModule != null ? planningModule.GetCurrentAssignedSlotSummary() : "none";
+        string teammateSummary = BuildTeammateReferenceSummary(stepIntent, directives);
 
         return $@"你是{agentProperties?.Type}智能体，角色={role}。
-        基于“当前步骤文本”做第一阶段高层决策。
-        注意：这一阶段的 target 只能从 step 自然语言中解析，不允许根据地图候选、感知节点列表、队友列表来猜目标。
+        基于 PlanningModule 已给出的结构化执行上下文，输出当前这一轮高层动作决策。
+        这一阶段只决定“做什么动作”，不要重新拆任务，不要重新解释目标语义。
 
         [当前步骤]
         {currentStep}
+
+        [当前槽位]
+        {assignedSlotSummary}
+
+        [结构化主目标绑定]
+        {BuildStepTargetBindingSummary(structuredBinding)}
+
+        [结构化step意图]
+        {BuildStepIntentSummary(stepIntent)}
+
+        [结构化路径策略]
+        {BuildRoutePolicySummary(routePolicy)}
+
+        [结构化协同约束]
+        {BuildCoordinationPromptSummary(directives)}
+
+        [允许引用的队友ID]
+        {teammateSummary}
 
         [状态]
         {BuildDecisionContext()}
@@ -2054,27 +2415,26 @@ public class ActionDecisionModule : MonoBehaviour
         Comm: TransmitMessage(messageType in {GetAvailableMessageTypes()})
 
         [高层决策规则]
-        1) 这是第一阶段，只输出高层动作和目标，不要输出具体 waypoint，不要输出长路径。
-        2) target 必须严格来自 step 的自然语言语义，不允许根据地图或感知信息替换成别的建筑名、节点名或 AgentID。
-        3) 如果 step 中有明确地点词，例如 building_2，target 必须保留这个标识，不要改写成别名或中文楼名。
-        4) 如果 step 目标是树、车、行人、资源点、临时障碍等小节点，可输出该节点的 displayName 或自然语言名词，不必强行编造 nodeId。
-        5) 如果 step 目标是队友，只有 step 中已明确给出 AgentID 时才输出 AgentID；不要凭上下文猜队友ID。
-        6) 需要移动时，输出 MoveTo，parameters 仅写路径意图，例如 pathMode:AStarReactive。
-        7) 起飞、扫描、通信可以和 MoveTo 组合输出。
+        1) 只输出高层动作。
+        2) 如果动作针对当前步骤的主目标，target 优先写 ""step_target""。
+        3) 只有在 [结构化主目标绑定] 为 none 时，才允许输出明确 world(x,z) 或 world(x,y,z)。
+        4) 如果要与队友通信、跟随、等待或让行，target 只能写 [允许引用的队友ID] 中给出的 AgentID。
+        5) 不要新造建筑名、节点名、队友名；不要把 step 文本里的自由语言重新编造成 target。
+        6) 协同等待、同步、让行、跟随这些动作要参考 [结构化协同约束] 和 [结构化路径策略]。
+        7) 需要移动时，输出 MoveTo/TakeOff/Land/Hover/Follow/Align 等动作，parameters 只写策略参数。
         8) 无目标动作用 target=""none""。
 
-        [目标格式]
-        1) 地点目标: building:名称 或 feature:名称
-        2) 小节点目标: nodeId 或 displayName
-        3) 队友目标: AgentID
-        4) 坐标目标: world(x,z) 或 world(x,y,z)
-        5) 禁止输出与上述格式无关的自由文本目标
+        [允许的target]
+        1) step_target
+        2) none
+        3) AgentID（仅限 [允许引用的队友ID] 中已有的值）
+        4) world(x,z) 或 world(x,y,z)
 
         请输出1-3个动作，只输出JSON数组，不要解释：
         [
         {{
             ""actionType"": ""动作类型"",
-            ""target"": ""none|nodeId|displayName|AgentID|building:名称|feature:名称|world(x,z)|world(x,y,z)"",
+            ""target"": ""step_target|none|AgentID|world(x,z)|world(x,y,z)"",
             ""parameters"": ""key:value,key2:value2 或 JSON字符串"",
             ""reason"": ""<=20字""
         }}
@@ -2137,7 +2497,7 @@ public class ActionDecisionModule : MonoBehaviour
         [细化规则]
         1) 基于第一阶段动作序列、系统绑定目标、A*粗路径和局部小节点，输出当前这一轮要执行的具体移动参数。
         2) 只输出1-4个短程 MoveTo 动作，用于当前这一小段移动。
-        3) target 只能写 world(x,z) 或 world(x,y,z)，不要再写 building:xxx、节点名或 AgentID。
+        3) target 只能写 world(x,z) 或 world(x,y,z)，不要再写命名地点 token、节点名或 AgentID。
         4) 必须优先沿[A*粗路径参考]的下一个局部方向前进，再根据当前阻塞/动态小节点做微调。
         5) 不要规划完整长路径，不要输出超过4个 waypoint，不要假设远处未知障碍。
         6) parameters 负责给出这一轮具体动作参数，例如 pathMode:Direct,segmentSource:LLMReactiveSegment,speed:...,avoidDynamic:1。
@@ -2155,14 +2515,17 @@ public class ActionDecisionModule : MonoBehaviour
     }
 
     /// <summary>
-    /// 从第一阶段动作中解析最终目标，再由系统绑定到确定坐标。
-    /// 若第一阶段没有可解析 target，则回退到 step 文本解析。
+    /// 解析当前 step 的主目标绑定。
+    /// 优先使用 PlanningModule 已经给出的结构化目标；
+    /// 只有当规划层没有目标时，才允许使用高层动作里显式声明的 target。
+    /// 这里不再回退到 step 自然语言文本解析，避免系统重新做任务语义推断。
     /// </summary>
-    private StepTargetBinding ResolveStepTargetBindingFromActionData(List<ActionData> actionDataList, string currentStep)
+    private StepTargetBinding ResolveStepTargetBindingFromActionData(List<ActionData> actionDataList)
     {
-        if (ContainsSelfReference(currentStep))
+        StepTargetBinding structuredBinding = ResolveStructuredStepTargetBinding();
+        if (structuredBinding.HasTarget)
         {
-            return BuildSelfTargetBinding(currentStep, "StepText:SelfReference");
+            return structuredBinding;
         }
 
         if (actionDataList != null && actionDataList.Count > 0)
@@ -2178,6 +2541,13 @@ public class ActionDecisionModule : MonoBehaviour
 
                 string target = actionData.target.Trim();
                 if (IsNoneTargetToken(target)) continue;
+                if (string.Equals(target, "step_target", System.StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(target, "anchor:step_target", System.StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(target, "mission_target", System.StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(target, "primary_target", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
 
                 if (TryBuildStepTargetBindingFromTarget(target, out StepTargetBinding parsed))
                 {
@@ -2186,11 +2556,20 @@ public class ActionDecisionModule : MonoBehaviour
             }
         }
 
-        return ResolveStepTargetBinding(currentStep);
+        return structuredBinding;
     }
 
+    /// <summary>
+    /// 把高层动作中的 target 文本，转换成系统真正能执行的“目标绑定”。
+    /// 可以把它理解成一个“翻译器”：
+    /// - 输入是人或 LLM 写出来的目标描述；
+    /// - 输出是程序能直接使用的目标信息，比如目标类型、世界坐标、网格格子、名字、UID。
+    /// 如果一句 target 根本认不出来，就返回 false，表示这句话暂时不能落地执行。
+    /// </summary>
     private bool TryBuildStepTargetBindingFromTarget(string target, out StepTargetBinding binding)
     {
+        // 先构造一个“空目标”。
+        // 这样后面就算识别失败，binding 也仍然是完整结构，不会留下未初始化字段。
         binding = new StepTargetBinding
         {
             HasTarget = false,
@@ -2205,23 +2584,31 @@ public class ActionDecisionModule : MonoBehaviour
             Summary = "none"
         };
 
+        // target 为空，或者明确写成 none 这类“没有目标”的值，
+        // 就说明这次根本没有可绑定的对象，直接失败返回。
         if (string.IsNullOrWhiteSpace(target) || IsNoneTargetToken(target))
         {
             return false;
         }
 
         string raw = target.Trim();
+        // step_target 只是一个占位符，意思是“请使用上游已经绑定好的主目标”。
+        // 它不是一个新的具体地点，所以这里不重复解析。
         if (string.Equals(raw, "step_target", System.StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
 
+        // 如果 target 指向的是“自己”，比如回到自己附近、保持当前位置这类意思，
+        // 就直接构造一个以自身为目标的绑定。
         if (ContainsSelfReference(raw))
         {
             binding = BuildSelfTargetBinding(raw, "HighLevel:SelfReference");
             return true;
         }
 
+        // 第一类：把 target 当成校园里的建筑/地点名来识别。
+        // 这是最常见的“去某栋楼、去某个区域”的情况。
         if (TryResolveCampusFeatureTarget(raw, out Vector3 featurePos, out string featureSource, out string normalized))
         {
             binding.HasTarget = true;
@@ -2230,6 +2617,8 @@ public class ActionDecisionModule : MonoBehaviour
             binding.WorldPos = featurePos;
             binding.Name = normalized ?? string.Empty;
 
+            // 找到地点后，再顺手映射到最近可通行网格。
+            // 这样后面的导航模块就能直接拿它来寻路。
             if (TryResolveWalkableCell(featurePos, out Vector2Int c))
             {
                 binding.GridCell = c;
@@ -2241,6 +2630,7 @@ public class ActionDecisionModule : MonoBehaviour
                 }
             }
 
+            // 如果没拿到单独的 UID，就退回用名字做标识。
             if (string.IsNullOrWhiteSpace(binding.Uid))
             {
                 binding.Uid = binding.Name;
@@ -2251,6 +2641,8 @@ public class ActionDecisionModule : MonoBehaviour
             return true;
         }
 
+        // 第二类：把 target 当成显式世界坐标。
+        // 例如 world(x,z) 或 world(x,y,z)。
         if (TryParseWorldTarget(raw, out Vector3 worldPos))
         {
             binding.HasTarget = true;
@@ -2266,6 +2658,8 @@ public class ActionDecisionModule : MonoBehaviour
             return true;
         }
 
+        // 第三类：按小节点 ID 找局部感知对象。
+        // 这里的小节点可以理解成环境里更细的小目标，不一定是完整建筑。
         if (TryFindSmallNodeById(raw, out GameObject nodeObj, out Vector3 nodePos))
         {
             SmallNodeData nodeData = GetSmallNodeDataById(raw);
@@ -2288,6 +2682,7 @@ public class ActionDecisionModule : MonoBehaviour
             return true;
         }
 
+        // 第四类：如果没有明确 ID，就尝试按名字在当前感知结果里找对象。
         if (FindObjectByNameInPerception(raw, out GameObject perceivedObj))
         {
             binding.HasTarget = true;
@@ -2304,6 +2699,8 @@ public class ActionDecisionModule : MonoBehaviour
             return true;
         }
 
+        // 第五类：按语义去找最像的感知小节点。
+        // 这一步不是精确匹配某个名字，而是看“这个词大概在说哪类东西”。
         if (TryFindSmallNodeBySemantic(raw, out SmallNodeData semanticNode, out GameObject semanticObj, out Vector3 semanticPos))
         {
             binding.HasTarget = true;
@@ -2325,6 +2722,8 @@ public class ActionDecisionModule : MonoBehaviour
             return true;
         }
 
+        // 第六类：把 target 当作附近队友。
+        // 这给 Follow / Wait / Align 这类协同动作提供具体跟随对象。
         if (TryFindNearbyAgent(raw, out GameObject teammate))
         {
             binding.HasTarget = true;
@@ -2341,6 +2740,8 @@ public class ActionDecisionModule : MonoBehaviour
             return true;
         }
 
+        // 上面所有识别方式都没命中，说明当前这句 target 没法变成可靠坐标。
+        // 所以返回 false，让上层换别的来源或走兜底逻辑。
         return false;
     }
 
@@ -2678,6 +3079,11 @@ public class ActionDecisionModule : MonoBehaviour
                     targetMeta["targetKind"] = lastStepTargetBinding.TargetKind;
                     targetMeta["targetSource"] = "StepTargetAutoFill";
                     targetMeta["targetRef"] = "step_target";
+                    if (lastStepTargetBinding.TargetKind == "Feature" &&
+                        TryGetFeatureArrivalRadius(lastStepTargetBinding, out float featureArrivalRadius))
+                    {
+                        targetMeta["targetArrivalRadius"] = featureArrivalRadius.ToString("F2", CultureInfo.InvariantCulture);
+                    }
                 }
                 else
                 {
@@ -2698,6 +3104,11 @@ public class ActionDecisionModule : MonoBehaviour
                 foreach (var kv in resolvedMeta)
                 {
                     targetMeta[kv.Key] = kv.Value;
+                }
+                if (string.Equals(resolvedKind, "Feature", System.StringComparison.OrdinalIgnoreCase) &&
+                    TryGetFeatureArrivalRadiusByResolvedMeta(resolvedMeta, resolvedPos, out float featureArrivalRadius))
+                {
+                    targetMeta["targetArrivalRadius"] = featureArrivalRadius.ToString("F2", CultureInfo.InvariantCulture);
                 }
             }
             else
@@ -2914,11 +3325,129 @@ public class ActionDecisionModule : MonoBehaviour
     }
 
     /// <summary>
+    /// 从结构化 target 字符串里剥掉“标签前缀”。
+    /// 这里不再枚举任何业务单词，也不假设前缀一定是某类固定地点词。
+    ///
+    /// 设计原因：
+    /// PlanningModule 传下来的 target / primaryTarget / sharedTarget 本质上都是字符串字段，
+    /// 动作层不应该因为某个词表写死而限制解析范围。
+    /// 因此这里只做一个很克制的规则：
+    /// - 如果像 "xxx:yyy" 这种“标签:主体”的形式，就取主体 yyy；
+    /// - 否则保持原样。
+    /// </summary>
+    private static bool TryStripCampusFeaturePrefix(string query, out string prefix, out string stripped)
+    {
+        prefix = string.Empty;
+        stripped = query != null ? query.Trim() : string.Empty;
+        if (string.IsNullOrWhiteSpace(stripped)) return false;
+
+        int colonIndex = stripped.IndexOf(':');
+        if (colonIndex <= 0 || colonIndex >= stripped.Length - 1)
+        {
+            return false;
+        }
+
+        string left = stripped.Substring(0, colonIndex).Trim();
+        string right = stripped.Substring(colonIndex + 1).Trim();
+
+        // 只把“短标签:主体”当成前缀处理，避免把完整自然语言里的冒号误删掉。
+        // 例如：
+        // - feature:a_1   => a_1
+        // - campus:x_3    => x_3
+        // - 说明：去 a 的南面 => 不做这里的前缀剥离
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)) return false;
+        if (left.Length > 24) return false;
+        if (!System.Text.RegularExpressions.Regex.IsMatch(left, @"^[A-Za-z][A-Za-z0-9_\-]*$")) return false;
+
+        prefix = left;
+        stripped = right;
+        return true;
+    }
+
+    /// <summary>
+    /// 去掉用户描述里的“方位附加语”。
+    /// 设计目的：
+    /// 1) 用户经常会说“a 的南面”“x_3 北侧”这类“地点主体 + 方位附加语”；
+    /// 2) 这些说法里真正可定位的核心地点其实是前面的主体；
+    /// 3) 如果系统直接拿“a的南面”去查名字，通常会完全查不到位置。
+    ///
+    /// 注意：
+    /// 这里的职责只是“先把地点主体抠出来，别因为方位词导致查找失败”。
+    /// “从南侧接近”这种更细的语义，应优先由 PlanningModule 的 RoutePolicy/approachSide 来表达。
+    /// </summary>
+    private static string StripCampusDirectionalQualifier(string query)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return string.Empty;
+        string q = query.Trim();
+
+        // 常见中文形式：
+        // a的南面 / a南侧 / x_3北边 / 图书馆东部区域
+        string stripped = System.Text.RegularExpressions.Regex.Replace(
+            q,
+            @"^(?<base>.+?)(?:的)?(?:东|西|南|北)(?:面|侧|边|部|向|方向|一侧|区域|附近|周边|外侧|内侧|里面|内部)?$",
+            "${base}",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+        ).Trim();
+        if (!string.IsNullOrWhiteSpace(stripped) && !string.Equals(stripped, q, System.StringComparison.Ordinal))
+        {
+            return stripped;
+        }
+
+        // 常见英文形式：
+        // alpha south side / node_3 north / area west zone
+        stripped = System.Text.RegularExpressions.Regex.Replace(
+            q,
+            @"^(?<base>.+?)\s+(north|south|east|west)(?:\s+(?:side|area|part|zone|near|nearby))?$",
+            "${base}",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+        ).Trim();
+        return stripped;
+    }
+
+    /// <summary>
+    /// 为校园地点查询构造候选词列表。
+    /// 目标是把“PlanningModule 传来的结构化目标字符串”整理成
+    /// “CampusGrid2D 里最可能命中的几种查询字符串”。
+    ///
+    /// 典型例子：
+    /// - a              -> a
+    /// - a_1            -> a_1
+    /// - building_7     -> building_7
+    /// - a的南面        -> a的南面 / a
+    /// - building_7北侧 -> building_7北侧 / building_7
+    /// </summary>
+    private static List<string> BuildCampusFeatureQueryCandidates(string rawQuery)
+    {
+        List<string> result = new List<string>();
+        HashSet<string> seen = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+
+        void AddCandidate(string value)
+        {
+            string v = value != null ? value.Trim() : string.Empty;
+            if (string.IsNullOrWhiteSpace(v)) return;
+            if (seen.Add(v)) result.Add(v);
+        }
+
+        string q = rawQuery != null ? rawQuery.Trim() : string.Empty;
+        AddCandidate(q);
+
+        string baseQuery = StripCampusDirectionalQualifier(q);
+        AddCandidate(baseQuery);
+
+        return result;
+    }
+
+    /// <summary>
     /// 解析 CampusGrid2D 的地点目标。
-    /// 支持：
-    /// 1) building:名称
-    /// 2) feature:名称
-    /// 3) 直接写名称（会尝试精确/模糊匹配）
+    /// 这一版做了三件更贴近实际数据结构的事：
+    /// 1) 不再依赖任何业务词表，而是直接消费 PlanningModule 下发的字符串目标；
+    /// 2) 兼容 CampusGrid2D 内部同步的 runtime alias，例如 a_1、building_7；
+    /// 3) 对“a的南面”这类带方位词的查询，先提取核心地点 a，再做位置解析。
+    ///
+    /// 注意：
+    /// 这里解析的不是“用户随口说的话”，而是 PlanningModule 已经写进
+    /// MissionTaskSlot.target / StepIntentDefinition.primaryTarget / TeamCoordinationDirective.sharedTarget
+    /// 的结构化字符串。
     /// </summary>
     private bool TryResolveCampusFeatureTarget(string target, out Vector3 worldPos, out string source, out string normalizedName)
     {
@@ -2928,57 +3457,49 @@ public class ActionDecisionModule : MonoBehaviour
         if (string.IsNullOrWhiteSpace(target)) return false;
 
         string query = target.Trim();
-        bool hasExplicitPrefix = false;
-        if (query.StartsWith("building:", System.StringComparison.OrdinalIgnoreCase))
-        {
-            query = query.Substring("building:".Length).Trim();
-            hasExplicitPrefix = true;
-        }
-        else if (query.StartsWith("feature:", System.StringComparison.OrdinalIgnoreCase))
-        {
-            query = query.Substring("feature:".Length).Trim();
-            hasExplicitPrefix = true;
-        }
-
+        TryStripCampusFeaturePrefix(query, out _, out query);
         if (string.IsNullOrWhiteSpace(query)) return false;
-        normalizedName = query;
-        bool strictToken = hasExplicitPrefix || IsCanonicalFeatureToken(query);
-
-        // 先用当前智能体“已看见地点”解析，避免直接依赖全图静态摘要。
-        // 对显式 token（如 building_5）只做精确匹配，不做模糊映射。
-        if (TryResolvePerceivedCampusFeatureTarget(query, out worldPos, allowFuzzy: !strictToken))
-        {
-            source = strictToken ? "PerceivedCampusFeatureExact" : "PerceivedCampusFeature";
-            return true;
-        }
-
+        List<string> candidates = BuildCampusFeatureQueryCandidates(query);
         SyncCampusGridReference();
-        if (campusGrid == null || campusGrid.blockedGrid == null || campusGrid.cellTypeGrid == null)
-        {
-            return false;
-        }
 
-        if (TryResolveFeatureNameToCell(query, out Vector2Int cell, out string matchedToken, exactOnly: strictToken))
+        for (int i = 0; i < candidates.Count; i++)
         {
-            worldPos = campusGrid.GridToWorldCenter(cell.x, cell.y, astarWaypointYOffset);
-            worldPos.y = ResolveWaypointY(worldPos);
-            source = strictToken ? "CampusGrid2DExact" : "CampusGrid2D";
-            if (!string.IsNullOrWhiteSpace(matchedToken))
+            string candidate = candidates[i];
+            if (string.IsNullOrWhiteSpace(candidate)) continue;
+
+            normalizedName = candidate;
+            bool strictToken = IsCanonicalFeatureToken(candidate);
+
+            // 第一层：先看当前感知到的地点。
+            // 理由是：离自己最近、刚刚看见的对象，通常比全图静态摘要更可信。
+            if (TryResolvePerceivedCampusFeatureTarget(candidate, out worldPos, allowFuzzy: !strictToken))
             {
-                normalizedName = matchedToken;
+                source = strictToken ? "PerceivedCampusFeatureExact" : "PerceivedCampusFeature";
+                if (!string.Equals(candidate, query, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    source += ":Normalized";
+                }
+                return true;
             }
-            return true;
-        }
 
-        // 兼容 CampusJsonMapLoader 场景对象命名：
-        // building_2 这类 token 可能是“生成的 GameObject 名称”，并非 JSON 的 uid/name。
-        // 当严格 uid/name 解析失败时，允许按场景对象名做一次精确定位。
-        if (strictToken && TryResolveCampusSceneObjectExact(query, out Vector3 sceneObjPos))
-        {
-            worldPos = sceneObjPos;
-            source = "CampusSceneObjectExact";
-            normalizedName = query;
-            return true;
+            // 第二层：查 CampusGrid2D 的静态索引。
+            // 这里既查原始 uid/name，也查从 CampusJsonMapLoader 同步进来的 runtime alias。
+            if (campusGrid != null && campusGrid.blockedGrid != null && campusGrid.cellTypeGrid != null &&
+                TryResolveFeatureNameToCell(candidate, out Vector2Int cell, out string matchedToken, exactOnly: strictToken))
+            {
+                worldPos = campusGrid.GridToWorldCenter(cell.x, cell.y, astarWaypointYOffset);
+                worldPos.y = ResolveWaypointY(worldPos);
+                source = strictToken ? "CampusGrid2DExact" : "CampusGrid2D";
+                if (!string.Equals(candidate, query, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    source += ":Normalized";
+                }
+                if (!string.IsNullOrWhiteSpace(matchedToken))
+                {
+                    normalizedName = matchedToken;
+                }
+                return true;
+            }
         }
 
         return false;
@@ -3042,7 +3563,7 @@ public class ActionDecisionModule : MonoBehaviour
 
     /// <summary>
     /// 把地点名称映射到网格坐标。
-    /// exactOnly=true 时仅允许精确 name/uid，不做模糊/编号回退。
+    /// exactOnly=true 时仅允许精确 uid/name/alias，不做模糊回退。
     /// </summary>
     private bool TryResolveFeatureNameToCell(string featureName, out Vector2Int cell, out string matchedToken, bool exactOnly)
     {
@@ -3062,6 +3583,13 @@ public class ActionDecisionModule : MonoBehaviour
             campusGrid.TryGetFeatureFirstCell(q, out cell, preferWalkable: false, ignoreCase: true))
         {
             matchedToken = q;
+            return true;
+        }
+
+        if (campusGrid.TryResolveFeatureAliasCell(q, out cell, out string aliasUid, out string aliasName, preferWalkable: true, ignoreCase: true) ||
+            campusGrid.TryResolveFeatureAliasCell(q, out cell, out aliasUid, out aliasName, preferWalkable: false, ignoreCase: true))
+        {
+            matchedToken = !string.IsNullOrWhiteSpace(aliasUid) ? aliasUid : (aliasName ?? q);
             return true;
         }
 
@@ -3085,68 +3613,22 @@ public class ActionDecisionModule : MonoBehaviour
     }
 
     /// <summary>
-    /// 判断是否是“显式地点标识符”：
-    /// 例如 building_5 / feature_12 / building-3。
-    /// 这类 token 默认走精确解析，避免被别名模糊映射。
+    /// 判断是否是“显式地点标识符”。
+    /// 这里只认 CampusJsonMapLoader 真实命名规则里的“主体_数字”形式，
+    /// 例如 a_1、building_7。
+    /// 这类 token 代表“实例别名”，应优先走 CampusGrid2D 的 alias 精确查询。
     /// </summary>
     private static bool IsCanonicalFeatureToken(string query)
     {
         if (string.IsNullOrWhiteSpace(query)) return false;
         string q = query.Trim();
-        if (q.StartsWith("building:", System.StringComparison.OrdinalIgnoreCase))
-            q = q.Substring("building:".Length).Trim();
-        else if (q.StartsWith("feature:", System.StringComparison.OrdinalIgnoreCase))
-            q = q.Substring("feature:".Length).Trim();
 
-        if (System.Text.RegularExpressions.Regex.IsMatch(
+        TryStripCampusFeaturePrefix(q, out _, out q);
+
+        return System.Text.RegularExpressions.Regex.IsMatch(
             q,
-            @"^(?:building|feature)\s*[_\-:：]?\s*\d+$",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase))
-        {
-            return true;
-        }
-
-        if (System.Text.RegularExpressions.Regex.IsMatch(
-            q,
-            @"^[A-Za-z]+(?:[_\-][A-Za-z0-9]+)+$",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase))
-        {
-            return true;
-        }
-
-        return false;
-    }
-
-    /// <summary>
-    /// CampusJsonMapLoader 命名兼容：
-    /// 用场景中生成对象名做“精确匹配”定位（如 building_2）。
-    /// 注意：仅做精确 equals，不做 contains/编号模糊，避免错绑到“2号教学楼”。
-    /// </summary>
-    private bool TryResolveCampusSceneObjectExact(string query, out Vector3 worldPos)
-    {
-        worldPos = transform.position;
-        if (string.IsNullOrWhiteSpace(query)) return false;
-
-        string q = query.Trim();
-        if (q.StartsWith("building:", System.StringComparison.OrdinalIgnoreCase))
-            q = q.Substring("building:".Length).Trim();
-        else if (q.StartsWith("feature:", System.StringComparison.OrdinalIgnoreCase))
-            q = q.Substring("feature:".Length).Trim();
-        if (string.IsNullOrWhiteSpace(q)) return false;
-
-        GameObject go = GameObject.Find(q);
-        if (go == null) return false;
-
-        // 若存在 CampusJsonMapLoader，优先要求命中对象位于其层级内，避免误命中无关同名对象。
-        CampusJsonMapLoader loader = campusGrid != null ? campusGrid.campusLoader : null;
-        if (loader != null && go.transform != null && !go.transform.IsChildOf(loader.transform))
-        {
-            return false;
-        }
-
-        worldPos = go.transform.position;
-        worldPos.y = ResolveWaypointY(worldPos);
-        return true;
+            @"^[A-Za-z0-9]+(?:[_\-][A-Za-z0-9]+)*[_\-]\d+$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     }
 
     // 解析动作参数
@@ -3158,17 +3640,18 @@ public class ActionDecisionModule : MonoBehaviour
     // 执行动作序列
     private IEnumerator ExecuteActionSequence(List<ActionCommand> actions, string currentStep)
     {
+        string agentId = agentProperties != null ? agentProperties.AgentID : gameObject.name;
         // 打印当前步骤和动作序列信息
-        Debug.Log($"=== 开始执行步骤: {currentStep} ===");
-        Debug.Log($"步骤描述: {currentStep}");
-        Debug.Log($"动作序列数量: {actions.Count}");
+        Debug.Log($"=== 开始执行步骤 [{agentId}]: {currentStep} ===");
+        Debug.Log($"步骤描述[{agentId}]: {currentStep}");
+        Debug.Log($"动作序列数量[{agentId}]: {actions.Count}");
         
         for (int i = 0; i < actions.Count; i++)
         {
             var action = actions[i];
-            Debug.Log($"动作 {i + 1}/{actions.Count}: {action.ActionType}, 目标: {action.TargetObject?.name ?? action.TargetPosition.ToString()}, 参数: {action.Parameters}");
+            Debug.Log($"动作[{agentId}] {i + 1}/{actions.Count}: {action.ActionType}, 目标: {action.TargetObject?.name ?? action.TargetPosition.ToString()}, 参数: {action.Parameters}");
         }
-        Debug.Log("=== 步骤信息结束 ===");
+        Debug.Log($"=== 步骤信息结束 [{agentId}] ===");
 
         for (int i = 0; i < actions.Count; i++)
         {
@@ -3244,6 +3727,10 @@ public class ActionDecisionModule : MonoBehaviour
                 Debug.Log("准备执行下一个步骤");
                 StartCoroutine(DecideNextAction());
             }
+            else if (planningModule.IsWaitingForTeamCompletion())
+            {
+                Debug.Log("本地槽位已完成，等待队友完成其余槽位");
+            }
             else
             {
                 Debug.Log($"🎉 任务完成: {planningModule.currentPlan.mission}");
@@ -3264,12 +3751,31 @@ public class ActionDecisionModule : MonoBehaviour
         if (!lastIssuedSequenceContainsMovement) return false;
 
         if (!lastStepTargetBinding.HasTarget) return false;
-        if (lastStepTargetBinding.TargetKind != "Feature" && lastStepTargetBinding.TargetKind != "World")
-        {
-            return false;
-        }
+        // 对动态目标（队友/小节点）也要做接近性判定，否则会出现“动作刚执行完就错误推进 step”的问题。
+        lastStepTargetBinding = RefreshStepTargetBindingForCompletion(lastStepTargetBinding);
 
         return !IsNearStepTarget(lastStepTargetBinding);
+    }
+
+    /// <summary>
+    /// 在 step 完成判定前刷新一次目标绑定。
+    /// 对静态 Feature/World 不需要刷新；
+    /// 对 Agent/SmallNode 这类可能移动或感知更新的目标，优先按原始结构化 target 再解析一遍。
+    /// </summary>
+    private StepTargetBinding RefreshStepTargetBindingForCompletion(StepTargetBinding binding)
+    {
+        if (!binding.HasTarget) return binding;
+        if (string.IsNullOrWhiteSpace(binding.RawQuery)) return binding;
+
+        if (binding.TargetKind == "Agent" || binding.TargetKind == "SmallNode")
+        {
+            if (TryBuildStepTargetBindingFromTarget(binding.RawQuery, out StepTargetBinding refreshed))
+            {
+                return refreshed;
+            }
+        }
+
+        return binding;
     }
 
     /// <summary>
@@ -3282,7 +3788,12 @@ public class ActionDecisionModule : MonoBehaviour
         Vector3 goal = target.WorldPos;
 
         float planar = Vector2.Distance(new Vector2(cur.x, cur.z), new Vector2(goal.x, goal.z));
-        if (planar > Mathf.Max(0.5f, stepTargetReachDistance)) return false;
+        float reachDistance = Mathf.Max(0.5f, stepTargetReachDistance);
+        if (target.TargetKind == "Feature" && TryGetFeatureArrivalRadius(target, out float featureArrivalRadius))
+        {
+            reachDistance = Mathf.Max(reachDistance, featureArrivalRadius);
+        }
+        if (planar > reachDistance) return false;
 
         // 地面车不做高度判定；无人机做宽松高度判定。
         if (agentProperties != null && agentProperties.Type == AgentType.Quadcopter)
@@ -3290,6 +3801,137 @@ public class ActionDecisionModule : MonoBehaviour
             float dy = Mathf.Abs(cur.y - goal.y);
             if (dy > Mathf.Max(0.2f, stepTargetReachHeightTolerance)) return false;
         }
+        return true;
+    }
+
+    private bool IsFeatureTargetSatisfiedByPerception(StepTargetBinding target)
+    {
+        if (!target.HasTarget || target.TargetKind != "Feature") return false;
+        if (agentState?.DetectedCampusFeatures == null || agentState.DetectedCampusFeatures.Count == 0) return false;
+
+        float featureArrivalRadius = stepTargetReachDistance;
+        if (TryGetFeatureArrivalRadius(target, out float estimatedRadius))
+        {
+            featureArrivalRadius = estimatedRadius;
+        }
+        float perceptionReach = Mathf.Max(featureArrivalRadius, Mathf.Max(stepTargetReachDistance, 12f));
+
+        for (int i = 0; i < agentState.DetectedCampusFeatures.Count; i++)
+        {
+            CampusFeaturePerceptionData data = agentState.DetectedCampusFeatures[i];
+            if (data == null) continue;
+
+            bool matched =
+                (!string.IsNullOrWhiteSpace(target.Uid) &&
+                 string.Equals(data.FeatureUid, target.Uid, System.StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrWhiteSpace(target.Name) &&
+                 string.Equals(data.FeatureName, target.Name, System.StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrWhiteSpace(target.RawQuery) &&
+                 (string.Equals(data.FeatureName, target.RawQuery, System.StringComparison.OrdinalIgnoreCase) ||
+                  string.Equals(data.FeatureUid, target.RawQuery, System.StringComparison.OrdinalIgnoreCase)));
+            if (!matched) continue;
+
+            float planar = Vector2.Distance(
+                new Vector2(transform.position.x, transform.position.z),
+                new Vector2(data.AnchorWorldPosition.x, data.AnchorWorldPosition.z)
+            );
+            if (planar <= perceptionReach)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool TryGetFeatureArrivalRadius(StepTargetBinding target, out float radius)
+    {
+        radius = 0f;
+        if (!target.HasTarget || target.TargetKind != "Feature" || campusGrid == null) return false;
+
+        string featureToken = !string.IsNullOrWhiteSpace(target.Uid)
+            ? target.Uid
+            : (!string.IsNullOrWhiteSpace(target.Name) ? target.Name : target.RawQuery);
+        if (string.IsNullOrWhiteSpace(featureToken)) return false;
+
+        return TryEstimateFeatureArrivalRadius(featureToken, out radius);
+    }
+
+    private bool TryGetFeatureArrivalRadiusByResolvedMeta(Dictionary<string, string> resolvedMeta, Vector3 resolvedPos, out float radius)
+    {
+        radius = 0f;
+        if (resolvedMeta == null) return false;
+
+        if (resolvedMeta.TryGetValue("targetFeature", out string featureToken) &&
+            !string.IsNullOrWhiteSpace(featureToken) &&
+            TryEstimateFeatureArrivalRadius(featureToken, out radius))
+        {
+            return true;
+        }
+
+        if (resolvedMeta.TryGetValue("targetUid", out string featureUid) &&
+            !string.IsNullOrWhiteSpace(featureUid) &&
+            TryEstimateFeatureArrivalRadius(featureUid, out radius))
+        {
+            return true;
+        }
+
+        if (campusGrid != null && campusGrid.TryGetCellFeatureInfoByWorld(resolvedPos, out _, out string uid, out string name, out _, out _))
+        {
+            string token = !string.IsNullOrWhiteSpace(uid) ? uid : name;
+            if (!string.IsNullOrWhiteSpace(token) && TryEstimateFeatureArrivalRadius(token, out radius))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool TryEstimateFeatureArrivalRadius(string featureToken, out float radius)
+    {
+        radius = 0f;
+        if (campusGrid == null || string.IsNullOrWhiteSpace(featureToken)) return false;
+
+        List<Vector2Int> cells = new List<Vector2Int>();
+        string q = featureToken.Trim();
+
+        if (campusGrid.cellFeatureUidGrid != null)
+        {
+            for (int x = 0; x < campusGrid.gridWidth; x++)
+            {
+                for (int z = 0; z < campusGrid.gridLength; z++)
+                {
+                    string uid = campusGrid.cellFeatureUidGrid[x, z];
+                    if (!string.IsNullOrWhiteSpace(uid) &&
+                        string.Equals(uid, q, System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        cells.Add(new Vector2Int(x, z));
+                    }
+                }
+            }
+        }
+
+        if (cells.Count == 0)
+        {
+            cells = campusGrid.GetCellsByFeatureName(q, ignoreCase: true);
+        }
+
+        if (cells == null || cells.Count == 0)
+        {
+            radius = featureArrivalMinRadius;
+            return true;
+        }
+
+        int minX = cells.Min(c => c.x);
+        int maxX = cells.Max(c => c.x);
+        int minZ = cells.Min(c => c.y);
+        int maxZ = cells.Max(c => c.y);
+        float width = (maxX - minX + 1) * campusGrid.cellSize;
+        float length = (maxZ - minZ + 1) * campusGrid.cellSize;
+        float footprintRadius = Mathf.Max(width, length) * featureArrivalCellRadiusScale;
+        float clampedMax = Mathf.Max(featureArrivalMinRadius, featureArrivalMaxRadius);
+        radius = Mathf.Clamp(footprintRadius, featureArrivalMinRadius, clampedMax);
         return true;
     }
 
@@ -3667,14 +4309,18 @@ public class ActionDecisionModule : MonoBehaviour
 
         var matches = System.Text.RegularExpressions.Regex.Matches(
             s,
-            @"[""']?(?<k>[A-Za-z_][A-Za-z0-9_]*)[""']?\s*[:=]\s*[""']?(?<v>[^,}\r\n]+)[""']?"
+            @"[""']?(?<k>[A-Za-z_][A-Za-z0-9_]*)[""']?\s*[:=]\s*(?:""(?<dq>(?:\\.|[^""])*)""|'(?<sq>(?:\\.|[^'])*)'|(?<raw>[^,}\r\n]+))"
         );
 
         foreach (System.Text.RegularExpressions.Match m in matches)
         {
             string k = m.Groups["k"].Value.Trim();
-            string v = m.Groups["v"].Value.Trim();
+            string v = m.Groups["dq"].Success
+                ? m.Groups["dq"].Value
+                : (m.Groups["sq"].Success ? m.Groups["sq"].Value : m.Groups["raw"].Value);
+            v = v.Trim();
             if (string.IsNullOrEmpty(k)) continue;
+            v = v.Replace("\\\"", "\"").Replace("\\\\", "\\");
             map[k] = v;
         }
 
