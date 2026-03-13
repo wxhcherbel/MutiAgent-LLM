@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 using System.Collections.Generic;
 
@@ -1652,6 +1653,98 @@ public static class SmallNodeRegistry
 
         data = null;
         return false;
+    }
+
+    /// <summary>
+    /// 按精确标识解析单个小节点。
+    /// 这里只接受三类稳定身份：
+    /// 1) NodeId；
+    /// 2) DisplayName 精确匹配；
+    /// 3) SceneObject.name 精确匹配。
+    /// 不在这里做“树/车辆/最近行人”这类语义猜测。
+    /// </summary>
+    public static bool TryResolveExact(string token, out SmallNodeData data)
+    {
+        data = null;
+        if (string.IsNullOrWhiteSpace(token)) return false;
+
+        string q = token.Trim();
+        if (TryGetNode(q, out data)) return true;
+
+        foreach (KeyValuePair<string, SmallNodeData> kv in nodes)
+        {
+            SmallNodeData n = kv.Value;
+            if (n == null) continue;
+
+            if (!string.IsNullOrWhiteSpace(n.DisplayName) &&
+                string.Equals(n.DisplayName.Trim(), q, StringComparison.OrdinalIgnoreCase))
+            {
+                data = Clone(n);
+                return true;
+            }
+
+            if (n.SceneObject != null &&
+                !string.IsNullOrWhiteSpace(n.SceneObject.name) &&
+                string.Equals(n.SceneObject.name.Trim(), q, StringComparison.OrdinalIgnoreCase))
+            {
+                data = Clone(n);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 按多个稳定标识解析小节点集合。
+    /// 典型输入来源是 StructuredTargetReference.memberEntityIds。
+    /// </summary>
+    public static List<SmallNodeData> QueryNodesByIds(IEnumerable<string> ids)
+    {
+        List<SmallNodeData> result = new List<SmallNodeData>();
+        if (ids == null) return result;
+
+        HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string id in ids)
+        {
+            if (string.IsNullOrWhiteSpace(id)) continue;
+            string trimmed = id.Trim();
+            if (!seen.Add(trimmed)) continue;
+
+            if (TryResolveExact(trimmed, out SmallNodeData node) && node != null)
+            {
+                result.Add(node);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 按 DisplayName 精确匹配查询小节点集合。
+    /// 这给用户显式指定“同名节点群”留了接口，但仍不做模糊语义猜测。
+    /// </summary>
+    public static List<SmallNodeData> QueryNodesByDisplayName(string displayName, bool includeStatic = true, bool includeDynamic = true)
+    {
+        List<SmallNodeData> result = new List<SmallNodeData>();
+        if (string.IsNullOrWhiteSpace(displayName)) return result;
+
+        string q = displayName.Trim();
+        foreach (KeyValuePair<string, SmallNodeData> kv in nodes)
+        {
+            SmallNodeData n = kv.Value;
+            if (n == null) continue;
+            if (n.IsDynamic && !includeDynamic) continue;
+            if (!n.IsDynamic && !includeStatic) continue;
+            if (string.IsNullOrWhiteSpace(n.DisplayName)) continue;
+
+            if (string.Equals(n.DisplayName.Trim(), q, StringComparison.OrdinalIgnoreCase))
+            {
+                result.Add(Clone(n));
+            }
+        }
+
+        return result;
     }
 
     /// <summary>

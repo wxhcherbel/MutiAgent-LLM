@@ -17,14 +17,14 @@ public enum AgentType
 /// </summary>
 public enum SmallNodeType
 {
-    Unknown = 0,
-    Tree = 1,
-    Pedestrian = 2,
-    Vehicle = 3,
-    ResourcePoint = 4,
-    TemporaryObstacle = 5,
-    Agent = 6,
-    Custom = 99
+    Unknown = 0,           // 未知类型；当感知层还没法稳定分类时使用。
+    Tree = 1,              // 树木、树丛等静态自然障碍或环境对象。
+    Pedestrian = 2,        // 行人或其他可移动的人类目标。
+    Vehicle = 3,           // 车辆、车体或其他可移动载具目标。
+    ResourcePoint = 4,     // 资源点、补给点、物资点或可收集目标。
+    TemporaryObstacle = 5, // 临时障碍，例如施工物、路障、临时封锁物。
+    Agent = 6,             // 智能体对象本身；通常用于把队友/敌方也纳入统一小节点感知。
+    Custom = 99            // 自定义扩展类型；给项目侧预留。
 }
 
 /// <summary>
@@ -105,20 +105,43 @@ public enum AgentStatus
 }
 
 /// <summary>
-/// 基础任务类型枚举。
-/// 说明：
-/// 1) 该枚举用于描述任务语义；
-/// 2) 是否优先使用 A* 由 PlanningModule 中的“任务类型 -> 导航策略”映射决定；
-/// 3) 最终是否启用 A* 仍需结合当前 step（例如通信/扫描 step 不走 A*）。
+/// 任务目标类型枚举。
+/// 设计约束：
+/// 1) 这里只回答“要去做什么任务”；
+/// 2) 不再混入 Cooperation / Competition 这类关系语义；
+/// 3) 队伍关系统一由 TeamRelationshipType 表达。
 /// </summary>
 public enum MissionType
 {
-    Cooperation,   // 协同合作 - 默认
-    Competition,    // 对抗竞争 - 两队对抗
-    Exploration,    // 探索侦查 - 环境探索
-    Pursuit,        // 追击围捕 - 目标追踪
-    Transport,      // 运输传递 - 物资传输
-    SearchRescue    // 搜索救援 - 目标搜寻
+    Unknown = 0,         // 未知任务；当上游没有可靠任务类型时的保守默认值。
+    Exploration = 1,     // 探索未知区域。
+    Reconnaissance = 2,  // 定向侦察指定目标。
+    SearchRescue = 3,    // 搜索伤员并协同救援。
+    Patrol = 4,          // 巡逻巡查指定区域或路线。
+    GuardDefense = 5,    // 守卫防御关键目标。
+    Escort = 6,          // 护送对象或队伍。
+    Transport = 7,       // 运输物资、设备或消息。
+    Inspection = 8,      // 巡检建筑、设施或外立面。
+    CoverageSurvey = 9,  // 覆盖式扫描、普查或搜索。
+    PursuitEvasion = 10, // 追击、追逃或围堵动态目标。
+    Interception = 11,   // 拦截路线、通道或目标。
+    OccupyHold = 12,     // 占领并固守关键区域。
+    Evacuation = 13,     // 疏散、撤离或引导离场。
+    ConstructionRepair = 14, // 建设、搭建或维修设施。
+    ResourceCollection = 15, // 采集或争夺资源。
+    CommunicationRelay = 16  // 建立、保持或接力通信链路。
+}
+
+/// <summary>
+/// 队伍关系类型。
+/// 它回答的是“这次多智能体关系是什么”，而不是“具体去干什么任务”。
+/// </summary>
+public enum TeamRelationshipType
+{
+    Cooperation = 0, // 以合作协作为主
+    Competition = 1, // 以竞争抢占为主
+    Adversarial = 2, // 以敌对对抗为主
+    Mixed = 3        // 同时包含协作、竞争或对抗
 }
 
 /// <summary>
@@ -183,8 +206,8 @@ public enum MessageType
 
     // 求助响应类型
     RequestHelp,        // 求助请求
-    HelpRequest,       // 求助响应
-    Response,           // 响应确认
+    HelpRequest,        // 兼容旧链路保留；语义上表示对求助的响应/应答
+    Response,           // 通用响应确认
 
     // 系统管理类型
     RoleAssignment,     // 角色分配

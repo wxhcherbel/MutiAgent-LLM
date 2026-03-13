@@ -112,6 +112,10 @@ public class CampusJsonMapLoader : MonoBehaviour
     public bool autoFitGroundToJsonBounds = true;
     [Min(0f)] public float groundMarginM = 10f;
 
+    [Header("Map XY Scale")]
+    [Tooltip("仅对地图的 XY 平面进行等比缩放。值大于 1 会拉大建筑与道路之间的水平间距，便于细网格通行。")]
+    [Min(0.1f)] public float horizontalMapScale = 1f;
+
     // =========================
     // 随机 / 建筑高度
     // =========================
@@ -211,6 +215,8 @@ public class CampusJsonMapLoader : MonoBehaviour
             return;
         }
 
+        ApplyHorizontalScaleToFeatures(features, ref allBounds, horizontalMapScale);
+
         EnsureFolders();
 
         // 地面尺寸
@@ -289,7 +295,7 @@ public class CampusJsonMapLoader : MonoBehaviour
             // 线：road/expressway/bridge
             if (f.HasLine())
             {
-                float width = Mathf.Max(0.1f, strokeWidthM);
+                float width = Mathf.Max(0.1f, strokeWidthM * Mathf.Max(0.1f, horizontalMapScale));
                 float thick = Mathf.Max(0.01f, strokeThicknessM);
                 float zBias = ((int)f.kind) * zBiasStepM;
                 float zCenter = groundZ + thick * 0.5f + zBias;
@@ -441,6 +447,67 @@ public class CampusJsonMapLoader : MonoBehaviour
 
         outJson = File.ReadAllText(path);
         return true;
+    }
+
+    private static void ApplyHorizontalScaleToFeatures(List<CampusFeature> features, ref Rect allBounds, float scale)
+    {
+        float safeScale = Mathf.Max(0.1f, scale);
+        if (features == null || features.Count == 0 || Mathf.Abs(safeScale - 1f) < 1e-4f) return;
+
+        Vector2 pivot = allBounds.center;
+        for (int i = 0; i < features.Count; i++)
+        {
+            CampusFeature feature = features[i];
+            if (feature == null) continue;
+
+            ScaleRingCollection(feature.outerRings, pivot, safeScale);
+            ScaleRingCollection(feature.innerRings, pivot, safeScale);
+            ScalePointCollection(feature.linePoints, pivot, safeScale);
+
+            if (feature.boundsValid)
+            {
+                feature.bounds = ScaleRectAroundPivot(feature.bounds, pivot, safeScale);
+            }
+        }
+
+        allBounds = ScaleRectAroundPivot(allBounds, pivot, safeScale);
+    }
+
+    private static void ScaleRingCollection(List<CampusRing> rings, Vector2 pivot, float scale)
+    {
+        if (rings == null) return;
+        for (int i = 0; i < rings.Count; i++)
+        {
+            CampusRing ring = rings[i];
+            if (ring == null || ring.points == null) continue;
+            ScalePointCollection(ring.points, pivot, scale);
+        }
+    }
+
+    private static void ScalePointCollection(List<Vector2> points, Vector2 pivot, float scale)
+    {
+        if (points == null) return;
+        for (int i = 0; i < points.Count; i++)
+        {
+            points[i] = ScalePointAroundPivot(points[i], pivot, scale);
+        }
+    }
+
+    private static Vector2 ScalePointAroundPivot(Vector2 point, Vector2 pivot, float scale)
+    {
+        return pivot + (point - pivot) * scale;
+    }
+
+    private static Rect ScaleRectAroundPivot(Rect rect, Vector2 pivot, float scale)
+    {
+        Vector2 min = ScalePointAroundPivot(new Vector2(rect.xMin, rect.yMin), pivot, scale);
+        Vector2 max = ScalePointAroundPivot(new Vector2(rect.xMax, rect.yMax), pivot, scale);
+        return Rect.MinMaxRect(
+            Mathf.Min(min.x, max.x),
+            Mathf.Min(min.y, max.y),
+            Mathf.Max(min.x, max.x),
+            Mathf.Max(min.y, max.y)
+        );
     }
 
     private CampusFeatureKind ParseKind(string kindStr)

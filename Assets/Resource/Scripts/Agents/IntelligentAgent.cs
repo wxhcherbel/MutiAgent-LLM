@@ -3,6 +3,12 @@ using System.Collections;
 using System.Collections.Generic;
 // using System.Diagnostics;
 
+/// <summary>
+/// 智能体主控制器。
+/// 现在它除了“有任务就执行”之外，还承担自治触发门的职责：
+/// - 如果已经有活跃任务，就驱动 ActionDecisionModule 继续执行；
+/// - 如果当前空闲但自治目标收件箱非空，就先唤起 PlanningModule 发起新一轮规划。
+/// </summary>
 public class IntelligentAgent : MonoBehaviour
 {
     [Header("属性配置")]

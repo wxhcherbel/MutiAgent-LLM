@@ -71,6 +71,12 @@ public class MLAgentsController : MonoBehaviour
     public float positionPrecision = 1f;// 位置精度（米）
     public float scanRange = 10f;         // 扫描范围
 
+    [Header("离散高度层映射")]
+    public float groundAltitudeLayerHeight = 0.5f; // Ground 层对应的执行高度
+    public float lowAltitudeLayerHeight = 4f;      // Low 层对应的执行高度
+    public float mediumAltitudeLayerHeight = 8f;   // Medium 层对应的执行高度
+    public float highAltitudeLayerHeight = 12f;    // High 层对应的执行高度
+
     [Header("动作完成判定(无人机)")]
     [Min(0.05f)] public float completionSettleTime = 0.2f; // 条件连续满足该时长才判完成
     [Min(0.05f)] public float droneAltitudeTolerance = 0.18f; // 高度误差阈值
@@ -95,6 +101,7 @@ public class MLAgentsController : MonoBehaviour
     private float commandStartPlanarDistance;
     private float closestPlanarDistance;
     private float lastProgressTime;
+    private Vector2 lastProgressPlanarPosition;
     private HashSet<Vector3Int> exploredNodes = new HashSet<Vector3Int>(); // 探索记录
     private GameObject heldObject;        // 持有的物体
     private int resourcesDelivered = 0;   // 已运送资源计数
@@ -107,6 +114,7 @@ public class MLAgentsController : MonoBehaviour
     // 外部模块引用
     private AgentSpawner agentSpawner;
     private CampusGrid2D campusGrid;
+    private ActionDecisionModule actionDecisionModule;
 
     // 仅使用 CampusGrid2D 的真实世界边界做约束
     private bool useAbsoluteWorldBounds = false;
@@ -118,6 +126,7 @@ public class MLAgentsController : MonoBehaviour
     private void Awake()
     {
         intelligentAgent = GetComponent<IntelligentAgent>();
+        actionDecisionModule = GetComponent<ActionDecisionModule>();
         rb = GetComponent<Rigidbody>();
         if (rb == null)
         {
@@ -125,6 +134,7 @@ public class MLAgentsController : MonoBehaviour
         }
         perceptionModule = GetComponent<PerceptionModule>();
         SyncMotionConfigFromAgentProperties();
+        SyncDiscreteAltitudeLayerHeights();
         ConfigureRigidbody();
         tempSpeed = maxSpeed;
     }
@@ -174,12 +184,27 @@ public class MLAgentsController : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 与 ActionDecisionModule 的离散高度层保持一致。
+    /// 如果动作层已经定义了 Low/Medium/High 的世界高度，这里直接复用，避免上下游高度语义漂移。
+    /// </summary>
+    private void SyncDiscreteAltitudeLayerHeights()
+    {
+        if (actionDecisionModule == null) return;
+
+        groundAltitudeLayerHeight = Mathf.Max(droneMinHeight, groundAltitudeLayerHeight);
+        lowAltitudeLayerHeight = Mathf.Max(groundAltitudeLayerHeight + 0.5f, actionDecisionModule.lowAltitudeLayerHeight);
+        mediumAltitudeLayerHeight = Mathf.Max(lowAltitudeLayerHeight + 0.5f, actionDecisionModule.mediumAltitudeLayerHeight);
+        highAltitudeLayerHeight = Mathf.Max(mediumAltitudeLayerHeight + 0.5f, actionDecisionModule.highAltitudeLayerHeight);
+    }
+
     public void Start()
     {
         // 获取外部模块引用
         agentSpawner = FindObjectOfType<AgentSpawner>();
         campusGrid = FindObjectOfType<CampusGrid2D>();
         SyncMotionConfigFromAgentProperties();
+        SyncDiscreteAltitudeLayerHeights();
         ConfigureRigidbody();
 
         if (campusGrid != null)
@@ -292,6 +317,13 @@ public class MLAgentsController : MonoBehaviour
     /// </summary>
     public void SetCurrentCommand(ActionCommand command, ActionCompletedCallback callback)
     {
+        // 上游异常传空命令时，立刻通过回调返回失败，避免当前控制器进入半初始化状态。
+        if (command == null)
+        {
+            callback?.Invoke(PrimitiveActionType.Idle, false, "空动作命令");
+            return;
+        }
+
         currentCommand = command;
         PrepareCommandForExecution(currentCommand);
         currentActionCallback = callback;
@@ -300,6 +332,7 @@ public class MLAgentsController : MonoBehaviour
         commandStartPlanarDistance = GetCurrentPlanarDistanceToCommandTarget();
         closestPlanarDistance = commandStartPlanarDistance;
         lastProgressTime = Time.time;
+        lastProgressPlanarPosition = new Vector2(transform.position.x, transform.position.z);
         
         if (intelligentAgent != null)
         {
@@ -322,6 +355,14 @@ public class MLAgentsController : MonoBehaviour
         }
 
         var parameters = ParseActionParameters(command.Parameters);
+        Dictionary<string, string> rawParameters = ParseLooseStringParameters(command.Parameters);
+
+        // 如果动作层已经把目标明确落成 grid(x,z) 或 gridX/gridZ，
+        // 执行层这里优先恢复为对应格心坐标，避免继续拿一段世界坐标做隐式反推。
+        if (TryResolveGridTargetPosition(command, parameters, rawParameters, out Vector3 gridTargetWorld))
+        {
+            command.TargetPosition = gridTargetWorld;
+        }
 
         if (command.ActionType == PrimitiveActionType.RotateTo)
         {
@@ -362,6 +403,17 @@ public class MLAgentsController : MonoBehaviour
         {
             float targetHeight = ResolveDesiredHeightFromParameters(parameters, transform.position.y);
             command.TargetPosition = new Vector3(transform.position.x, targetHeight, transform.position.z);
+        }
+        else if (command.ActionType == PrimitiveActionType.MoveTo &&
+                 intelligentAgent?.Properties.Type == AgentType.Quadcopter)
+        {
+            bool hasExplicitHeight = parameters.ContainsKey("height") || parameters.ContainsKey("altitude");
+            float fallbackHeight = hasExplicitHeight ? command.TargetPosition.y : transform.position.y;
+            float targetHeight = ResolveDesiredHeightFromParameters(parameters, fallbackHeight);
+
+            // 无人机水平 MoveTo 默认保持当前高度飞行。
+            // 这里必须同时写回 command.TargetPosition，保证执行逻辑和完成判定使用同一目标高度。
+            command.TargetPosition = new Vector3(command.TargetPosition.x, targetHeight, command.TargetPosition.z);
         }
     }
 
@@ -803,6 +855,94 @@ public class MLAgentsController : MonoBehaviour
         return Mathf.Clamp(h, droneMinHeight, droneMaxHeight);
     }
 
+    /// <summary>
+    /// 若参数里已经显式给出逻辑格，则优先恢复成对应格心坐标。
+    /// 这样 MoveTo/LookAt/Align 等动作看到的是稳定的离散目标，而不是模糊世界点。
+    /// </summary>
+    private bool TryResolveGridTargetPosition(ActionCommand command, Dictionary<string, float> numericParameters, Dictionary<string, string> rawParameters, out Vector3 gridTargetWorld)
+    {
+        gridTargetWorld = command != null ? command.TargetPosition : transform.position;
+        if (command == null || campusGrid == null) return false;
+        if (command.TargetObject != null) return false;
+
+        Vector2Int cell = new Vector2Int(-1, -1);
+        if (rawParameters != null &&
+            rawParameters.TryGetValue("gridTarget", out string gridTargetToken) &&
+            TryParseGridCellToken(gridTargetToken, out cell))
+        {
+            // 优先使用 gridTarget 字符串。
+        }
+        else if (numericParameters != null &&
+                 numericParameters.TryGetValue("gridX", out float fx) &&
+                 numericParameters.TryGetValue("gridZ", out float fz))
+        {
+            cell = new Vector2Int(Mathf.RoundToInt(fx), Mathf.RoundToInt(fz));
+        }
+        else
+        {
+            return false;
+        }
+
+        if (!campusGrid.IsInBounds(cell.x, cell.y)) return false;
+
+        float targetHeight = ResolveDesiredHeightFromParameters(
+            numericParameters,
+            command.TargetPosition.y > 0.01f ? command.TargetPosition.y : transform.position.y);
+        gridTargetWorld = campusGrid.GridToWorldCenter(cell.x, cell.y);
+        gridTargetWorld.y = targetHeight;
+        return true;
+    }
+
+    /// <summary>
+    /// 解析 grid(x,z) / cell(x,z) 形式的显式网格 token。
+    /// </summary>
+    private static bool TryParseGridCellToken(string token, out Vector2Int cell)
+    {
+        cell = new Vector2Int(-1, -1);
+        if (string.IsNullOrWhiteSpace(token)) return false;
+
+        Match match = Regex.Match(
+            token.Trim(),
+            @"^(?:grid|cell)\s*\(\s*(-?\d+)\s*,\s*(-?\d+)\s*\)$",
+            RegexOptions.IgnoreCase);
+        if (!match.Success) return false;
+
+        if (!int.TryParse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int x) ||
+            !int.TryParse(match.Groups[2].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int z))
+        {
+            return false;
+        }
+
+        cell = new Vector2Int(x, z);
+        return true;
+    }
+
+    /// <summary>
+    /// 将离散高度层 token 映射到具体执行高度。
+    /// 这是执行层唯一允许的层级语义解释，不再要求动作层直接给任意连续 y 值。
+    /// </summary>
+    private float ResolveHeightFromAltitudeLayerToken(string layerToken, float fallbackHeight)
+    {
+        if (string.IsNullOrWhiteSpace(layerToken))
+        {
+            return Mathf.Clamp(fallbackHeight, droneMinHeight, droneMaxHeight);
+        }
+
+        switch (layerToken.Trim())
+        {
+            case "Ground":
+                return Mathf.Clamp(groundAltitudeLayerHeight, droneMinHeight, droneMaxHeight);
+            case "Low":
+                return Mathf.Clamp(lowAltitudeLayerHeight, droneMinHeight, droneMaxHeight);
+            case "Medium":
+                return Mathf.Clamp(mediumAltitudeLayerHeight, droneMinHeight, droneMaxHeight);
+            case "High":
+                return Mathf.Clamp(highAltitudeLayerHeight, droneMinHeight, droneMaxHeight);
+            default:
+                return Mathf.Clamp(fallbackHeight, droneMinHeight, droneMaxHeight);
+        }
+    }
+
     private float GetCurrentPlanarDistanceToCommandTarget()
     {
         if (currentCommand == null) return 0f;
@@ -830,10 +970,21 @@ public class MLAgentsController : MonoBehaviour
         }
 
         float planar = GetCurrentPlanarDistanceToCommandTarget();
-        if (planar + moveProgressThreshold < closestPlanarDistance)
+        Vector2 currentPlanarPosition = new Vector2(transform.position.x, transform.position.z);
+        float planarTravel = Vector2.Distance(currentPlanarPosition, lastProgressPlanarPosition);
+        float travelThreshold = Mathf.Max(0.2f, moveProgressThreshold * 0.5f);
+
+        // “进展”不能只看与当前 waypoint 的直线距离是否单调下降。
+        // 对粗路径/绕行路径，智能体可能先横移或绕障，短时间内未必明显逼近当前目标格，
+        // 但只要已经沿路径真实移动了一段，就不该立刻判成卡死。
+        bool advancedTowardTarget = planar + moveProgressThreshold < closestPlanarDistance;
+        bool advancedAlongPath = planarTravel >= travelThreshold;
+
+        if (advancedTowardTarget || advancedAlongPath)
         {
-            closestPlanarDistance = planar;
+            closestPlanarDistance = Mathf.Min(closestPlanarDistance, planar);
             lastProgressTime = Time.time;
+            lastProgressPlanarPosition = currentPlanarPosition;
         }
     }
 
@@ -894,11 +1045,21 @@ public class MLAgentsController : MonoBehaviour
             Time.time - lastProgressTime > moveProgressTimeout)
         {
             float planar = GetCurrentPlanarDistanceToCommandTarget();
-            return $"动作卡住: 无进展{(Time.time - lastProgressTime):F1}s, dist={planar:F1}m";
+            float speed = new Vector2(rb.velocity.x, rb.velocity.z).magnitude;
+            float moved = Vector2.Distance(new Vector2(transform.position.x, transform.position.z), lastProgressPlanarPosition);
+            return $"动作卡住: 无进展{(Time.time - lastProgressTime):F1}s, dist={planar:F1}m, speed={speed:F1}, moved={moved:F1}";
         }
 
         float effectiveTimeout = GetEffectiveActionTimeout();
         float currentDist = GetCurrentPlanarDistanceToCommandTarget();
+        if (currentCommand.ActionType == PrimitiveActionType.MoveTo &&
+            intelligentAgent?.Properties.Type == AgentType.Quadcopter)
+        {
+            var parameters = ParseActionParameters(currentCommand.Parameters);
+            float targetHeight = ResolveDesiredHeightFromParameters(parameters, currentCommand.TargetPosition.y);
+            return $"动作超时: elapsed={(Time.time - actionStartTime):F1}s/{effectiveTimeout:F1}s, dist={currentDist:F1}m, y={transform.position.y:F1}->{targetHeight:F1}";
+        }
+
         return $"动作超时: elapsed={(Time.time - actionStartTime):F1}s/{effectiveTimeout:F1}s, dist={currentDist:F1}m";
     }
 
@@ -950,7 +1111,25 @@ public class MLAgentsController : MonoBehaviour
         {
             Debug.LogWarning("感知模块未找到，无法执行扫描动作");
             return;
-        }     
+        }
+
+        // 扫描前优先朝向显式目标，避免“动作名叫 Scan，但朝向完全无关”的衔接断层。
+        if (currentCommand != null)
+        {
+            if (currentCommand.TargetObject != null)
+            {
+                ExecuteLookAt(currentCommand.TargetObject.transform.position);
+            }
+            else
+            {
+                Vector3 planarDelta = currentCommand.TargetPosition - transform.position;
+                planarDelta.y = 0f;
+                if (planarDelta.sqrMagnitude > 0.04f)
+                {
+                    ExecuteLookAt(currentCommand.TargetPosition);
+                }
+            }
+        }
     }
     
     /// <summary>
@@ -1059,6 +1238,13 @@ public class MLAgentsController : MonoBehaviour
     }
     private void ExecuteFollow(GameObject target)
     {
+        // Follow 必须绑定真实对象；若上游仍给到空对象，退回普通 MoveTo，避免空引用。
+        if (target == null)
+        {
+            ExecuteMoveTo(currentCommand != null ? currentCommand.TargetPosition : transform.position);
+            return;
+        }
+
         var parameters = ParseActionParameters(currentCommand.Parameters);
         float followDist = parameters.TryGetValue("followDist", out float fd) ? fd : 3.0f;
         Vector3 offset = -target.transform.forward * followDist;
@@ -1084,6 +1270,18 @@ public class MLAgentsController : MonoBehaviour
         Vector3 toCenter = center - transform.position;
         toCenter.y = 0; 
         float currentDistance = toCenter.magnitude;
+
+        // 如果当前已经站在环绕中心上，先把自己推出一个半径点，再继续 Orbit。
+        // 否则切向方向和向心方向都会退化成零向量，看起来就是“卡着不动”。
+        if (currentDistance < 0.05f)
+        {
+            Vector3 fallbackTarget = center + transform.right * Mathf.Max(1f, radius);
+            fallbackTarget.y = currentCommand != null ? currentCommand.TargetPosition.y : transform.position.y;
+            ExecuteMoveTo(fallbackTarget);
+            ExecuteLookAt(center);
+            return;
+        }
+
         Vector3 radialDir = toCenter.normalized;
         
         // 2. 切线方向 (目标移动方向)
@@ -1572,6 +1770,14 @@ public class MLAgentsController : MonoBehaviour
             TryExtractFloat(raw, "targetArrivalRadius", parameters);
             TryExtractFloat(raw, "useWaypointToleranceOnly", parameters);
             TryExtractFloat(raw, "disableFeaturePerceptionArrival", parameters);
+            TryExtractFloat(raw, "gridX", parameters);
+            TryExtractFloat(raw, "gridZ", parameters);
+
+            if (!parameters.ContainsKey("height") &&
+                TryExtractStringParameter(raw, "altitudeLayer", out string altitudeLayer))
+            {
+                parameters["height"] = ResolveHeightFromAltitudeLayerToken(altitudeLayer, transform.position.y);
+            }
         }
         catch (Exception e)
         {
@@ -1696,6 +1902,24 @@ public class MLAgentsController : MonoBehaviour
         {
             output[targetKey] = v;
         }
+    }
+
+    /// <summary>
+    /// 从参数文本中提取字符串字段，兼容 JSON 键值和 key:value 写法。
+    /// </summary>
+    private static bool TryExtractStringParameter(string raw, string key, out string value)
+    {
+        value = string.Empty;
+        if (string.IsNullOrEmpty(raw) || string.IsNullOrEmpty(key)) return false;
+
+        Match m = Regex.Match(
+            raw,
+            $@"[""']?{Regex.Escape(key)}[""']?\s*[:=]\s*[""']?([A-Za-z_][A-Za-z0-9_]*)",
+            RegexOptions.IgnoreCase);
+        if (!m.Success) return false;
+
+        value = m.Groups[1].Value.Trim();
+        return !string.IsNullOrWhiteSpace(value);
     }
 
     /// <summary>

@@ -154,6 +154,7 @@ public class CampusMiniMap2D : MonoBehaviour
             return;
         }
 
+        ApplyHorizontalScaleToFeatures(parsedFeatures, ref parsedBounds, GetHorizontalMapScale());
         fullBoundsXY = parsedBounds;
         fullBoundsXY.xMin -= boundsPaddingM;
         fullBoundsXY.yMin -= boundsPaddingM;
@@ -518,6 +519,71 @@ public class CampusMiniMap2D : MonoBehaviour
 
         outJson = File.ReadAllText(path);
         return !string.IsNullOrWhiteSpace(outJson);
+    }
+
+    private float GetHorizontalMapScale()
+    {
+        if (campusLoader == null) return 1f;
+        return Mathf.Max(0.1f, campusLoader.horizontalMapScale);
+    }
+
+    private static void ApplyHorizontalScaleToFeatures(List<MiniFeature> features, ref Rect allBounds, float scale)
+    {
+        float safeScale = Mathf.Max(0.1f, scale);
+        if (features == null || features.Count == 0 || Mathf.Abs(safeScale - 1f) < 1e-4f) return;
+
+        Vector2 pivot = allBounds.center;
+        for (int i = 0; i < features.Count; i++)
+        {
+            MiniFeature feature = features[i];
+            if (feature == null) continue;
+
+            ScaleRingCollection(feature.outerRings, pivot, safeScale);
+            ScaleRingCollection(feature.innerRings, pivot, safeScale);
+            ScalePointCollection(feature.linePoints, pivot, safeScale);
+
+            if (feature.boundsValid)
+            {
+                feature.bounds = ScaleRectAroundPivot(feature.bounds, pivot, safeScale);
+            }
+        }
+
+        allBounds = ScaleRectAroundPivot(allBounds, pivot, safeScale);
+    }
+
+    private static void ScaleRingCollection(List<List<Vector2>> rings, Vector2 pivot, float scale)
+    {
+        if (rings == null) return;
+        for (int i = 0; i < rings.Count; i++)
+        {
+            ScalePointCollection(rings[i], pivot, scale);
+        }
+    }
+
+    private static void ScalePointCollection(List<Vector2> points, Vector2 pivot, float scale)
+    {
+        if (points == null) return;
+        for (int i = 0; i < points.Count; i++)
+        {
+            points[i] = ScalePointAroundPivot(points[i], pivot, scale);
+        }
+    }
+
+    private static Vector2 ScalePointAroundPivot(Vector2 point, Vector2 pivot, float scale)
+    {
+        return pivot + (point - pivot) * scale;
+    }
+
+    private static Rect ScaleRectAroundPivot(Rect rect, Vector2 pivot, float scale)
+    {
+        Vector2 min = ScalePointAroundPivot(new Vector2(rect.xMin, rect.yMin), pivot, scale);
+        Vector2 max = ScalePointAroundPivot(new Vector2(rect.xMax, rect.yMax), pivot, scale);
+        return Rect.MinMaxRect(
+            Mathf.Min(min.x, max.x),
+            Mathf.Min(min.y, max.y),
+            Mathf.Max(min.x, max.x),
+            Mathf.Max(min.y, max.y)
+        );
     }
 
     private bool TryParseFeatures(string json, List<MiniFeature> outFeatures, out Rect outBounds)

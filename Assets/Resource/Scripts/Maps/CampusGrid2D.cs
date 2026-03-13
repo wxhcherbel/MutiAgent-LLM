@@ -1,16 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using UnityEngine;
 using Newtonsoft.Json.Linq;
 
 /// <summary>
-/// 把 CampusJsonMapLoader 使用的真实校园 JSON 转成二维逻辑网格（XZ 平面），用于多智能体路径规划实验。
-/// 重点：
-/// 1) 只做 2D 网格，不做 3D 体素。
-/// 2) 网格可视化可开关。
-/// 3) 提供 A* 寻路、世界坐标<->网格坐标转换。
-/// </summary>
+/// 鎶?CampusJsonMapLoader 浣跨敤鐨勭湡瀹炴牎鍥?JSON 杞垚浜岀淮閫昏緫缃戞牸锛圶Z 骞抽潰锛夛紝鐢ㄤ簬澶氭櫤鑳戒綋璺緞瑙勫垝瀹為獙銆?/// 閲嶇偣锛?/// 1) 鍙仛 2D 缃戞牸锛屼笉鍋?3D 浣撶礌銆?/// 2) 缃戞牸鍙鍖栧彲寮€鍏炽€?/// 3) 鎻愪緵 A* 瀵昏矾銆佷笘鐣屽潗鏍?->缃戞牸鍧愭爣杞崲銆?/// </summary>
 [ExecuteAlways]
 public class CampusGrid2D : MonoBehaviour
 {
@@ -42,12 +38,177 @@ public class CampusGrid2D : MonoBehaviour
         public readonly List<List<Vector2>> outerRings = new List<List<Vector2>>();
         public readonly List<List<Vector2>> innerRings = new List<List<Vector2>>();
         public readonly List<Vector2> linePoints = new List<Vector2>();
+        public readonly List<RasterAreaPart> rasterAreaParts = new List<RasterAreaPart>();
+        public readonly List<RasterStrokeQuad> rasterStrokeQuads = new List<RasterStrokeQuad>();
+        public Rect rasterBounds;
+        public bool rasterBoundsValid;
+        public FeatureRasterMode rasterMode = FeatureRasterMode.Bounds;
 
         public bool HasArea => outerRings.Count > 0;
         public bool HasLine => linePoints.Count >= 2;
+        public bool HasRasterArea => rasterAreaParts.Count > 0;
+        public bool HasRasterLine => rasterStrokeQuads.Count > 0;
     }
 
-    [Header("数据来源")]
+    private enum FeatureRasterMode : byte
+    {
+        Bounds = 0,
+        Area = 1,
+        Line = 2,
+    }
+
+    private class RasterAreaPart
+    {
+        public readonly List<Vector2> outer = new List<Vector2>();
+        public readonly List<List<Vector2>> holes = new List<List<Vector2>>();
+        public Rect bounds;
+        public bool boundsValid;
+    }
+
+    private class RasterStrokeQuad
+    {
+        public readonly List<Vector2> points = new List<Vector2>(4);
+        public Rect bounds;
+        public bool boundsValid;
+    }
+
+    /// <summary>
+    /// 鍦板浘涓栫晫閲屸€滀竴涓ぇ鑺傜偣瀹炰綋鈥濈殑绌洪棿妗ｆ銆?    /// 杩欓噷涓嶅啀鎶?building / forest / road 鍙湅鎴愪竴涓偣锛岃€屾槸鏄庣‘璁板綍锛?    /// 1) 瀹冨崰浜嗗摢浜涙牸瀛愶紱
+    /// 2) 瀹冪殑澶ц嚧涓績鍦ㄥ摢閲岋紱
+    /// 3) 浠庡綋鍓嶅弬鑰冧綅缃嚭鍙戯紝搴旇璐寸潃瀹冪殑鍝竴渚у幓鎺ヨ繎锛?    /// 4) 濡傛灉瑕佺幆缁曞畠锛屽缓璁崐寰勫ぇ姒傛槸澶氬皯銆?    ///
+    /// 杩欐牱 ActionDecisionModule 鍚庨潰鎷垮埌鐨勫氨涓嶅啀鍙槸鈥滀竴涓潗鏍囩偣鈥濓紝
+    /// 鑰屾槸鈥滀竴涓湡姝ｆ湁鑼冨洿鐨勪笘鐣屽疄浣撯€濄€?    /// </summary>
+    [Serializable]
+    public class FeatureSpatialProfile
+    {
+        public string uid = "";
+        public string name = "";
+        public string runtimeAlias = "";
+        public string kind = "other";
+        public string collectionKey = "";
+        public CellType cellType = CellType.Other;
+        public int occupiedCellCount;
+        public int minX;
+        public int maxX;
+        public int minZ;
+        public int maxZ;
+        public Vector2 centroidGrid;
+        public Vector2Int centroidCell = new Vector2Int(-1, -1);
+        public Vector3 centroidWorld;
+        public Vector2Int anchorCell = new Vector2Int(-1, -1);
+        public Vector3 anchorWorld;
+        public float footprintRadius;
+        public string[] memberEntityIds = Array.Empty<string>();
+    }
+
+    /// <summary>
+    /// 缃戞牸鍐呴儴浣跨敤鐨勭┖闂寸储寮曘€?    /// 瀹冧繚鐣欏畬鏁存牸瀛愬垪琛紝渚夸簬鍚庨潰鍔ㄦ€佺畻鈥滄帴杩戠偣鈥濃€滆鐩栧垝鍒嗏€濃€滅幆缁曞崐寰勨€濄€?    /// </summary>
+    private class FeatureSpatialIndex
+    {
+        public string uid = "";
+        public string name = "";
+        public string runtimeAlias = "";
+        public string kind = "other";
+        public string collectionKey = "";
+        public CellType cellType = CellType.Other;
+        public readonly List<Vector2Int> occupiedCells = new List<Vector2Int>();
+        public readonly HashSet<long> occupiedCellKeys = new HashSet<long>();
+        public int minX = int.MaxValue;
+        public int maxX = int.MinValue;
+        public int minZ = int.MaxValue;
+        public int maxZ = int.MinValue;
+    }
+
+    private struct AStarHeapEntry
+    {
+        public Vector2Int Cell;
+        public float FScore;
+        public float HScore;
+    }
+
+    private sealed class AStarMinHeap
+    {
+        private readonly List<AStarHeapEntry> entries = new List<AStarHeapEntry>(256);
+
+        public int Count => entries.Count;
+
+        public void Push(AStarHeapEntry entry)
+        {
+            entries.Add(entry);
+            SiftUp(entries.Count - 1);
+        }
+
+        public AStarHeapEntry Pop()
+        {
+            int lastIndex = entries.Count - 1;
+            AStarHeapEntry root = entries[0];
+            AStarHeapEntry tail = entries[lastIndex];
+            entries.RemoveAt(lastIndex);
+
+            if (entries.Count > 0)
+            {
+                entries[0] = tail;
+                SiftDown(0);
+            }
+
+            return root;
+        }
+
+        private void SiftUp(int index)
+        {
+            while (index > 0)
+            {
+                int parent = (index - 1) / 2;
+                if (Compare(entries[index], entries[parent]) >= 0) break;
+                Swap(index, parent);
+                index = parent;
+            }
+        }
+
+        private void SiftDown(int index)
+        {
+            int count = entries.Count;
+            while (true)
+            {
+                int left = index * 2 + 1;
+                if (left >= count) break;
+
+                int right = left + 1;
+                int smallest = left;
+                if (right < count && Compare(entries[right], entries[left]) < 0)
+                {
+                    smallest = right;
+                }
+
+                if (Compare(entries[smallest], entries[index]) >= 0) break;
+                Swap(index, smallest);
+                index = smallest;
+            }
+        }
+
+        private static int Compare(AStarHeapEntry a, AStarHeapEntry b)
+        {
+            int f = a.FScore.CompareTo(b.FScore);
+            if (f != 0) return f;
+
+            int h = a.HScore.CompareTo(b.HScore);
+            if (h != 0) return h;
+
+            int x = a.Cell.x.CompareTo(b.Cell.x);
+            if (x != 0) return x;
+
+            return a.Cell.y.CompareTo(b.Cell.y);
+        }
+
+        private void Swap(int a, int b)
+        {
+            AStarHeapEntry temp = entries[a];
+            entries[a] = entries[b];
+            entries[b] = temp;
+        }
+    }
+
+    [Header("数据源")]
     public CampusJsonMapLoader campusLoader;
 
     [Header("网格参数")]
@@ -55,6 +216,7 @@ public class CampusGrid2D : MonoBehaviour
     [Min(0f)] public float mapMargin = 2f;
     public bool autoBuildOnStart = true;
     public bool allowDiagonal = false;
+    public bool smoothAStarPath = false;
 
     [Header("通行规则")]
     public bool buildingBlocked = true;
@@ -84,7 +246,7 @@ public class CampusGrid2D : MonoBehaviour
     [Header("调试")]
     public bool logBuildSummary = true;
 
-    [Header("点击查询(运行时)")]
+    [Header("点击查询（运行时）")]
     public bool enableClickQuery = true;
     public Camera clickQueryCamera;
     public LayerMask clickLayerMask = ~0;
@@ -103,6 +265,12 @@ public class CampusGrid2D : MonoBehaviour
     [NonSerialized] public Dictionary<string, string> featureAliasUidMap;
     [NonSerialized] public Dictionary<string, string> featureAliasNameMap;
     [NonSerialized] public Rect mapBoundsXY;
+    [NonSerialized] public Dictionary<string, FeatureSpatialProfile> featureSpatialProfileByUid;
+    [NonSerialized] public Dictionary<string, string[]> featureCollectionMembers;
+
+    private Dictionary<string, FeatureSpatialIndex> featureSpatialIndexByUid;
+    private Dictionary<string, List<string>> featureUidsByName;
+    private Dictionary<string, List<string>> featureUidsByCollectionKey;
 
     private Transform visualRoot;
     private readonly List<GameObject> visualCells = new List<GameObject>();
@@ -162,6 +330,7 @@ public class CampusGrid2D : MonoBehaviour
             return;
         }
 
+        ApplyHorizontalScaleToFeatures(features, ref allBounds, GetHorizontalMapScale());
         BuildLogicalGrid(features, allBounds);
 
         if (showGrid) RebuildVisualization();
@@ -173,7 +342,7 @@ public class CampusGrid2D : MonoBehaviour
     {
         if (blockedGrid == null || cellTypeGrid == null)
         {
-            Debug.LogWarning("[CampusGrid2D] 还没有逻辑网格，请先 Build Grid。");
+            Debug.LogWarning("[CampusGrid2D] 还没有逻辑网格，请先执行 Build Grid。");
             return;
         }
 
@@ -341,8 +510,7 @@ public class CampusGrid2D : MonoBehaviour
     }
 
     /// <summary>
-    /// 按 feature uid 查找首个网格。
-    /// </summary>
+    /// 鎸?feature uid 鏌ユ壘棣栦釜缃戞牸銆?    /// </summary>
     public bool TryGetFeatureFirstCellByUid(string featureUid, out Vector2Int cell, bool preferWalkable = false, bool ignoreCase = true)
     {
         cell = new Vector2Int(-1, -1);
@@ -376,8 +544,7 @@ public class CampusGrid2D : MonoBehaviour
     }
 
     /// <summary>
-    /// 统一解析地点查询（优先精确，再到规范化匹配），同时支持 name 与 uid。
-    /// </summary>
+    /// 缁熶竴瑙ｆ瀽鍦扮偣鏌ヨ锛堜紭鍏堢簿纭紝鍐嶅埌瑙勮寖鍖栧尮閰嶏級锛屽悓鏃舵敮鎸?name 涓?uid銆?    /// </summary>
     public bool TryResolveFeatureCell(string query, out Vector2Int cell, out string matchedUid, out string matchedName, bool preferWalkable = true, bool ignoreCase = true)
     {
         cell = new Vector2Int(-1, -1);
@@ -386,18 +553,17 @@ public class CampusGrid2D : MonoBehaviour
         if (string.IsNullOrWhiteSpace(query)) return false;
 
         string q = query.Trim();
-        if (q.StartsWith("building:", StringComparison.OrdinalIgnoreCase)) q = q.Substring("building:".Length).Trim();
-        else if (q.StartsWith("feature:", StringComparison.OrdinalIgnoreCase)) q = q.Substring("feature:".Length).Trim();
+        TryStripStructuredTargetPrefix(q, out _, out q);
         if (string.IsNullOrWhiteSpace(q)) return false;
 
-        // 1) 精确 name
+        // 1) 绮剧‘ name
         if (TryGetFeatureFirstCell(q, out cell, preferWalkable, ignoreCase))
         {
             TryGetCellFeatureInfo(cell.x, cell.y, out matchedUid, out matchedName, out _, out _);
             return true;
         }
 
-        // 2) 精确 uid
+        // 2) 绮剧‘ uid
         if (TryGetFeatureFirstCellByUid(q, out cell, preferWalkable, ignoreCase))
         {
             TryGetCellFeatureInfo(cell.x, cell.y, out matchedUid, out matchedName, out _, out _);
@@ -405,9 +571,9 @@ public class CampusGrid2D : MonoBehaviour
         }
 
         // 3) 精确 runtime alias
-        // 这里的 alias 指 CampusJsonMapLoader 生成给 Unity 场景对象的实例名，
+        // alias 来自 CampusJsonMapLoader 为 Unity 场景对象生成的实例别名，
         // 例如 building_7、a_3、forest_2。
-        // 它不直接存在于 cellFeatureNameGrid 中，所以要先翻译回真实 uid/name，再走网格。
+        // 它不直接存放在 cellFeatureNameGrid 中，所以要先翻译回真实 uid/name 再回到网格。
         if (TryResolveFeatureAliasCell(q, out cell, out matchedUid, out matchedName, preferWalkable, ignoreCase))
         {
             return true;
@@ -421,7 +587,6 @@ public class CampusGrid2D : MonoBehaviour
         }
 
         string normalizedQ = NormalizeFeatureToken(q);
-        bool hasQueryBuildingId = TryExtractBuildingId(q, out string queryBuildingId);
         int bestScore = int.MaxValue;
         Vector2Int bestCell = new Vector2Int(-1, -1);
         string bestUid = string.Empty;
@@ -441,29 +606,21 @@ public class CampusGrid2D : MonoBehaviour
 
                 if (preferWalkable && !IsWalkable(x, z))
                 {
-                    // 仍允许候选进入评分，但给较大惩罚，避免全部是 blocked 时完全找不到。
+                    // 即便当前单元不可通行，也允许它进入候选评分；
+                    // 这里只是在后面的 score 上附加更大的惩罚，避免全是 blocked 时完全找不到目标。
                 }
 
                 string nu = NormalizeFeatureToken(uid);
                 string nn = NormalizeFeatureToken(name);
                 bool exactNormalized = (!string.IsNullOrEmpty(nu) && nu == normalizedQ) || (!string.IsNullOrEmpty(nn) && nn == normalizedQ);
 
-                bool idMatched = false;
-                if (hasQueryBuildingId)
-                {
-                    bool uidHasId = TryExtractBuildingId(uid, out string uidId) && uidId == queryBuildingId;
-                    bool nameHasId = TryExtractBuildingId(name, out string nameId) && nameId == queryBuildingId;
-                    idMatched = uidHasId || nameHasId;
-                }
-
                 bool contains = (!string.IsNullOrEmpty(uid) && uid.IndexOf(q, ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) >= 0) ||
                                 (!string.IsNullOrEmpty(name) && name.IndexOf(q, ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) >= 0);
 
-                if (!exactNormalized && !idMatched && !contains) continue;
+                if (!exactNormalized && !contains) continue;
 
                 int score = 1000;
                 if (exactNormalized) score = 0;
-                else if (idMatched) score = 10;
                 else if (contains) score = 50;
 
                 if (!IsWalkable(x, z)) score += 200;
@@ -484,6 +641,809 @@ public class CampusGrid2D : MonoBehaviour
         matchedUid = bestUid ?? string.Empty;
         matchedName = bestName ?? string.Empty;
         return true;
+    }
+
+    /// <summary>
+    /// 缁欑郴缁?璋冭瘯灞傛彁渚涗竴浠解€滃姩鎬佸湴鍥剧洰褰曗€濇憳瑕併€?    ///
+    /// 娉ㄦ剰褰撳墠鐗堟湰閲岋紝杩欎唤鎽樿涓嶅啀鐩存帴鍠傜粰 LLM銆?    /// 瀹冧富瑕佹湁涓や釜鐢ㄩ€旓細
+    /// 1) 鏂逛究璋冭瘯鏌ョ湅褰撳墠鍦板浘閲屽埌搴曟湁鍝簺 collection锛?    /// 2) 璁?grounded 灞傚拰浜哄伐鎺掗敊鏃惰兘鐪嬪埌 collectionKey -> members 鐨勭湡瀹炴槧灏勩€?    /// </summary>
+    public string BuildFeatureCatalogSummary(int maxMembersPerCollection = 8)
+    {
+        if (featureCollectionMembers == null || featureCollectionMembers.Count == 0)
+        {
+            return "鍦板浘鐩綍鏆備笉鍙敤";
+        }
+
+        System.Text.StringBuilder sb = new System.Text.StringBuilder();
+        foreach (KeyValuePair<string, string[]> kv in featureCollectionMembers.OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            string[] members = kv.Value ?? Array.Empty<string>();
+            int previewCount = Mathf.Clamp(maxMembersPerCollection, 1, Mathf.Max(1, members.Length));
+            string preview = members.Length > 0
+                ? string.Join("|", members.Take(previewCount).ToArray())
+                : "none";
+            sb.Append("- collectionKey=")
+              .Append(kv.Key)
+              .Append(",count=")
+              .Append(members.Length)
+              .Append(",members=")
+              .Append(preview);
+            if (members.Length > previewCount)
+            {
+                sb.Append("|...");
+            }
+            sb.AppendLine();
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// 鎸?collectionKey 鍙栧嚭杩欎竴缁勫湴鍥惧ぇ鑺傜偣鎴愬憳銆?    /// 杩欐槸缁欌€滄墍鏈?building / 鎵€鏈?forest鈥濊繖绫婚泦鍚堢洰鏍囩敤鐨勬寮忓叆鍙ｃ€?    /// </summary>
+    public bool TryGetFeatureCollectionMembers(string collectionKey, out FeatureSpatialProfile[] profiles)
+    {
+        profiles = Array.Empty<FeatureSpatialProfile>();
+        if (string.IsNullOrWhiteSpace(collectionKey) ||
+            featureCollectionMembers == null ||
+            featureSpatialProfileByUid == null)
+        {
+            return false;
+        }
+
+        if (!featureCollectionMembers.TryGetValue(collectionKey.Trim(), out string[] memberTokens) ||
+            memberTokens == null ||
+            memberTokens.Length == 0)
+        {
+            return false;
+        }
+
+        List<FeatureSpatialProfile> result = new List<FeatureSpatialProfile>(memberTokens.Length);
+        for (int i = 0; i < memberTokens.Length; i++)
+        {
+            string token = memberTokens[i];
+            if (string.IsNullOrWhiteSpace(token)) continue;
+            if (!TryResolveFeatureSpatialIndex(token, out FeatureSpatialIndex index) || index == null) continue;
+            result.Add(BuildSpatialProfileFromIndex(index));
+        }
+
+        if (result.Count == 0) return false;
+
+        result.Sort((a, b) =>
+        {
+            int byX = a.centroidWorld.x.CompareTo(b.centroidWorld.x);
+            if (byX != 0) return byX;
+            return a.centroidWorld.z.CompareTo(b.centroidWorld.z);
+        });
+        profiles = result.ToArray();
+        return true;
+    }
+
+    /// <summary>
+    /// 鎶娾€滄墍鏈?building / 鍏ㄩ儴 parking / 鏁村紶鍦板浘閲岀殑 forest鈥濊繖绫昏嚜鐒惰瑷€閫夋嫨鐭锛?    /// 鏄犲皠鍒板綋鍓嶅湴鍥鹃噷鐪熷疄瀛樺湪鐨?collectionKey銆?    ///
+    /// 杩欓噷鏁呮剰涓嶅啓姝讳换浣?building/forest 璇嶈〃锛?    /// - 鍙尮閰嶉泦鍚堝畬鍏ㄦ潵鑷綋鍓嶅湴鍥鹃噷宸茬粡鏋勫缓濂界殑 featureCollectionMembers锛?    /// - 绯荤粺鍙仛瀛楃涓插綊涓€鍖栧拰鐩镐技搴︽瘮瀵癸紝涓嶆浛 LLM 閲嶆柊鐞嗚В浠诲姟璇箟銆?    ///
+    /// 杩欐牱鑱岃矗灏卞緢娓呮锛?    /// 1) LLM 璐熻矗璇粹€滅敤鎴锋兂瑕嗙洊鍝竴绫荤洰鏍団€濓紱
+    /// 2) CampusGrid2D 璐熻矗鍥炵瓟鈥滃綋鍓嶅湴鍥鹃噷杩欑被鐩爣瀵瑰簲鍝竴涓湡瀹為泦鍚堥敭鈥濄€?    /// </summary>
+    public bool TryResolveFeatureCollectionBySelector(string selectorText, out string collectionKey, out FeatureSpatialProfile[] profiles)
+    {
+        collectionKey = string.Empty;
+        profiles = Array.Empty<FeatureSpatialProfile>();
+        if (string.IsNullOrWhiteSpace(selectorText) ||
+            featureCollectionMembers == null ||
+            featureCollectionMembers.Count == 0)
+        {
+            return false;
+        }
+
+        string normalizedSelector = NormalizeCollectionSelectorToken(selectorText);
+        if (string.IsNullOrWhiteSpace(normalizedSelector))
+        {
+            return false;
+        }
+
+        string bestKey = string.Empty;
+        int bestScore = int.MaxValue;
+        foreach (KeyValuePair<string, string[]> kv in featureCollectionMembers)
+        {
+            string key = string.IsNullOrWhiteSpace(kv.Key) ? string.Empty : kv.Key.Trim();
+            if (string.IsNullOrWhiteSpace(key)) continue;
+
+            string tail = key.Contains(":")
+                ? key.Substring(key.LastIndexOf(':') + 1)
+                : key;
+
+            int score = ComputeCollectionSelectorScore(
+                normalizedSelector,
+                NormalizeCollectionSelectorToken(key),
+                NormalizeCollectionSelectorToken(tail));
+
+            if (score < bestScore)
+            {
+                bestScore = score;
+                bestKey = key;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(bestKey))
+        {
+            return false;
+        }
+
+        if (!TryGetFeatureCollectionMembers(bestKey, out profiles) ||
+            profiles == null ||
+            profiles.Length == 0)
+        {
+            return false;
+        }
+
+        collectionKey = bestKey;
+        return true;
+    }
+
+    /// <summary>
+    /// 鎶婁竴涓湴鐐规煡璇㈢洿鎺ヨВ鏋愭垚鈥滅┖闂存。妗堚€濄€?    /// 鍜?TryResolveFeatureCell 鐨勫尯鍒湪浜庯細
+    /// TryResolveFeatureCell 鍙憡璇変綘鏌愪釜鐐癸紱
+    /// TryResolveFeatureSpatialProfile 浼氭妸鏁村潡鍑犱綍鑼冨洿銆佷腑蹇冦€佹帹鑽愭帴杩戠偣涓€璧风粰鍑烘潵銆?    /// </summary>
+    public bool TryResolveFeatureSpatialProfile(string query, Vector3 referenceWorld, out FeatureSpatialProfile profile, bool preferWalkableApproach = true, bool ignoreCase = true, Vector2Int? anchorBias = null)
+    {
+        profile = null;
+        if (!TryResolveFeatureSpatialIndex(query, out FeatureSpatialIndex index, ignoreCase) || index == null)
+        {
+            return false;
+        }
+
+        FeatureSpatialProfile cloned = BuildSpatialProfileFromIndex(index);
+        ResolveFeatureAnchor(cloned, referenceWorld, preferWalkableApproach, anchorBias);
+        profile = cloned;
+        return true;
+    }
+
+    /// <summary>
+    /// 鑾峰彇鏌愪釜澶у湴鍥惧疄浣撳崰鐢ㄧ殑鍏ㄩ儴缃戞牸銆?    /// 杩欐槸鐪熸鐨勨€滃缓绛戜笉鏄竴涓偣锛岃€屾槸涓€缁勬牸瀛愨€濈殑鍩虹鎺ュ彛銆?    /// </summary>
+    public bool TryGetFeatureOccupiedCells(string query, out Vector2Int[] occupiedCells, bool ignoreCase = true)
+    {
+        occupiedCells = Array.Empty<Vector2Int>();
+        if (!TryResolveFeatureSpatialIndex(query, out FeatureSpatialIndex index, ignoreCase) || index == null || index.occupiedCells.Count == 0)
+        {
+            return false;
+        }
+
+        occupiedCells = index.occupiedCells.ToArray();
+        return occupiedCells.Length > 0;
+    }
+
+    /// <summary>
+    /// 鑾峰彇鏌愪釜澶у湴鍥惧疄浣撶殑杈圭晫鏍笺€?    /// 杩欓噷鐨勮竟鐣屾牸浠嶇劧鏄€滆璇ュ疄浣撳崰鐢ㄧ殑鏍尖€濓紝
+    /// 鍙笉杩囪繖浜涙牸鑷冲皯鏈変竴渚ф帴瑙﹀埌浜嗗疄浣撳閮ㄣ€?    /// </summary>
+    public bool TryGetFeatureBoundaryCells(string query, out Vector2Int[] boundaryCells, bool ignoreCase = true)
+    {
+        boundaryCells = Array.Empty<Vector2Int>();
+        if (!TryResolveFeatureSpatialIndex(query, out FeatureSpatialIndex index, ignoreCase) || index == null || index.occupiedCells.Count == 0)
+        {
+            return false;
+        }
+
+        boundaryCells = ComputeFeatureBoundaryCells(index);
+        return boundaryCells.Length > 0;
+    }
+
+    /// <summary>
+    /// 鑾峰彇鏌愪釜澶у湴鍥惧疄浣撯€滃渚у彲鎺ヨ繎鏍尖€濄€?    /// 杩斿洖鐨勪笉鏄缓绛戝唴閮ㄦ牸锛岃€屾槸寤虹瓚澶栧洿銆佸彲閫氳銆侀€傚悎褰撲綔鎺ヨ繎閿氱偣鐨勬牸瀛愰泦鍚堛€?    /// anchorBias 鐢ㄧ鏁ｅ钩闈㈠悜閲忚〃杈锯€滄洿鍋忓悜鍝竴杈规帴杩戔€濓紝渚嬪 (1,0) 琛ㄧず鏇村亸鍚戞 X 鏂瑰悜鐨勫渚с€?    /// </summary>
+    public bool TryGetFeatureApproachCells(string query, Vector3 referenceWorld, out Vector2Int[] approachCells, int maxCount = 16, bool ignoreCase = true, Vector2Int? anchorBias = null)
+    {
+        approachCells = Array.Empty<Vector2Int>();
+        if (!TryResolveFeatureSpatialIndex(query, out FeatureSpatialIndex index, ignoreCase) || index == null || index.occupiedCells.Count == 0)
+        {
+            return false;
+        }
+
+        FeatureSpatialProfile profile = BuildSpatialProfileFromIndex(index);
+        Vector2Int referenceCell = WorldToGrid(referenceWorld);
+        if (!IsInBounds(referenceCell.x, referenceCell.y))
+        {
+            referenceCell = profile.centroidCell;
+        }
+
+        approachCells = ComputeFeatureApproachCells(index, referenceCell, Mathf.Max(1, maxCount), anchorBias);
+        return approachCells.Length > 0;
+    }
+
+    /// <summary>
+    /// 鐢熸垚鍥寸粫鏌愪釜澶у湴鍥惧疄浣撶殑闂幆璺緞銆?    /// 璁捐鐩爣涓嶆槸鈥滅敾涓€鏉″嚑浣曞渾鈥濓紝鑰屾槸娌跨潃瀹炰綋澶栧洿鍙€氳鏍煎舰鎴愪竴涓湡姝ｅ彲鎵ц鐨勭綉鏍肩幆璺€?    /// 濡傛灉缁欎簡 anchorBias锛岃捣濮嬪垏鍏ョ偣浼氫紭鍏堥€夋嫨涓庤鍋忕疆涓€鑷寸殑澶栦晶鏍笺€?    /// </summary>
+    public bool TryBuildFeatureRingPath(string query, Vector3 referenceWorld, out Vector2Int[] ringPath, int maxApproachCells = 48, bool ignoreCase = true, Vector2Int? anchorBias = null)
+    {
+        ringPath = Array.Empty<Vector2Int>();
+        if (!TryResolveFeatureSpatialIndex(query, out FeatureSpatialIndex index, ignoreCase) || index == null || index.occupiedCells.Count == 0)
+        {
+            return false;
+        }
+
+        FeatureSpatialProfile profile = BuildSpatialProfileFromIndex(index);
+        Vector2Int referenceCell = WorldToGrid(referenceWorld);
+        if (!IsInBounds(referenceCell.x, referenceCell.y))
+        {
+            referenceCell = profile.centroidCell;
+        }
+
+        Vector2Int[] approachCells = ComputeFeatureApproachCells(index, referenceCell, Mathf.Max(8, maxApproachCells), anchorBias);
+        if (approachCells.Length < 4)
+        {
+            return false;
+        }
+
+        Vector2 center = profile.centroidGrid;
+        Vector2Int[] ordered = approachCells
+            .OrderBy(cell => Mathf.Atan2(cell.y - center.y, cell.x - center.x))
+            .ToArray();
+
+        if (!TryBuildVisitPath(ordered[0], ordered, out Vector2Int[] closedPath, closeLoop: true))
+        {
+            return false;
+        }
+
+        ringPath = closedPath;
+        return ringPath.Length > 0;
+    }
+
+    /// <summary>
+    /// 鍦ㄩ€昏緫缃戞牸涓婃嫾鎺ヤ竴鏉♀€滆闂嫢骞茬洰鏍囨牸鈥濈殑绂绘暎璺緞銆?    /// 璇ユ帴鍙ｆ棦鍙粰澶у湴鍥惧疄浣撹鐩栫敤锛屼篃鍙粰灏忚妭鐐归泦鍚堣鐩栫敤銆?    /// </summary>
+    public bool TryBuildVisitPath(Vector2Int startCell, IReadOnlyList<Vector2Int> visitCells, out Vector2Int[] path, bool closeLoop = false)
+    {
+        path = Array.Empty<Vector2Int>();
+        if (visitCells == null || visitCells.Count == 0) return false;
+
+        List<Vector2Int> orderedTargets = OrderVisitCellsByNearest(startCell, visitCells);
+        if (orderedTargets.Count == 0) return false;
+
+        List<Vector2Int> built = new List<Vector2Int>();
+        Vector2Int cursor = IsInBounds(startCell.x, startCell.y) ? startCell : orderedTargets[0];
+        if (!IsPathWalkable(cursor.x, cursor.y, null))
+        {
+            if (!TryFindNearestWalkable(cursor, 8, out cursor))
+            {
+                cursor = orderedTargets[0];
+            }
+        }
+
+        AppendPathSegment(built, cursor, includeFirst: true);
+        for (int i = 0; i < orderedTargets.Count; i++)
+        {
+            Vector2Int target = orderedTargets[i];
+            List<Vector2Int> segment = FindPathAStar(cursor, target);
+            if (segment == null || segment.Count == 0)
+            {
+                continue;
+            }
+
+            AppendPathSegment(built, segment, includeFirst: built.Count == 0);
+            cursor = target;
+        }
+
+        if (closeLoop && built.Count > 1)
+        {
+            Vector2Int end = built[built.Count - 1];
+            Vector2Int begin = built[0];
+            List<Vector2Int> closure = FindPathAStar(end, begin);
+            if (closure != null && closure.Count > 0)
+            {
+                AppendPathSegment(built, closure, includeFirst: false);
+            }
+        }
+
+        path = RemoveConsecutiveDuplicateCells(built).ToArray();
+        return path.Length > 0;
+    }
+
+    /// <summary>
+    /// 浠呯Щ闄ょ浉閭婚噸澶嶆牸锛屼笉鍋氬叏灞€鍘婚噸銆?    /// 杩欐牱鍙互淇濈暀闂幆璺緞鍜岄噸澶嶇粡杩囧悓涓€鏍肩殑鍚堟硶璺緞缁撴瀯銆?    /// </summary>
+    private static List<Vector2Int> RemoveConsecutiveDuplicateCells(IReadOnlyList<Vector2Int> path)
+    {
+        List<Vector2Int> result = new List<Vector2Int>();
+        if (path == null || path.Count == 0) return result;
+
+        result.Add(path[0]);
+        for (int i = 1; i < path.Count; i++)
+        {
+            if (path[i] != result[result.Count - 1])
+            {
+                result.Add(path[i]);
+            }
+        }
+
+        return result;
+    }
+
+    private bool TryResolveFeatureSpatialIndex(string query, out FeatureSpatialIndex index, bool ignoreCase = true)
+    {
+        index = null;
+        if (string.IsNullOrWhiteSpace(query) || featureSpatialIndexByUid == null || featureSpatialIndexByUid.Count == 0)
+        {
+            return false;
+        }
+
+        string q = query.Trim();
+        TryStripStructuredTargetPrefix(q, out _, out q);
+        if (string.IsNullOrWhiteSpace(q)) return false;
+
+        if (featureSpatialIndexByUid.TryGetValue(q, out index) && index != null)
+        {
+            return true;
+        }
+
+        if (featureAliasUidMap != null &&
+            featureAliasUidMap.TryGetValue(q, out string aliasUid) &&
+            !string.IsNullOrWhiteSpace(aliasUid) &&
+            featureSpatialIndexByUid.TryGetValue(aliasUid.Trim(), out index) &&
+            index != null)
+        {
+            return true;
+        }
+
+        if (featureUidsByName != null &&
+            featureUidsByName.TryGetValue(q, out List<string> namedUids) &&
+            namedUids != null &&
+            namedUids.Count > 0 &&
+            featureSpatialIndexByUid.TryGetValue(namedUids[0], out index) &&
+            index != null)
+        {
+            return true;
+        }
+
+        if (TryResolveFeatureCell(q, out Vector2Int cell, out string matchedUid, out string matchedName, preferWalkable: false, ignoreCase: ignoreCase))
+        {
+            string resolvedUid = matchedUid;
+            if (string.IsNullOrWhiteSpace(resolvedUid) &&
+                TryGetCellFeatureInfo(cell.x, cell.y, out string cellUid, out string _, out _, out _))
+            {
+                resolvedUid = cellUid;
+            }
+
+            if (!string.IsNullOrWhiteSpace(resolvedUid) &&
+                featureSpatialIndexByUid.TryGetValue(resolvedUid.Trim(), out index) &&
+                index != null)
+            {
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(matchedName) &&
+                featureUidsByName != null &&
+                featureUidsByName.TryGetValue(matchedName.Trim(), out List<string> fuzzyUids) &&
+                fuzzyUids != null &&
+                fuzzyUids.Count > 0 &&
+                featureSpatialIndexByUid.TryGetValue(fuzzyUids[0], out index) &&
+                index != null)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 璁＄畻瀹炰綋杈圭晫鏍笺€?    /// 鍒ゅ畾瑙勫垯寰堢畝鍗曪細鏌愪釜鍗犵敤鏍煎彧瑕佸洓閭诲煙涓瓨鍦ㄢ€滆秺鐣屾垨闈炶瀹炰綋鍗犵敤鈥濆嵆鍙畻杈圭晫銆?    /// </summary>
+    private Vector2Int[] ComputeFeatureBoundaryCells(FeatureSpatialIndex index)
+    {
+        if (index == null || index.occupiedCells.Count == 0) return Array.Empty<Vector2Int>();
+
+        List<Vector2Int> result = new List<Vector2Int>();
+        for (int i = 0; i < index.occupiedCells.Count; i++)
+        {
+            Vector2Int c = index.occupiedCells[i];
+            bool isBoundary = false;
+            for (int dir = 0; dir < 4; dir++)
+            {
+                Vector2Int n;
+                switch (dir)
+                {
+                    case 0:
+                        n = new Vector2Int(c.x + 1, c.y);
+                        break;
+                    case 1:
+                        n = new Vector2Int(c.x - 1, c.y);
+                        break;
+                    case 2:
+                        n = new Vector2Int(c.x, c.y + 1);
+                        break;
+                    default:
+                        n = new Vector2Int(c.x, c.y - 1);
+                        break;
+                }
+
+                long key = (((long)n.x) << 32) ^ (uint)n.y;
+                if (!IsInBounds(n.x, n.y) || !index.occupiedCellKeys.Contains(key))
+                {
+                    isBoundary = true;
+                    break;
+                }
+            }
+
+            if (isBoundary)
+            {
+                result.Add(c);
+            }
+        }
+
+        return result.ToArray();
+    }
+
+    /// <summary>
+    /// 璁＄畻瀹炰綋澶栧洿鍙帴杩戞牸銆?    /// 瀹冩湰璐ㄤ笂鏄€滆竟鐣屾牸澶栦晶涓€鍦堢殑鍙€氳鏍尖€濓紝骞舵寜鍙傝€冧綅缃帓搴忓悗鎴柇銆?    /// </summary>
+    private Vector2Int[] ComputeFeatureApproachCells(FeatureSpatialIndex index, Vector2Int referenceCell, int maxCount, Vector2Int? anchorBias = null)
+    {
+        if (index == null || index.occupiedCells.Count == 0) return Array.Empty<Vector2Int>();
+
+        HashSet<long> seen = new HashSet<long>();
+        List<Vector2Int> candidates = new List<Vector2Int>();
+        Vector2 center = new Vector2(
+            (index.minX + index.maxX) * 0.5f,
+            (index.minZ + index.maxZ) * 0.5f);
+
+        Vector2Int[] boundary = ComputeFeatureBoundaryCells(index);
+        for (int i = 0; i < boundary.Length; i++)
+        {
+            Vector2Int b = boundary[i];
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                for (int dz = -1; dz <= 1; dz++)
+                {
+                    if (dx == 0 && dz == 0) continue;
+
+                    Vector2Int c = new Vector2Int(b.x + dx, b.y + dz);
+                    long key = (((long)c.x) << 32) ^ (uint)c.y;
+                    if (!IsPathWalkable(c.x, c.y, null) || !seen.Add(key)) continue;
+
+                    // 只保留真正位于实体外部的一圈格，而不是跑到很远的位置。
+                    Vector2 outward = new Vector2(c.x - center.x, c.y - center.y);
+                    if (outward.sqrMagnitude < 0.25f) continue;
+                    candidates.Add(c);
+                }
+            }
+        }
+
+        return candidates
+            .OrderBy(c => (c - referenceCell).sqrMagnitude + ComputeAnchorBiasPenalty(c, center, anchorBias))
+            .ThenBy(c => Mathf.Atan2(c.y - center.y, c.x - center.x))
+            .Take(Mathf.Max(1, maxCount))
+            .ToArray();
+    }
+
+    /// <summary>
+    /// 杩戦偦鎺掑簭璁块棶鐐广€?    /// 杩欓噷鏁呮剰淇濇寔鏈寸礌锛氱敤鏈€杩戦偦璐績鍗冲彲锛岄伩鍏嶅湪鍔ㄤ綔灞傚紩鍏ユ洿閲嶇殑 TSP 澶嶆潅搴︺€?    /// </summary>
+    private static List<Vector2Int> OrderVisitCellsByNearest(Vector2Int startCell, IReadOnlyList<Vector2Int> visitCells)
+    {
+        List<Vector2Int> remaining = new List<Vector2Int>();
+        for (int i = 0; i < visitCells.Count; i++)
+        {
+            Vector2Int c = visitCells[i];
+            if (!remaining.Contains(c))
+            {
+                remaining.Add(c);
+            }
+        }
+
+        List<Vector2Int> ordered = new List<Vector2Int>(remaining.Count);
+        Vector2Int cursor = startCell;
+        while (remaining.Count > 0)
+        {
+            int bestIndex = 0;
+            float bestDist = float.MaxValue;
+            for (int i = 0; i < remaining.Count; i++)
+            {
+                float dist = (remaining[i] - cursor).sqrMagnitude;
+                if (dist < bestDist)
+                {
+                    bestDist = dist;
+                    bestIndex = i;
+                }
+            }
+
+            Vector2Int next = remaining[bestIndex];
+            ordered.Add(next);
+            remaining.RemoveAt(bestIndex);
+            cursor = next;
+        }
+
+        return ordered;
+    }
+
+    /// <summary>
+    /// 杩藉姞涓€娈佃矾寰勶紝骞堕伩鍏嶉噸澶嶅啓鍏ラ灏鹃噸鍚堟牸銆?    /// </summary>
+    private static void AppendPathSegment(List<Vector2Int> output, IReadOnlyList<Vector2Int> segment, bool includeFirst)
+    {
+        if (output == null || segment == null || segment.Count == 0) return;
+
+        int start = includeFirst ? 0 : 1;
+        for (int i = start; i < segment.Count; i++)
+        {
+            if (output.Count > 0 && output[output.Count - 1] == segment[i]) continue;
+            output.Add(segment[i]);
+        }
+    }
+
+    private static void AppendPathSegment(List<Vector2Int> output, Vector2Int cell, bool includeFirst)
+    {
+        if (output == null) return;
+        if (!includeFirst && output.Count > 0 && output[output.Count - 1] == cell) return;
+        if (output.Count == 0 || output[output.Count - 1] != cell)
+        {
+            output.Add(cell);
+        }
+    }
+
+    /// <summary>
+    /// 璁＄畻鈥滀竴涓?selector 鍜屼竴涓湡瀹?collectionKey 鍒板簳鏈夊鍍忊€濄€?    /// 鍒嗘暟瓒婂皬琛ㄧず瓒婂儚锛沬nt.MaxValue 琛ㄧず瀹屽叏涓嶅儚銆?    ///
+    /// 杩欓噷涓嶅幓鏋氫妇涓氬姟鍗曡瘝锛岃€屾槸鐩存帴鎷?selector 鍜屽綋鍓嶅湴鍥剧湡瀹為泦鍚堥敭鍋氭瘮瀵癸細
+    /// - 瀹屽叏鐩哥瓑鏈€濂斤紱
+    /// - selector 鍖呭惈闆嗗悎灏惧悕锛堜緥濡?allbuilding 鍖呭惈 building锛夋涔嬶紱
+    /// - 鍙嶅悜鍖呭惈鏇村急锛屽彧褰撳厹搴曘€?    /// </summary>
+    private static int ComputeCollectionSelectorScore(string normalizedSelector, string normalizedKey, string normalizedTail)
+    {
+        if (string.IsNullOrWhiteSpace(normalizedSelector))
+        {
+            return int.MaxValue;
+        }
+
+        int best = int.MaxValue;
+        if (!string.IsNullOrWhiteSpace(normalizedTail))
+        {
+            if (normalizedSelector == normalizedTail)
+            {
+                best = 0;
+            }
+            else if (normalizedSelector.Contains(normalizedTail))
+            {
+                best = Math.Min(best, 10 + normalizedSelector.Length - normalizedTail.Length);
+            }
+            else if (normalizedTail.Contains(normalizedSelector))
+            {
+                best = Math.Min(best, 30 + normalizedTail.Length - normalizedSelector.Length);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(normalizedKey))
+        {
+            if (normalizedSelector == normalizedKey)
+            {
+                best = Math.Min(best, 1);
+            }
+            else if (normalizedSelector.Contains(normalizedKey))
+            {
+                best = Math.Min(best, 20 + normalizedSelector.Length - normalizedKey.Length);
+            }
+            else if (normalizedKey.Contains(normalizedSelector))
+            {
+                best = Math.Min(best, 40 + normalizedKey.Length - normalizedSelector.Length);
+            }
+        }
+
+        return best;
+    }
+
+    /// <summary>
+    /// 鎶?selector 鏂囨湰褰掍竴鍒扳€滃彧淇濈暀瀛楁瘝銆佹暟瀛楀拰涓枃鈥濈殑绱у噾褰㈠紡锛?    /// 鏂逛究鍜?collectionKey / kind 鍚嶅仛绋冲畾姣旇緝銆?    ///
+    /// 杩欎竴姝ュ彧鍋氬舰寮忓綊涓€鍖栵紝涓嶅仛璇箟纭紪鐮併€?    /// </summary>
+    private static string NormalizeCollectionSelectorToken(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
+
+        string s = raw.Trim().ToLowerInvariant();
+        System.Text.StringBuilder sb = new System.Text.StringBuilder(s.Length);
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            bool asciiLetter = c >= 'a' && c <= 'z';
+            bool digit = c >= '0' && c <= '9';
+            bool cjk = c >= 0x4e00 && c <= 0x9fff;
+            if (asciiLetter || digit || cjk)
+            {
+                sb.Append(c);
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    private FeatureSpatialProfile BuildSpatialProfileFromIndex(FeatureSpatialIndex index)
+    {
+        FeatureSpatialProfile profile = new FeatureSpatialProfile
+        {
+            uid = index.uid,
+            name = index.name,
+            runtimeAlias = index.runtimeAlias,
+            kind = index.kind,
+            collectionKey = index.collectionKey,
+            cellType = index.cellType,
+            occupiedCellCount = index.occupiedCells.Count,
+            minX = index.minX == int.MaxValue ? -1 : index.minX,
+            maxX = index.maxX == int.MinValue ? -1 : index.maxX,
+            minZ = index.minZ == int.MaxValue ? -1 : index.minZ,
+            maxZ = index.maxZ == int.MinValue ? -1 : index.maxZ,
+            memberEntityIds = new[] { SelectFeatureReferenceToken(index.uid, index.name, index.runtimeAlias) }
+        };
+
+        if (index.occupiedCells.Count == 0)
+        {
+            profile.centroidGrid = Vector2.zero;
+            profile.centroidCell = new Vector2Int(-1, -1);
+            profile.centroidWorld = transform.position;
+            profile.anchorCell = new Vector2Int(-1, -1);
+            profile.anchorWorld = transform.position;
+            profile.footprintRadius = cellSize;
+            return profile;
+        }
+
+        float sumX = 0f;
+        float sumZ = 0f;
+        for (int i = 0; i < index.occupiedCells.Count; i++)
+        {
+            Vector2Int c = index.occupiedCells[i];
+            sumX += c.x;
+            sumZ += c.y;
+        }
+
+        profile.centroidGrid = new Vector2(sumX / index.occupiedCells.Count, sumZ / index.occupiedCells.Count);
+        profile.centroidCell = FindNearestCellToPoint(index.occupiedCells, profile.centroidGrid);
+        profile.centroidWorld = GridToWorldCenter(profile.centroidCell.x, profile.centroidCell.y);
+        profile.anchorCell = profile.centroidCell;
+        profile.anchorWorld = profile.centroidWorld;
+
+        float maxDistSq = 0f;
+        for (int i = 0; i < index.occupiedCells.Count; i++)
+        {
+            Vector3 cellWorld = GridToWorldCenter(index.occupiedCells[i].x, index.occupiedCells[i].y);
+            Vector3 delta = cellWorld - profile.centroidWorld;
+            delta.y = 0f;
+            float distSq = delta.sqrMagnitude;
+            if (distSq > maxDistSq) maxDistSq = distSq;
+        }
+
+        profile.footprintRadius = Mathf.Sqrt(maxDistSq) + cellSize * 0.75f;
+        return profile;
+    }
+
+    private static FeatureSpatialProfile CloneSpatialProfile(FeatureSpatialProfile src)
+    {
+        if (src == null) return null;
+        return new FeatureSpatialProfile
+        {
+            uid = src.uid,
+            name = src.name,
+            runtimeAlias = src.runtimeAlias,
+            kind = src.kind,
+            collectionKey = src.collectionKey,
+            cellType = src.cellType,
+            occupiedCellCount = src.occupiedCellCount,
+            minX = src.minX,
+            maxX = src.maxX,
+            minZ = src.minZ,
+            maxZ = src.maxZ,
+            centroidGrid = src.centroidGrid,
+            centroidCell = src.centroidCell,
+            centroidWorld = src.centroidWorld,
+            anchorCell = src.anchorCell,
+            anchorWorld = src.anchorWorld,
+            footprintRadius = src.footprintRadius,
+            memberEntityIds = src.memberEntityIds != null ? (string[])src.memberEntityIds.Clone() : Array.Empty<string>()
+        };
+    }
+
+    /// <summary>
+    /// 璁＄畻鍊欓€夊渚ф牸涓庣洰鏍囧亸缃殑鍑犱綍涓€鑷存€т唬浠枫€?    /// 浠ｄ环瓒婂皬锛岃鏄庤鏍艰秺鎺ヨ繎涓婃父璁″垝甯屾湜鐨勬帴杩戞柟鍚戙€?    /// 杩欓噷瀹屽叏鍩轰簬涓績鐐瑰埌鍊欓€夌偣鐨勫悜閲忓す瑙掞紝涓嶅啀渚濊禆 East/West/North/South 鏋氫妇銆?    /// </summary>
+    private static float ComputeAnchorBiasPenalty(Vector2Int candidate, Vector2 centroid, Vector2Int? anchorBias)
+    {
+        if (!anchorBias.HasValue) return 0f;
+        Vector2 bias = anchorBias.Value;
+        if (bias.sqrMagnitude < 0.01f)
+        {
+            return 0f;
+        }
+
+        Vector2 outward = new Vector2(candidate.x - centroid.x, candidate.y - centroid.y);
+        if (outward.sqrMagnitude < 0.01f) return 0f;
+
+        float alignment = Vector2.Dot(outward.normalized, bias.normalized);
+        return (1f - alignment) * 32f;
+    }
+
+    private void ResolveFeatureAnchor(FeatureSpatialProfile profile, Vector3 referenceWorld, bool preferWalkableApproach, Vector2Int? anchorBias = null)
+    {
+        if (profile == null) return;
+
+        if (!preferWalkableApproach || featureSpatialIndexByUid == null || string.IsNullOrWhiteSpace(profile.uid))
+        {
+            profile.anchorCell = profile.centroidCell;
+            profile.anchorWorld = profile.centroidWorld;
+            return;
+        }
+
+        if (!featureSpatialIndexByUid.TryGetValue(profile.uid, out FeatureSpatialIndex index) || index == null || index.occupiedCells.Count == 0)
+        {
+            profile.anchorCell = profile.centroidCell;
+            profile.anchorWorld = profile.centroidWorld;
+            return;
+        }
+
+        Vector2Int referenceCell = WorldToGrid(referenceWorld);
+        if (!IsInBounds(referenceCell.x, referenceCell.y))
+        {
+            referenceCell = profile.centroidCell;
+        }
+
+        Vector2Int best = new Vector2Int(-1, -1);
+        float bestDist = float.MaxValue;
+        HashSet<long> visited = new HashSet<long>();
+
+        for (int i = 0; i < index.occupiedCells.Count; i++)
+        {
+            Vector2Int occupied = index.occupiedCells[i];
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                for (int dz = -1; dz <= 1; dz++)
+                {
+                    if (dx == 0 && dz == 0) continue;
+                    Vector2Int candidate = new Vector2Int(occupied.x + dx, occupied.y + dz);
+                    if (!IsInBounds(candidate.x, candidate.y) || !IsWalkable(candidate.x, candidate.y)) continue;
+
+                    long key = (((long)candidate.x) << 32) ^ (uint)candidate.y;
+                    if (!visited.Add(key)) continue;
+
+                    float sidePenalty = ComputeAnchorBiasPenalty(candidate, profile.centroidGrid, anchorBias);
+                    float dist = (candidate - referenceCell).sqrMagnitude + sidePenalty;
+                    if (dist < bestDist)
+                    {
+                        bestDist = dist;
+                        best = candidate;
+                    }
+                }
+            }
+        }
+
+        if (best.x >= 0)
+        {
+            profile.anchorCell = best;
+            profile.anchorWorld = GridToWorldCenter(best.x, best.y);
+            return;
+        }
+
+        if (profile.centroidCell.x >= 0 &&
+            profile.centroidCell.y >= 0 &&
+            TryFindNearestWalkable(profile.centroidCell, 8, out Vector2Int nearest))
+        {
+            profile.anchorCell = nearest;
+            profile.anchorWorld = GridToWorldCenter(nearest.x, nearest.y);
+            return;
+        }
+
+        profile.anchorCell = profile.centroidCell;
+        profile.anchorWorld = profile.centroidWorld;
+    }
+
+    private static Vector2Int FindNearestCellToPoint(List<Vector2Int> cells, Vector2 point)
+    {
+        if (cells == null || cells.Count == 0) return new Vector2Int(-1, -1);
+
+        Vector2Int best = cells[0];
+        float bestDist = float.MaxValue;
+        for (int i = 0; i < cells.Count; i++)
+        {
+            Vector2Int c = cells[i];
+            float dx = c.x - point.x;
+            float dz = c.y - point.y;
+            float dist = dx * dx + dz * dz;
+            if (dist < bestDist)
+            {
+                bestDist = dist;
+                best = c;
+            }
+        }
+        return best;
+    }
+
+    private static string SelectFeatureReferenceToken(string uid, string name, string runtimeAlias)
+    {
+        if (!string.IsNullOrWhiteSpace(runtimeAlias)) return runtimeAlias.Trim();
+        if (!string.IsNullOrWhiteSpace(uid)) return uid.Trim();
+        return string.IsNullOrWhiteSpace(name) ? string.Empty : name.Trim();
     }
 
     private void HandleRuntimeClickQuery()
@@ -591,10 +1551,15 @@ public class CampusGrid2D : MonoBehaviour
 
     public bool TryFindNearestWalkable(Vector2Int from, int maxRadius, out Vector2Int found)
     {
+        return TryFindNearestWalkable(from, maxRadius, out found, null);
+    }
+
+    public bool TryFindNearestWalkable(Vector2Int from, int maxRadius, out Vector2Int found, HashSet<long> transientBlockedKeys)
+    {
         found = new Vector2Int(-1, -1);
         if (blockedGrid == null) return false;
 
-        if (IsWalkable(from.x, from.y))
+        if (IsPathWalkable(from.x, from.y, transientBlockedKeys))
         {
             found = from;
             return true;
@@ -608,17 +1573,21 @@ public class CampusGrid2D : MonoBehaviour
                 Vector2Int a = new Vector2Int(from.x + dx, from.y + dz);
                 Vector2Int b = new Vector2Int(from.x + dx, from.y - dz);
 
-                if (IsWalkable(a.x, a.y)) { found = a; return true; }
-                if (IsWalkable(b.x, b.y)) { found = b; return true; }
+                if (IsPathWalkable(a.x, a.y, transientBlockedKeys)) { found = a; return true; }
+                if (IsPathWalkable(b.x, b.y, transientBlockedKeys)) { found = b; return true; }
             }
         }
         return false;
     }
 
     /// <summary>
-    /// A* 寻路：返回从 start 到 goal 的网格路径（包含起点和终点）。
-    /// </summary>
+    /// A* 瀵昏矾锛氳繑鍥炰粠 start 鍒?goal 鐨勭綉鏍艰矾寰勶紙鍖呭惈璧风偣鍜岀粓鐐癸級銆?    /// </summary>
     public List<Vector2Int> FindPathAStar(Vector2Int start, Vector2Int goal, bool? useDiagonalOverride = null)
+    {
+        return FindPathAStar(start, goal, useDiagonalOverride, null);
+    }
+
+    public List<Vector2Int> FindPathAStar(Vector2Int start, Vector2Int goal, bool? useDiagonalOverride, HashSet<long> transientBlockedKeys)
     {
         var path = new List<Vector2Int>();
         if (blockedGrid == null) return path;
@@ -626,7 +1595,7 @@ public class CampusGrid2D : MonoBehaviour
         bool useDiagonal = useDiagonalOverride ?? allowDiagonal;
 
         if (!IsInBounds(start.x, start.y) || !IsInBounds(goal.x, goal.y)) return path;
-        if (!IsWalkable(start.x, start.y) || !IsWalkable(goal.x, goal.y)) return path;
+        if (!IsPathWalkable(start.x, start.y, transientBlockedKeys) || !IsPathWalkable(goal.x, goal.y, transientBlockedKeys)) return path;
 
         float[,] gScore = new float[gridWidth, gridLength];
         bool[,] closed = new bool[gridWidth, gridLength];
@@ -641,31 +1610,27 @@ public class CampusGrid2D : MonoBehaviour
             }
         }
 
-        var openSet = new List<Vector2Int>(256);
+        var openHeap = new AStarMinHeap();
         gScore[start.x, start.y] = 0f;
-        openSet.Add(start);
-
-        while (openSet.Count > 0)
+        float startHeuristic = Heuristic(start, goal, useDiagonal);
+        openHeap.Push(new AStarHeapEntry
         {
-            int bestIndex = 0;
-            float bestF = FScore(openSet[0], goal, gScore, useDiagonal);
+            Cell = start,
+            FScore = startHeuristic,
+            HScore = startHeuristic
+        });
 
-            for (int i = 1; i < openSet.Count; i++)
-            {
-                float f = FScore(openSet[i], goal, gScore, useDiagonal);
-                if (f < bestF)
-                {
-                    bestF = f;
-                    bestIndex = i;
-                }
-            }
-
-            Vector2Int current = openSet[bestIndex];
-            openSet.RemoveAt(bestIndex);
+        while (openHeap.Count > 0)
+        {
+            Vector2Int current = openHeap.Pop().Cell;
 
             if (current == goal)
             {
                 ReconstructPath(current, start, cameFrom, hasParent, path);
+                if (smoothAStarPath && path.Count > 2)
+                {
+                    SimplifyAStarPathInPlace(path);
+                }
                 return path;
             }
 
@@ -678,15 +1643,13 @@ public class CampusGrid2D : MonoBehaviour
             {
                 Vector2Int n = neighbors[i];
                 if (!IsInBounds(n.x, n.y)) continue;
-                if (!IsWalkable(n.x, n.y)) continue;
+                if (!IsPathWalkable(n.x, n.y, transientBlockedKeys)) continue;
                 if (closed[n.x, n.y]) continue;
 
-                // 对角移动时，禁止从两个障碍角之间“穿角”。
+                // 对角移动时，禁止从两个障碍物夹角之间“穿角”。
                 if (useDiagonal && IsDiagonal(current, n))
                 {
-                    Vector2Int sideA = new Vector2Int(current.x, n.y);
-                    Vector2Int sideB = new Vector2Int(n.x, current.y);
-                    if (!IsWalkable(sideA.x, sideA.y) && !IsWalkable(sideB.x, sideB.y))
+                    if (!CanTraverseDiagonal(current, n, transientBlockedKeys))
                         continue;
                 }
 
@@ -696,7 +1659,13 @@ public class CampusGrid2D : MonoBehaviour
                     gScore[n.x, n.y] = tentative;
                     cameFrom[n.x, n.y] = current;
                     hasParent[n.x, n.y] = true;
-                    if (!openSet.Contains(n)) openSet.Add(n);
+                    float heuristic = Heuristic(n, goal, useDiagonal);
+                    openHeap.Push(new AStarHeapEntry
+                    {
+                        Cell = n,
+                        FScore = tentative + heuristic,
+                        HScore = heuristic
+                    });
                 }
             }
         }
@@ -721,11 +1690,19 @@ public class CampusGrid2D : MonoBehaviour
         cellTypeGrid = new CellType[gridWidth, gridLength];
         cellFeatureUidGrid = new string[gridWidth, gridLength];
         cellFeatureNameGrid = new string[gridWidth, gridLength];
+        int[,] cellPriorityGrid = new int[gridWidth, gridLength];
         featureAliasCellMap = new Dictionary<string, Vector2Int>(StringComparer.OrdinalIgnoreCase);
         featureAliasUidMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         featureAliasNameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        featureSpatialProfileByUid = new Dictionary<string, FeatureSpatialProfile>(StringComparer.OrdinalIgnoreCase);
+        featureCollectionMembers = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+        featureSpatialIndexByUid = new Dictionary<string, FeatureSpatialIndex>(StringComparer.OrdinalIgnoreCase);
+        featureUidsByName = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        featureUidsByCollectionKey = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
         AssignFeatureRuntimeMetadata(features);
+        InitializeFeatureSpatialIndexes(features);
+        PrepareFeatureRasterization(features);
 
         for (int x = 0; x < gridWidth; x++)
         {
@@ -735,64 +1712,47 @@ public class CampusGrid2D : MonoBehaviour
                 cellTypeGrid[x, z] = CellType.Free;
                 cellFeatureUidGrid[x, z] = null;
                 cellFeatureNameGrid[x, z] = null;
+                cellPriorityGrid[x, z] = int.MinValue;
             }
         }
-
-        float roadHalfWidth = 1f;
-        if (campusLoader != null) roadHalfWidth = Mathf.Max(0.5f, campusLoader.strokeWidthM * 0.5f);
 
         for (int i = 0; i < features.Count; i++)
         {
             Feature2D f = features[i];
+            if (f == null) continue;
+
             CellType t = KindToCellType(f.kind);
             bool shouldBlock = IsBlockedKind(t);
+            int featurePriority = GetFeatureRasterPriority(t);
 
-            if (!f.boundsValid) continue;
+            if (!f.rasterBoundsValid) continue;
+            Rect rasterBounds = f.rasterBounds;
 
-            BoundsToGridRange(f.bounds, out int xMin, out int xMax, out int zMin, out int zMax);
+            BoundsToGridRange(rasterBounds, out int xMin, out int xMax, out int zMin, out int zMax);
             if (xMax < xMin || zMax < zMin) continue;
 
             for (int x = xMin; x <= xMax; x++)
             {
                 for (int z = zMin; z <= zMax; z++)
                 {
-                    Vector2 c = GetCellCenterXY(x, z);
-                    bool hit = false;
+                    Rect cellRect = GetCellRectXY(x, z);
+                    Vector2 cellCenter = GetCellCenterXY(x, z);
+                    if (!FeatureOverlapsCell(f, cellRect, cellCenter)) continue;
 
-                    if (f.HasArea)
-                    {
-                        hit = PointInMultiPolygonWithHoles(c, f.outerRings, f.innerRings);
-                    }
-                    else if (f.HasLine)
-                    {
-                        hit = DistPointToPolyline(c, f.linePoints) <= roadHalfWidth;
-                    }
-                    else
-                    {
-                        hit = f.bounds.Contains(c);
-                    }
+                    RegisterFeatureAlias(f, x, z);
+                    RegisterFeatureSpatialCell(f, t, x, z);
 
-                    if (!hit) continue;
+                    if (featurePriority < cellPriorityGrid[x, z]) continue;
 
-                    if (shouldBlock)
-                    {
-                        blockedGrid[x, z] = true;
-                        cellTypeGrid[x, z] = t;
-                        AssignCellFeatureIdentity(x, z, f.uid, f.effectiveName);
-                        RegisterFeatureAlias(f, x, z);
-                    }
-                    else
-                    {
-                        if (!blockedGrid[x, z])
-                        {
-                            cellTypeGrid[x, z] = t;
-                            AssignCellFeatureIdentity(x, z, f.uid, f.effectiveName);
-                            RegisterFeatureAlias(f, x, z);
-                        }
-                    }
+                    cellPriorityGrid[x, z] = featurePriority;
+                    blockedGrid[x, z] = shouldBlock;
+                    cellTypeGrid[x, z] = t;
+                    AssignCellFeatureIdentity(x, z, f.uid, f.effectiveName);
                 }
             }
         }
+
+        FinalizeFeatureSpatialIndexes();
 
         if (logBuildSummary)
         {
@@ -801,7 +1761,432 @@ public class CampusGrid2D : MonoBehaviour
                 for (int z = 0; z < gridLength; z++)
                     if (blockedGrid[x, z]) blockedCount++;
 
-            Debug.Log($"[CampusGrid2D] 构建完成: {gridWidth}x{gridLength}, cell={cellSize}m, 阻塞={blockedCount}/{gridWidth * gridLength}");
+            Debug.Log($"[CampusGrid2D] 鏋勫缓瀹屾垚: {gridWidth}x{gridLength}, cell={cellSize}m, 闃诲={blockedCount}/{gridWidth * gridLength}");
+        }
+    }
+
+    /// <summary>
+    /// 鎶?CampusJsonMapLoader 鐨勫缓妯?footprint 鍏堣浆鎴愰€傚悎 2D 鏍呮牸鍖栫殑绋冲畾鍑犱綍锛?    /// - 闈細澶嶇敤 ring 娓呮礂銆佺粫搴忋€乷uter->hole 褰掑睘鍜?bounds 鐭╁舰鍏滃簳锛?    /// - 绾匡細鐩存帴鎸?ribbon 椤堕潰鐢熸垚 2D quad锛屽拰鐪熷疄閬撹矾甯﹀涓€鑷淬€?    /// </summary>
+    private void PrepareFeatureRasterization(List<Feature2D> features)
+    {
+        if (features == null || features.Count == 0) return;
+
+        float strokeWidth = campusLoader != null
+            ? Mathf.Max(0.1f, campusLoader.strokeWidthM * GetHorizontalMapScale())
+            : 2f;
+
+        for (int i = 0; i < features.Count; i++)
+        {
+            Feature2D feature = features[i];
+            if (feature == null) continue;
+
+            feature.rasterAreaParts.Clear();
+            feature.rasterStrokeQuads.Clear();
+            feature.rasterBounds = default(Rect);
+            feature.rasterBoundsValid = false;
+
+            FeatureRasterMode mode = DetermineRasterMode(feature);
+            feature.rasterMode = mode;
+            if (mode == FeatureRasterMode.Area)
+            {
+                PrepareFeatureRasterArea(feature);
+            }
+            else if (mode == FeatureRasterMode.Line)
+            {
+                PrepareFeatureRasterLine(feature, strokeWidth);
+            }
+            else if (feature.boundsValid)
+            {
+                feature.rasterBounds = feature.bounds;
+                feature.rasterBoundsValid = true;
+            }
+        }
+    }
+
+    private FeatureRasterMode DetermineRasterMode(Feature2D feature)
+    {
+        if (feature == null) return FeatureRasterMode.Bounds;
+
+        switch (NormalizeFeatureKindToken(feature.kind))
+        {
+            case "building":
+            case "water":
+            case "parking":
+            case "green":
+            case "forest":
+            case "sports":
+                return FeatureRasterMode.Area;
+
+            case "road":
+            case "expressway":
+            case "bridge":
+                return FeatureRasterMode.Line;
+
+            default:
+                if (feature.HasArea) return FeatureRasterMode.Area;
+                if (feature.HasLine) return FeatureRasterMode.Line;
+                return FeatureRasterMode.Bounds;
+        }
+    }
+
+    private void PrepareFeatureRasterArea(Feature2D feature)
+    {
+        if (feature == null) return;
+
+        float collinearEps = NormalizeFeatureKindToken(feature.kind) == "building" ? 0.00005f : 0.0005f;
+        List<List<Vector2>> cleanedOuters = new List<List<Vector2>>();
+        List<List<Vector2>> cleanedHoles = new List<List<Vector2>>();
+
+        if (feature.outerRings != null)
+        {
+            for (int i = 0; i < feature.outerRings.Count; i++)
+            {
+                List<Vector2> ring = CloneAndCleanRing(feature.outerRings[i], true, collinearEps);
+                if (ring != null) cleanedOuters.Add(ring);
+            }
+        }
+
+        if (cleanedOuters.Count == 0 && feature.boundsValid &&
+            (NormalizeFeatureKindToken(feature.kind) == "building" || feature.HasArea))
+        {
+            cleanedOuters.Add(BuildRectRing(feature.bounds));
+        }
+
+        if (feature.innerRings != null)
+        {
+            for (int i = 0; i < feature.innerRings.Count; i++)
+            {
+                List<Vector2> hole = CloneAndCleanRing(feature.innerRings[i], false, collinearEps);
+                if (hole != null) cleanedHoles.Add(hole);
+            }
+        }
+
+        for (int i = 0; i < cleanedOuters.Count; i++)
+        {
+            List<Vector2> outer = cleanedOuters[i];
+            RasterAreaPart part = new RasterAreaPart();
+            part.outer.AddRange(outer);
+
+            for (int h = 0; h < cleanedHoles.Count; h++)
+            {
+                List<Vector2> hole = cleanedHoles[h];
+                if (hole == null || hole.Count < 3) continue;
+                if (PointInPolygon2D(hole[0], outer))
+                {
+                    part.holes.Add(new List<Vector2>(hole));
+                }
+            }
+
+            ComputeBoundsFromRings(new List<List<Vector2>> { part.outer }, part.holes, out part.bounds, out part.boundsValid);
+            if (!part.boundsValid) continue;
+
+            feature.rasterAreaParts.Add(part);
+            AppendFeatureRasterBounds(feature, part.bounds, part.boundsValid);
+        }
+    }
+
+    private void PrepareFeatureRasterLine(Feature2D feature, float strokeWidth)
+    {
+        if (feature == null || feature.linePoints == null || feature.linePoints.Count < 2) return;
+
+        float halfW = Mathf.Max(0.1f, strokeWidth) * 0.5f;
+        for (int i = 0; i < feature.linePoints.Count - 1; i++)
+        {
+            Vector2 a = feature.linePoints[i];
+            Vector2 b = feature.linePoints[i + 1];
+            Vector2 dir = b - a;
+            float len = dir.magnitude;
+            if (len < 1e-6f) continue;
+
+            dir /= len;
+            Vector2 left = new Vector2(-dir.y, dir.x);
+
+            RasterStrokeQuad quad = new RasterStrokeQuad();
+            quad.points.Add(a + left * halfW);
+            quad.points.Add(a - left * halfW);
+            quad.points.Add(b - left * halfW);
+            quad.points.Add(b + left * halfW);
+            ComputeBoundsFromPolygon(quad.points, out quad.bounds, out quad.boundsValid);
+            if (!quad.boundsValid) continue;
+
+            feature.rasterStrokeQuads.Add(quad);
+            AppendFeatureRasterBounds(feature, quad.bounds, quad.boundsValid);
+        }
+    }
+
+    private static List<Vector2> CloneAndCleanRing(List<Vector2> source, bool wantCCW, float collinearEps)
+    {
+        if (source == null || source.Count < 3) return null;
+
+        List<Vector2> ring = new List<Vector2>(source);
+        RemoveClosingDuplicate(ring);
+        CleanRingInPlace(ring, 1e-5f, collinearEps);
+        if (ring.Count < 3) return null;
+
+        EnsureWinding(ring, wantCCW);
+        return ring;
+    }
+
+    private static List<Vector2> BuildRectRing(Rect rect)
+    {
+        List<Vector2> ring = new List<Vector2>(4)
+        {
+            new Vector2(rect.xMin, rect.yMin),
+            new Vector2(rect.xMax, rect.yMin),
+            new Vector2(rect.xMax, rect.yMax),
+            new Vector2(rect.xMin, rect.yMax),
+        };
+        EnsureWinding(ring, true);
+        return ring;
+    }
+
+    private static void ComputeBoundsFromPolygon(List<Vector2> polygon, out Rect bounds, out bool valid)
+    {
+        bounds = default(Rect);
+        valid = false;
+        if (polygon == null || polygon.Count < 3) return;
+
+        float minX = float.PositiveInfinity;
+        float minY = float.PositiveInfinity;
+        float maxX = float.NegativeInfinity;
+        float maxY = float.NegativeInfinity;
+
+        for (int i = 0; i < polygon.Count; i++)
+        {
+            Vector2 p = polygon[i];
+            if (p.x < minX) minX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y > maxY) maxY = p.y;
+        }
+
+        if (minX <= maxX && minY <= maxY)
+        {
+            bounds = Rect.MinMaxRect(minX, minY, maxX, maxY);
+            valid = true;
+        }
+    }
+
+    private static void AppendFeatureRasterBounds(Feature2D feature, Rect bounds, bool boundsValid)
+    {
+        if (feature == null || !boundsValid) return;
+
+        if (!feature.rasterBoundsValid)
+        {
+            feature.rasterBounds = bounds;
+            feature.rasterBoundsValid = true;
+            return;
+        }
+
+        feature.rasterBounds = MergeRect(feature.rasterBounds, bounds);
+    }
+
+    private bool FeatureOverlapsCell(Feature2D feature, Rect cellRect, Vector2 cellCenter)
+    {
+        if (feature == null) return false;
+
+        FeatureRasterMode mode = feature.rasterMode;
+        if (mode == FeatureRasterMode.Area && feature.HasRasterArea)
+        {
+            for (int i = 0; i < feature.rasterAreaParts.Count; i++)
+            {
+                if (AreaPartOverlapsCell(feature.rasterAreaParts[i], cellRect, cellCenter))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if (mode == FeatureRasterMode.Area) return false;
+
+        if (mode == FeatureRasterMode.Line && feature.HasRasterLine)
+        {
+            for (int i = 0; i < feature.rasterStrokeQuads.Count; i++)
+            {
+                RasterStrokeQuad quad = feature.rasterStrokeQuads[i];
+                if (!quad.boundsValid || !RectsOverlapInclusive(quad.bounds, cellRect)) continue;
+                if (PolygonIntersectsRect(quad.points, cellRect))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if (mode == FeatureRasterMode.Line) return false;
+
+        return feature.rasterBoundsValid && RectsOverlapInclusive(feature.rasterBounds, cellRect);
+    }
+
+    private static bool AreaPartOverlapsCell(RasterAreaPart part, Rect cellRect, Vector2 cellCenter)
+    {
+        if (part == null || !part.boundsValid || !RectsOverlapInclusive(part.bounds, cellRect)) return false;
+        if (!PolygonIntersectsRect(part.outer, cellRect)) return false;
+        if (part.holes == null || part.holes.Count == 0) return true;
+
+        if (PointInFilledArea(cellCenter, part.outer, part.holes)) return true;
+        if (AnyRectCornerInFilledArea(cellRect, part.outer, part.holes)) return true;
+        if (PolygonHasVertexInsideRect(part.outer, cellRect)) return true;
+        if (PolygonEdgesIntersectRect(part.outer, cellRect)) return true;
+
+        for (int i = 0; i < part.holes.Count; i++)
+        {
+            List<Vector2> hole = part.holes[i];
+            if (hole == null || hole.Count < 3) continue;
+            if (PolygonHasVertexInsideRect(hole, cellRect)) return true;
+            if (PolygonEdgesIntersectRect(hole, cellRect)) return true;
+        }
+
+        return !RectFullyInsideAnyHole(cellRect, cellCenter, part.holes);
+    }
+
+    private static bool PointInFilledArea(Vector2 point, List<Vector2> outer, List<List<Vector2>> holes)
+    {
+        if (!PointInPolygon2D(point, outer)) return false;
+        if (holes == null) return true;
+
+        for (int i = 0; i < holes.Count; i++)
+        {
+            List<Vector2> hole = holes[i];
+            if (hole != null && hole.Count >= 3 && PointInPolygon2D(point, hole))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool AnyRectCornerInFilledArea(Rect rect, List<Vector2> outer, List<List<Vector2>> holes)
+    {
+        return PointInFilledArea(new Vector2(rect.xMin, rect.yMin), outer, holes) ||
+               PointInFilledArea(new Vector2(rect.xMax, rect.yMin), outer, holes) ||
+               PointInFilledArea(new Vector2(rect.xMax, rect.yMax), outer, holes) ||
+               PointInFilledArea(new Vector2(rect.xMin, rect.yMax), outer, holes);
+    }
+
+    private static bool RectFullyInsideAnyHole(Rect rect, Vector2 rectCenter, List<List<Vector2>> holes)
+    {
+        if (holes == null || holes.Count == 0) return false;
+
+        for (int i = 0; i < holes.Count; i++)
+        {
+            List<Vector2> hole = holes[i];
+            if (hole == null || hole.Count < 3) continue;
+            if (RectFullyInsidePolygon(rect, rectCenter, hole))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool RectFullyInsidePolygon(Rect rect, Vector2 rectCenter, List<Vector2> polygon)
+    {
+        if (polygon == null || polygon.Count < 3) return false;
+
+        if (!PointInPolygon2D(rectCenter, polygon)) return false;
+
+        Vector2 c0 = new Vector2(rect.xMin, rect.yMin);
+        Vector2 c1 = new Vector2(rect.xMax, rect.yMin);
+        Vector2 c2 = new Vector2(rect.xMax, rect.yMax);
+        Vector2 c3 = new Vector2(rect.xMin, rect.yMax);
+
+        return PointInPolygon2D(c0, polygon) &&
+               PointInPolygon2D(c1, polygon) &&
+               PointInPolygon2D(c2, polygon) &&
+               PointInPolygon2D(c3, polygon) &&
+               !PolygonEdgesIntersectRect(polygon, rect);
+    }
+
+    private static bool PolygonIntersectsRect(List<Vector2> polygon, Rect rect)
+    {
+        if (polygon == null || polygon.Count < 3) return false;
+
+        if (PointInPolygon2D(new Vector2(rect.xMin, rect.yMin), polygon) ||
+            PointInPolygon2D(new Vector2(rect.xMax, rect.yMin), polygon) ||
+            PointInPolygon2D(new Vector2(rect.xMax, rect.yMax), polygon) ||
+            PointInPolygon2D(new Vector2(rect.xMin, rect.yMax), polygon))
+        {
+            return true;
+        }
+
+        if (PointInPolygon2D(new Vector2(rect.center.x, rect.center.y), polygon)) return true;
+        if (PolygonHasVertexInsideRect(polygon, rect)) return true;
+        return PolygonEdgesIntersectRect(polygon, rect);
+    }
+
+    private static bool PolygonHasVertexInsideRect(List<Vector2> polygon, Rect rect)
+    {
+        if (polygon == null || polygon.Count < 3) return false;
+
+        for (int i = 0; i < polygon.Count; i++)
+        {
+            if (RectContainsPointInclusive(rect, polygon[i]))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool PolygonEdgesIntersectRect(List<Vector2> polygon, Rect rect)
+    {
+        if (polygon == null || polygon.Count < 2) return false;
+
+        Vector2 r0 = new Vector2(rect.xMin, rect.yMin);
+        Vector2 r1 = new Vector2(rect.xMax, rect.yMin);
+        Vector2 r2 = new Vector2(rect.xMax, rect.yMax);
+        Vector2 r3 = new Vector2(rect.xMin, rect.yMax);
+
+        for (int i = 0; i < polygon.Count; i++)
+        {
+            Vector2 a = polygon[i];
+            Vector2 b = polygon[(i + 1) % polygon.Count];
+            if (SegmentsIntersect2D(a, b, r0, r1) ||
+                SegmentsIntersect2D(a, b, r1, r2) ||
+                SegmentsIntersect2D(a, b, r2, r3) ||
+                SegmentsIntersect2D(a, b, r3, r0))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool RectContainsPointInclusive(Rect rect, Vector2 point, float eps = 1e-5f)
+    {
+        return point.x >= rect.xMin - eps &&
+               point.x <= rect.xMax + eps &&
+               point.y >= rect.yMin - eps &&
+               point.y <= rect.yMax + eps;
+    }
+
+    private static bool RectsOverlapInclusive(Rect a, Rect b, float eps = 1e-5f)
+    {
+        return a.xMin <= b.xMax + eps &&
+               a.xMax >= b.xMin - eps &&
+               a.yMin <= b.yMax + eps &&
+               a.yMax >= b.yMin - eps;
+    }
+
+    private int GetFeatureRasterPriority(CellType cellType)
+    {
+        switch (cellType)
+        {
+            case CellType.Bridge: return 1000;
+            case CellType.Building: return 900;
+            case CellType.Expressway: return 820;
+            case CellType.Road: return 780;
+            case CellType.Parking: return 730;
+            case CellType.Sports: return 700;
+            case CellType.Water: return 680;
+            case CellType.Green: return 640;
+            case CellType.Forest: return 620;
+            case CellType.Other: return 600;
+            default: return 0;
         }
     }
 
@@ -823,7 +2208,7 @@ public class CampusGrid2D : MonoBehaviour
         Color c = GetCellColor(x, z);
         var block = new MaterialPropertyBlock();
         block.SetColor("_Color", c);
-        block.SetColor("_BaseColor", c); // URP Lit 使用 _BaseColor
+        block.SetColor("_BaseColor", c); // URP Lit 浣跨敤 _BaseColor
         r.SetPropertyBlock(block);
 
         visualCells.Add(cell);
@@ -882,6 +2267,71 @@ public class CampusGrid2D : MonoBehaviour
 
         outJson = File.ReadAllText(path);
         return !string.IsNullOrWhiteSpace(outJson);
+    }
+
+    private float GetHorizontalMapScale()
+    {
+        if (campusLoader == null) return 1f;
+        return Mathf.Max(0.1f, campusLoader.horizontalMapScale);
+    }
+
+    private static void ApplyHorizontalScaleToFeatures(List<Feature2D> features, ref Rect allBounds, float scale)
+    {
+        float safeScale = Mathf.Max(0.1f, scale);
+        if (features == null || features.Count == 0 || Mathf.Abs(safeScale - 1f) < 1e-4f) return;
+
+        Vector2 pivot = allBounds.center;
+        for (int i = 0; i < features.Count; i++)
+        {
+            Feature2D feature = features[i];
+            if (feature == null) continue;
+
+            ScaleRingCollection(feature.outerRings, pivot, safeScale);
+            ScaleRingCollection(feature.innerRings, pivot, safeScale);
+            ScalePointCollection(feature.linePoints, pivot, safeScale);
+
+            if (feature.boundsValid)
+            {
+                feature.bounds = ScaleRectAroundPivot(feature.bounds, pivot, safeScale);
+            }
+        }
+
+        allBounds = ScaleRectAroundPivot(allBounds, pivot, safeScale);
+    }
+
+    private static void ScaleRingCollection(List<List<Vector2>> rings, Vector2 pivot, float scale)
+    {
+        if (rings == null) return;
+        for (int i = 0; i < rings.Count; i++)
+        {
+            ScalePointCollection(rings[i], pivot, scale);
+        }
+    }
+
+    private static void ScalePointCollection(List<Vector2> points, Vector2 pivot, float scale)
+    {
+        if (points == null) return;
+        for (int i = 0; i < points.Count; i++)
+        {
+            points[i] = ScalePointAroundPivot(points[i], pivot, scale);
+        }
+    }
+
+    private static Vector2 ScalePointAroundPivot(Vector2 point, Vector2 pivot, float scale)
+    {
+        return pivot + (point - pivot) * scale;
+    }
+
+    private static Rect ScaleRectAroundPivot(Rect rect, Vector2 pivot, float scale)
+    {
+        Vector2 min = ScalePointAroundPivot(new Vector2(rect.xMin, rect.yMin), pivot, scale);
+        Vector2 max = ScalePointAroundPivot(new Vector2(rect.xMax, rect.yMax), pivot, scale);
+        return Rect.MinMaxRect(
+            Mathf.Min(min.x, max.x),
+            Mathf.Min(min.y, max.y),
+            Mathf.Max(min.x, max.x),
+            Mathf.Max(min.y, max.y)
+        );
     }
 
     private bool ParseCampusJson(string json, out List<Feature2D> outFeatures, out Rect outAllBounds)
@@ -950,8 +2400,8 @@ public class CampusGrid2D : MonoBehaviour
             }
 
             bool hasBounds = false;
-            Rect rb = default;
-            Rect lb = default;
+            Rect rb = default(Rect);
+            Rect lb = default(Rect);
 
             if (f.HasArea)
             {
@@ -983,7 +2433,13 @@ public class CampusGrid2D : MonoBehaviour
                 }
             }
 
-            if (!f.boundsValid) continue;
+            if (!f.boundsValid)
+            {
+                Vector3 origin = transform.position;
+                Vector2 center = new Vector2(origin.x, origin.z);
+                f.bounds = new Rect(center.x - 0.5f, center.y - 0.5f, 1f, 1f);
+                f.boundsValid = true;
+            }
 
             outFeatures.Add(f);
             if (!allBoundsValid)
@@ -1002,10 +2458,14 @@ public class CampusGrid2D : MonoBehaviour
 
     private void BoundsToGridRange(Rect b, out int xMin, out int xMax, out int zMin, out int zMax)
     {
+        float eps = Mathf.Max(1e-4f, cellSize * 0.001f);
+        float rasterMaxX = Mathf.Max(b.xMin + eps, b.xMax - eps);
+        float rasterMaxZ = Mathf.Max(b.yMin + eps, b.yMax - eps);
+
         xMin = Mathf.FloorToInt((b.xMin - mapBoundsXY.xMin) / cellSize);
-        xMax = Mathf.FloorToInt((b.xMax - mapBoundsXY.xMin) / cellSize);
+        xMax = Mathf.FloorToInt((rasterMaxX - mapBoundsXY.xMin) / cellSize);
         zMin = Mathf.FloorToInt((b.yMin - mapBoundsXY.yMin) / cellSize);
-        zMax = Mathf.FloorToInt((b.yMax - mapBoundsXY.yMin) / cellSize);
+        zMax = Mathf.FloorToInt((rasterMaxZ - mapBoundsXY.yMin) / cellSize);
 
         xMin = Mathf.Clamp(xMin, 0, gridWidth - 1);
         xMax = Mathf.Clamp(xMax, 0, gridWidth - 1);
@@ -1018,6 +2478,13 @@ public class CampusGrid2D : MonoBehaviour
         float px = mapBoundsXY.xMin + (x + 0.5f) * cellSize;
         float py = mapBoundsXY.yMin + (z + 0.5f) * cellSize;
         return new Vector2(px, py);
+    }
+
+    private Rect GetCellRectXY(int x, int z)
+    {
+        float x0 = mapBoundsXY.xMin + x * cellSize;
+        float z0 = mapBoundsXY.yMin + z * cellSize;
+        return Rect.MinMaxRect(x0, z0, x0 + cellSize, z0 + cellSize);
     }
 
     private static Vector2 ReadXY(JToken tok)
@@ -1051,7 +2518,7 @@ public class CampusGrid2D : MonoBehaviour
 
     private static void ComputeBoundsFromLine(List<Vector2> line, out Rect bounds, out bool valid)
     {
-        bounds = default;
+        bounds = default(Rect);
         valid = false;
         if (line == null || line.Count < 2) return;
 
@@ -1078,7 +2545,7 @@ public class CampusGrid2D : MonoBehaviour
 
     private static void ComputeBoundsFromRings(List<List<Vector2>> outers, List<List<Vector2>> inners, out Rect bounds, out bool valid)
     {
-        bounds = default;
+        bounds = default(Rect);
         valid = false;
 
         bool any = false;
@@ -1127,8 +2594,7 @@ public class CampusGrid2D : MonoBehaviour
     }
 
     /// <summary>
-    /// 归一化地点标识：统一大小写并移除空白、下划线、连字符，便于模糊对齐。
-    /// </summary>
+    /// 褰掍竴鍖栧湴鐐规爣璇嗭細缁熶竴澶у皬鍐欏苟绉婚櫎绌虹櫧銆佷笅鍒掔嚎銆佽繛瀛楃锛屼究浜庢ā绯婂榻愩€?    /// </summary>
     private static string NormalizeFeatureToken(string raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
@@ -1136,27 +2602,37 @@ public class CampusGrid2D : MonoBehaviour
         s = s.Replace(" ", string.Empty)
              .Replace("_", string.Empty)
              .Replace("-", string.Empty)
-             .Replace("：", ":");
+             .Replace(":", string.Empty)
+             .Replace("：", string.Empty);
         return s;
     }
 
     /// <summary>
-    /// 从文本中提取建筑编号（如 building_12 / 楼12 / 建筑-12）。
-    /// </summary>
-    private static bool TryExtractBuildingId(string text, out string id)
+    /// 鍙仛涓€绉嶉潪甯稿厠鍒剁殑鈥滄爣绛惧墠缂€鍓ョ鈥濓細
+    /// - 鑻ヨ緭鍏ュ儚 feature:a_3 / campus:forest_2 杩欑鈥滅煭鏍囩:涓讳綋鈥濆舰寮忥紝灏卞彇涓讳綋锛?    /// - 鍚﹀垯淇濇寔鍘熸牱銆?    ///
+    /// 杩欓噷鏁呮剰涓嶆灇涓?building/forest 绛変笟鍔″崟璇嶏紝
+    /// 閬垮厤鍦板浘鍛藉悕瑙勫垯涓€鍙橈紝涓嬫父瑙ｆ瀽灏卞叏閮ㄥけ鏁堛€?    /// </summary>
+    private static bool TryStripStructuredTargetPrefix(string text, out string prefix, out string stripped)
     {
-        id = string.Empty;
-        if (string.IsNullOrWhiteSpace(text)) return false;
+        prefix = string.Empty;
+        stripped = text != null ? text.Trim() : string.Empty;
+        if (string.IsNullOrWhiteSpace(stripped)) return false;
 
-        System.Text.RegularExpressions.Match m = System.Text.RegularExpressions.Regex.Match(
-            text,
-            @"(?:building|楼|建筑)?\s*[_\-:：]?\s*(\d+)",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase
-        );
-        if (!m.Success) return false;
+        int colonIndex = stripped.IndexOf(':');
+        if (colonIndex <= 0 || colonIndex >= stripped.Length - 1)
+        {
+            return false;
+        }
 
-        id = m.Groups[1].Value?.Trim() ?? string.Empty;
-        return !string.IsNullOrWhiteSpace(id);
+        string left = stripped.Substring(0, colonIndex).Trim();
+        string right = stripped.Substring(colonIndex + 1).Trim();
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)) return false;
+        if (left.Length > 24) return false;
+        if (!System.Text.RegularExpressions.Regex.IsMatch(left, @"^[A-Za-z][A-Za-z0-9_\-]*$")) return false;
+
+        prefix = left;
+        stripped = right;
+        return true;
     }
 
     private void AssignFeatureRuntimeMetadata(List<Feature2D> features)
@@ -1202,8 +2678,8 @@ public class CampusGrid2D : MonoBehaviour
             return feature.name.Trim();
         }
 
-        // 网格层保存的是“真实业务名”，不是 Unity 场景里的实例编号名。
-        // 对没有显式名字的要素，退回到 kind 默认名，便于像 building / forest 这类查询继续工作。
+        // 网格层保存的是真实业务名，不是 Unity 场景里的实例编号名。
+        // 对没有显式名字的要素，退回到 kind 默认名，保证 building/forest 这类查询仍然可用。
         return NormalizeFeatureKindToken(feature.kind);
     }
 
@@ -1281,6 +2757,144 @@ public class CampusGrid2D : MonoBehaviour
 
         string result = sb.ToString().Trim('_');
         return string.IsNullOrWhiteSpace(result) ? "feature" : result;
+    }
+
+    /// <summary>
+    /// 涓烘瘡涓?feature 鍑嗗绌洪棿绱㈠紩澹冲瓙銆?    /// 鍏堝缓鈥滅┖妗ｆ鈥濓紝鍚庨潰鍦ㄦ爡鏍煎寲鏃朵笉鏂妸鍛戒腑鐨勬牸瀛愬～杩涘幓銆?    /// </summary>
+    private void InitializeFeatureSpatialIndexes(List<Feature2D> features)
+    {
+        if (features == null || featureSpatialIndexByUid == null) return;
+
+        for (int i = 0; i < features.Count; i++)
+        {
+            Feature2D feature = features[i];
+            if (feature == null || string.IsNullOrWhiteSpace(feature.uid)) continue;
+
+            string uid = feature.uid.Trim();
+            if (featureSpatialIndexByUid.ContainsKey(uid)) continue;
+
+            string collectionKey = $"feature_kind:{NormalizeFeatureKindToken(feature.kind)}";
+            featureSpatialIndexByUid[uid] = new FeatureSpatialIndex
+            {
+                uid = uid,
+                name = string.IsNullOrWhiteSpace(feature.effectiveName) ? string.Empty : feature.effectiveName.Trim(),
+                runtimeAlias = string.IsNullOrWhiteSpace(feature.runtimeAlias) ? string.Empty : feature.runtimeAlias.Trim(),
+                kind = NormalizeFeatureKindToken(feature.kind),
+                collectionKey = collectionKey,
+                cellType = KindToCellType(feature.kind)
+            };
+
+            RegisterFeatureSpatialName(uid, feature.effectiveName);
+            RegisterCollectionMembership(collectionKey, uid);
+        }
+    }
+
+    private void RegisterFeatureSpatialCell(Feature2D feature, CellType cellType, int x, int z)
+    {
+        if (feature == null || string.IsNullOrWhiteSpace(feature.uid) || featureSpatialIndexByUid == null) return;
+
+        string uid = feature.uid.Trim();
+        if (!featureSpatialIndexByUid.TryGetValue(uid, out FeatureSpatialIndex index) || index == null)
+        {
+            return;
+        }
+
+        long key = (((long)x) << 32) ^ (uint)z;
+        if (!index.occupiedCellKeys.Add(key)) return;
+
+        index.cellType = cellType;
+        index.occupiedCells.Add(new Vector2Int(x, z));
+        if (x < index.minX) index.minX = x;
+        if (x > index.maxX) index.maxX = x;
+        if (z < index.minZ) index.minZ = z;
+        if (z > index.maxZ) index.maxZ = z;
+    }
+
+    /// <summary>
+    /// 鏍呮牸鍖栧畬鎴愬悗锛屾妸鍐呴儴绱㈠紩鏀舵暃鎴愮ǔ瀹氬彲璇荤殑绌洪棿妗ｆ銆?    /// </summary>
+    private void FinalizeFeatureSpatialIndexes()
+    {
+        if (featureSpatialIndexByUid == null || featureSpatialProfileByUid == null || featureCollectionMembers == null) return;
+
+        featureSpatialProfileByUid.Clear();
+        featureCollectionMembers.Clear();
+
+        foreach (KeyValuePair<string, FeatureSpatialIndex> kv in featureSpatialIndexByUid)
+        {
+            FeatureSpatialIndex index = kv.Value;
+            if (index == null) continue;
+
+            FeatureSpatialProfile profile = BuildSpatialProfileFromIndex(index);
+            featureSpatialProfileByUid[kv.Key] = profile;
+        }
+
+        if (featureUidsByCollectionKey == null) return;
+
+        foreach (KeyValuePair<string, List<string>> kv in featureUidsByCollectionKey)
+        {
+            if (string.IsNullOrWhiteSpace(kv.Key) || kv.Value == null || kv.Value.Count == 0) continue;
+
+            List<string> members = kv.Value
+                .Where(uid => !string.IsNullOrWhiteSpace(uid))
+                .Select(uid =>
+                {
+                    FeatureSpatialProfile profile = featureSpatialProfileByUid.TryGetValue(uid, out FeatureSpatialProfile found) ? found : null;
+                    return profile != null ? SelectFeatureReferenceToken(profile.uid, profile.name, profile.runtimeAlias) : uid;
+                })
+                .Where(token => !string.IsNullOrWhiteSpace(token))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            members.Sort((a, b) =>
+            {
+                FeatureSpatialIndex ia = TryResolveFeatureSpatialIndex(a, out FeatureSpatialIndex foundA) ? foundA : null;
+                FeatureSpatialIndex ib = TryResolveFeatureSpatialIndex(b, out FeatureSpatialIndex foundB) ? foundB : null;
+                FeatureSpatialProfile pa = ia != null ? BuildSpatialProfileFromIndex(ia) : null;
+                FeatureSpatialProfile pb = ib != null ? BuildSpatialProfileFromIndex(ib) : null;
+                if (pa == null && pb == null) return StringComparer.OrdinalIgnoreCase.Compare(a, b);
+                if (pa == null) return 1;
+                if (pb == null) return -1;
+
+                int byX = pa.centroidWorld.x.CompareTo(pb.centroidWorld.x);
+                if (byX != 0) return byX;
+                return pa.centroidWorld.z.CompareTo(pb.centroidWorld.z);
+            });
+
+            featureCollectionMembers[kv.Key] = members.ToArray();
+        }
+    }
+
+    private void RegisterFeatureSpatialName(string uid, string featureName)
+    {
+        if (string.IsNullOrWhiteSpace(uid) || string.IsNullOrWhiteSpace(featureName) || featureUidsByName == null) return;
+
+        string key = featureName.Trim();
+        if (!featureUidsByName.TryGetValue(key, out List<string> list))
+        {
+            list = new List<string>();
+            featureUidsByName[key] = list;
+        }
+
+        if (!list.Any(existing => string.Equals(existing, uid, StringComparison.OrdinalIgnoreCase)))
+        {
+            list.Add(uid);
+        }
+    }
+
+    private void RegisterCollectionMembership(string collectionKey, string uid)
+    {
+        if (string.IsNullOrWhiteSpace(collectionKey) || string.IsNullOrWhiteSpace(uid) || featureUidsByCollectionKey == null) return;
+
+        if (!featureUidsByCollectionKey.TryGetValue(collectionKey, out List<string> list))
+        {
+            list = new List<string>();
+            featureUidsByCollectionKey[collectionKey] = list;
+        }
+
+        if (!list.Any(existing => string.Equals(existing, uid, StringComparison.OrdinalIgnoreCase)))
+        {
+            list.Add(uid);
+        }
     }
 
     private void RegisterFeatureAlias(Feature2D feature, int x, int z)
@@ -1383,6 +2997,120 @@ public class CampusGrid2D : MonoBehaviour
 
         if (string.IsNullOrWhiteSpace(bestAlias)) return false;
         return TryResolveFeatureAliasCell(bestAlias, out cell, out matchedUid, out matchedName, preferWalkable, ignoreCase);
+    }
+
+    private static double SignedArea2D(List<Vector2> poly)
+    {
+        if (poly == null || poly.Count < 3) return 0.0;
+
+        double area = 0.0;
+        for (int i = 0; i < poly.Count; i++)
+        {
+            Vector2 p = poly[i];
+            Vector2 q = poly[(i + 1) % poly.Count];
+            area += (double)p.x * q.y - (double)q.x * p.y;
+        }
+
+        return 0.5 * area;
+    }
+
+    private static void EnsureWinding(List<Vector2> ring, bool wantCCW)
+    {
+        if (ring == null || ring.Count < 3) return;
+        bool isCCW = SignedArea2D(ring) > 0.0;
+        if (isCCW != wantCCW) ring.Reverse();
+    }
+
+    private static void RemoveClosingDuplicate(List<Vector2> ring, float eps = 1e-4f)
+    {
+        if (ring == null || ring.Count < 2) return;
+        if ((ring[0] - ring[ring.Count - 1]).sqrMagnitude <= eps * eps)
+        {
+            ring.RemoveAt(ring.Count - 1);
+        }
+    }
+
+    private static void CleanRingInPlace(List<Vector2> ring, float dupEps, float collinearEps)
+    {
+        if (ring == null) return;
+
+        RemoveClosingDuplicate(ring);
+
+        List<Vector2> unique = new List<Vector2>(ring.Count);
+        float dupEpsSq = dupEps * dupEps;
+        for (int i = 0; i < ring.Count; i++)
+        {
+            if (unique.Count == 0 || (unique[unique.Count - 1] - ring[i]).sqrMagnitude > dupEpsSq)
+            {
+                unique.Add(ring[i]);
+            }
+        }
+
+        ring.Clear();
+        ring.AddRange(unique);
+        RemoveCollinearPointsInPlace(ring, collinearEps);
+        RemoveClosingDuplicate(ring);
+    }
+
+    private static void RemoveCollinearPointsInPlace(List<Vector2> points, float eps)
+    {
+        if (points == null || points.Count < 3) return;
+
+        int count = points.Count;
+        List<Vector2> filtered = new List<Vector2>(count);
+        for (int i = 0; i < count; i++)
+        {
+            Vector2 a = points[(i - 1 + count) % count];
+            Vector2 b = points[i];
+            Vector2 c = points[(i + 1) % count];
+            Vector2 ab = b - a;
+            Vector2 ac = c - a;
+            float cross = ab.x * ac.y - ab.y * ac.x;
+            if (Mathf.Abs(cross) < eps) continue;
+            filtered.Add(b);
+        }
+
+        if (filtered.Count >= 3)
+        {
+            points.Clear();
+            points.AddRange(filtered);
+        }
+    }
+
+    private static float Cross2(Vector2 a, Vector2 b)
+    {
+        return a.x * b.y - a.y * b.x;
+    }
+
+    private static int Orient2D(Vector2 a, Vector2 b, Vector2 c, float eps = 1e-6f)
+    {
+        float v = Cross2(b - a, c - a);
+        if (v > eps) return 1;
+        if (v < -eps) return -1;
+        return 0;
+    }
+
+    private static bool OnSegment2D(Vector2 a, Vector2 b, Vector2 p, float eps = 1e-6f)
+    {
+        return p.x >= Mathf.Min(a.x, b.x) - eps &&
+               p.x <= Mathf.Max(a.x, b.x) + eps &&
+               p.y >= Mathf.Min(a.y, b.y) - eps &&
+               p.y <= Mathf.Max(a.y, b.y) + eps;
+    }
+
+    private static bool SegmentsIntersect2D(Vector2 a, Vector2 b, Vector2 c, Vector2 d)
+    {
+        int o1 = Orient2D(a, b, c);
+        int o2 = Orient2D(a, b, d);
+        int o3 = Orient2D(c, d, a);
+        int o4 = Orient2D(c, d, b);
+
+        if (o1 != o2 && o3 != o4) return true;
+        if (o1 == 0 && OnSegment2D(a, b, c)) return true;
+        if (o2 == 0 && OnSegment2D(a, b, d)) return true;
+        if (o3 == 0 && OnSegment2D(c, d, a)) return true;
+        if (o4 == 0 && OnSegment2D(c, d, b)) return true;
+        return false;
     }
 
     private static bool PointInPolygon2D(Vector2 p, List<Vector2> poly)
@@ -1491,10 +3219,12 @@ public class CampusGrid2D : MonoBehaviour
     {
         int dx = Mathf.Abs(a.x - b.x);
         int dz = Mathf.Abs(a.y - b.y);
-        if (!diag) return dx + dz; // 曼哈顿
+        // 曼哈顿启发值。
+        if (!diag) return dx + dz;
         int min = Mathf.Min(dx, dz);
         int max = Mathf.Max(dx, dz);
-        return 1.41421356f * min + (max - min); // 八方向近似最短
+        // 八方向近似最短路启发值。
+        return 1.41421356f * min + (max - min);
     }
 
     private static bool IsDiagonal(Vector2Int a, Vector2Int b)
@@ -1502,9 +3232,97 @@ public class CampusGrid2D : MonoBehaviour
         return a.x != b.x && a.y != b.y;
     }
 
-    private static float FScore(Vector2Int node, Vector2Int goal, float[,] gScore, bool diag)
+    private static long PackCellKey(int x, int z)
     {
-        return gScore[node.x, node.y] + Heuristic(node, goal, diag);
+        return (((long)x) << 32) ^ (uint)z;
+    }
+
+    private bool IsPathWalkable(int x, int z, HashSet<long> transientBlockedKeys)
+    {
+        if (!IsWalkable(x, z)) return false;
+        return transientBlockedKeys == null || !transientBlockedKeys.Contains(PackCellKey(x, z));
+    }
+
+    private bool CanTraverseDiagonal(Vector2Int from, Vector2Int to, HashSet<long> transientBlockedKeys = null)
+    {
+        if (!IsDiagonal(from, to)) return true;
+
+        Vector2Int sideA = new Vector2Int(from.x, to.y);
+        Vector2Int sideB = new Vector2Int(to.x, from.y);
+        return IsPathWalkable(sideA.x, sideA.y, transientBlockedKeys) || IsPathWalkable(sideB.x, sideB.y, transientBlockedKeys);
+    }
+
+    private bool HasDirectLineOfSight(Vector2Int from, Vector2Int to)
+    {
+        int x0 = from.x;
+        int z0 = from.y;
+        int x1 = to.x;
+        int z1 = to.y;
+
+        int dx = Mathf.Abs(x1 - x0);
+        int dz = Mathf.Abs(z1 - z0);
+        int sx = x0 < x1 ? 1 : -1;
+        int sz = z0 < z1 ? 1 : -1;
+        int err = dx - dz;
+
+        while (true)
+        {
+            if (!IsWalkable(x0, z0)) return false;
+            if (x0 == x1 && z0 == z1) return true;
+
+            int e2 = err * 2;
+            int nextX = x0;
+            int nextZ = z0;
+            bool movedX = false;
+            bool movedZ = false;
+
+            if (e2 > -dz)
+            {
+                err -= dz;
+                nextX += sx;
+                movedX = true;
+            }
+            if (e2 < dx)
+            {
+                err += dx;
+                nextZ += sz;
+                movedZ = true;
+            }
+
+            if (!IsInBounds(nextX, nextZ) || !IsWalkable(nextX, nextZ)) return false;
+            if (movedX && movedZ && !CanTraverseDiagonal(new Vector2Int(x0, z0), new Vector2Int(nextX, nextZ))) return false;
+
+            x0 = nextX;
+            z0 = nextZ;
+        }
+    }
+
+    private void SimplifyAStarPathInPlace(List<Vector2Int> path)
+    {
+        if (path == null || path.Count <= 2) return;
+
+        List<Vector2Int> simplified = new List<Vector2Int>(path.Count);
+        int anchor = 0;
+        simplified.Add(path[anchor]);
+
+        while (anchor < path.Count - 1)
+        {
+            int furthestVisible = anchor + 1;
+            for (int candidate = path.Count - 1; candidate > anchor + 1; candidate--)
+            {
+                if (HasDirectLineOfSight(path[anchor], path[candidate]))
+                {
+                    furthestVisible = candidate;
+                    break;
+                }
+            }
+
+            simplified.Add(path[furthestVisible]);
+            anchor = furthestVisible;
+        }
+
+        path.Clear();
+        path.AddRange(simplified);
     }
 
     private void AddNeighbors(Vector2Int c, bool diag, out Vector2Int[] neighbors, out float[] costs)
