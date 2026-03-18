@@ -28,28 +28,28 @@ public class AgentLLMControl : MonoBehaviour
         if (memoryModule == null)
         {
             memoryModule = gameObject.AddComponent<MemoryModule>();
-            Debug.Log($"为 {gameObject.name} 添加 MemoryModule 组件");
+            //Debug.Log($"为 {gameObject.name} 添加 MemoryModule 组件");
         }
         
         reflectionModule = GetComponent<ReflectionModule>();
         if (reflectionModule == null)
         {
             reflectionModule = gameObject.AddComponent<ReflectionModule>();
-            Debug.Log($"为 {gameObject.name} 添加 ReflectionModule 组件");
+            //Debug.Log($"为 {gameObject.name} 添加 ReflectionModule 组件");
         }
         
         planningModule = GetComponent<PlanningModule>();
         if (planningModule == null)
         {
             planningModule = gameObject.AddComponent<PlanningModule>();
-            Debug.Log($"为 {gameObject.name} 添加 PlanningModule 组件");
+            //Debug.Log($"为 {gameObject.name} 添加 PlanningModule 组件");
         }
         
         actionDecisionModule = GetComponent<ActionDecisionModule>();
         if (actionDecisionModule == null)
         {
             actionDecisionModule = gameObject.AddComponent<ActionDecisionModule>();
-            Debug.Log($"为 {gameObject.name} 添加 ActionDecisionModule 组件");
+            //Debug.Log($"为 {gameObject.name} 添加 ActionDecisionModule 组件");
         }
         
         // // 初始化起始记忆（带错误处理）

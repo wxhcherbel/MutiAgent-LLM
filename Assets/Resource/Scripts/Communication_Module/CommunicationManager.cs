@@ -1,97 +1,188 @@
-using UnityEngine;
+using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
+using UnityEngine;
 
 public class CommunicationManager : MonoBehaviour
 {
-    public static CommunicationManager Instance; // 单例实例
-    
-    private Dictionary<string, CommunicationModule> registeredAgents = new Dictionary<string, CommunicationModule>(); // 注册的智能体
-    private List<AgentMessage> messageLog = new List<AgentMessage>(); // 消息日志
+    public static CommunicationManager Instance;
 
-    void Awake()
+    private readonly Dictionary<string, CommunicationModule> registeredAgents = new();
+    private readonly List<AgentMessage> messageLog = new();
+
+    private void Awake()
     {
         if (Instance == null)
         {
             Instance = this;
+            return;
         }
-        else
+
+        if (Instance != this)
         {
             Destroy(gameObject);
         }
     }
 
-    /// <summary>
-    /// 注册智能体
-    /// </summary>
     public void RegisterAgent(CommunicationModule agentModule)
     {
-        string agentId = agentModule.GetComponent<IntelligentAgent>().Properties.AgentID;
-        if (!registeredAgents.ContainsKey(agentId))
-        {
-            registeredAgents.Add(agentId, agentModule);
-        }
+        IntelligentAgent agent = agentModule != null ? agentModule.GetComponent<IntelligentAgent>() : null;
+        string agentId = agent?.Properties?.AgentID;
+        if (string.IsNullOrWhiteSpace(agentId)) return;
+        registeredAgents[agentId] = agentModule;
     }
 
-    /// <summary>
-    /// 注销智能体
-    /// </summary>
     public void UnregisterAgent(CommunicationModule agentModule)
     {
-        string agentId = agentModule.GetComponent<IntelligentAgent>().Properties.AgentID;
-        if (registeredAgents.ContainsKey(agentId))
-        {
-            registeredAgents.Remove(agentId);
-        }
+        IntelligentAgent agent = agentModule != null ? agentModule.GetComponent<IntelligentAgent>() : null;
+        string agentId = agent?.Properties?.AgentID;
+        if (string.IsNullOrWhiteSpace(agentId)) return;
+        registeredAgents.Remove(agentId);
     }
 
-    /// <summary>
-    /// 处理消息路由
-    /// </summary>
+    public CommunicationModule GetAgentModule(string agentId)
+    {
+        if (string.IsNullOrWhiteSpace(agentId)) return null;
+        registeredAgents.TryGetValue(agentId, out CommunicationModule module);
+        return module;
+    }
+
+    public string[] GetAllAgentIds()
+    {
+        return registeredAgents.Keys.ToArray();
+    }
+
     public void ProcessMessage(AgentMessage message)
     {
-        // 记录消息
+        if (message == null) return;
         messageLog.Add(message);
-        
-        // 模拟通信延迟
-        StartCoroutine(DeliverMessageWithDelay(message, Random.Range(0.1f, 0.5f)));
+        float delay = message.Reliable ? 0f : Random.Range(0.05f, 0.15f);
+        StartCoroutine(DeliverMessageWithDelay(message, delay));
     }
 
-    private System.Collections.IEnumerator DeliverMessageWithDelay(AgentMessage message, float delay)
+    private IEnumerator DeliverMessageWithDelay(AgentMessage message, float delay)
     {
-        yield return new WaitForSeconds(delay);
-        
-        if (message.ReceiverID == "All")
+        if (delay > 0f)
         {
-            // 广播消息
-            foreach (var agent in registeredAgents.Values)
-            {
-                if (agent.GetComponent<IntelligentAgent>().Properties.AgentID != message.SenderID)
-                {
-                    agent.ReceiveMessage(message);
-                }
-            }
+            yield return new WaitForSeconds(delay);
         }
-        else
+
+        List<CommunicationModule> recipients = ResolveRecipients(message);
+        foreach (CommunicationModule module in recipients)
         {
-            // 单播消息
-            if (registeredAgents.ContainsKey(message.ReceiverID))
+            if (module == null) continue;
+            if (!message.Reliable && !IsInCommunicationRange(message.SenderID, module.GetComponent<IntelligentAgent>()?.Properties?.AgentID))
             {
-                registeredAgents[message.ReceiverID].ReceiveMessage(message);
+                continue;
             }
+
+            module.ReceiveMessage(message);
         }
     }
 
-    /// <summary>
-    /// 获取智能体间的通信距离
-    /// </summary>
+    private List<CommunicationModule> ResolveRecipients(AgentMessage message)
+    {
+        if (message == null) return new List<CommunicationModule>();
+
+        switch (message.Scope)
+        {
+            case CommunicationScope.DirectAgent:
+                return ResolveDirectRecipient(message);
+            case CommunicationScope.Team:
+                return ResolveTeamRecipients(message);
+            case CommunicationScope.Public:
+                return ResolvePublicRecipients(message);
+            default:
+                return ResolveLegacyRecipients(message);
+        }
+    }
+
+    private List<CommunicationModule> ResolveDirectRecipient(AgentMessage message)
+    {
+        string targetAgentId = !string.IsNullOrWhiteSpace(message.TargetAgentId) ? message.TargetAgentId : message.ReceiverID;
+        if (string.IsNullOrWhiteSpace(targetAgentId)) return new List<CommunicationModule>();
+        return registeredAgents.TryGetValue(targetAgentId, out CommunicationModule module)
+            ? new List<CommunicationModule> { module }
+            : new List<CommunicationModule>();
+    }
+
+    private List<CommunicationModule> ResolveTeamRecipients(AgentMessage message)
+    {
+        string senderId = message.SenderID ?? string.Empty;
+        string targetNumericTeam = !string.IsNullOrWhiteSpace(message.TargetTeamId)
+            ? message.TargetTeamId
+            : ResolveAgentTeamId(senderId);
+        if (string.IsNullOrWhiteSpace(targetNumericTeam)) return new List<CommunicationModule>();
+
+        return registeredAgents.Values
+            .Where(module =>
+            {
+                IntelligentAgent agent = module != null ? module.GetComponent<IntelligentAgent>() : null;
+                if (agent?.Properties == null) return false;
+                if (string.Equals(agent.Properties.AgentID, senderId, System.StringComparison.OrdinalIgnoreCase)) return false;
+                return string.Equals(agent.Properties.TeamID.ToString(), targetNumericTeam, System.StringComparison.OrdinalIgnoreCase);
+            })
+            .ToList();
+    }
+
+    private List<CommunicationModule> ResolvePublicRecipients(AgentMessage message)
+    {
+        if (!string.IsNullOrWhiteSpace(message.TargetAgentId) &&
+            registeredAgents.TryGetValue(message.TargetAgentId, out CommunicationModule direct))
+        {
+            return new List<CommunicationModule> { direct };
+        }
+
+        return registeredAgents.Values.ToList();
+    }
+
+    private List<CommunicationModule> ResolveLegacyRecipients(AgentMessage message)
+    {
+        if (string.Equals(message.ReceiverID, "All", System.StringComparison.OrdinalIgnoreCase))
+        {
+            Debug.LogWarning("[Communication] ReceiverID=All 已弃用，请改用显式 CommunicationScope。");
+            return new List<CommunicationModule>();
+        }
+
+        return ResolveDirectRecipient(message);
+    }
+
+    private string ResolveAgentTeamId(string agentId)
+    {
+        if (string.IsNullOrWhiteSpace(agentId)) return string.Empty;
+        if (!registeredAgents.TryGetValue(agentId, out CommunicationModule module) || module == null) return string.Empty;
+        IntelligentAgent agent = module.GetComponent<IntelligentAgent>();
+        return agent?.Properties != null ? agent.Properties.TeamID.ToString() : string.Empty;
+    }
+
+    private bool IsInCommunicationRange(string senderId, string targetId)
+    {
+        if (string.IsNullOrWhiteSpace(senderId) || string.IsNullOrWhiteSpace(targetId)) return false;
+        if (!registeredAgents.TryGetValue(senderId, out CommunicationModule senderModule) ||
+            !registeredAgents.TryGetValue(targetId, out CommunicationModule targetModule) ||
+            senderModule == null ||
+            targetModule == null)
+        {
+            return false;
+        }
+
+        IntelligentAgent sender = senderModule.GetComponent<IntelligentAgent>();
+        if (sender?.Properties == null) return false;
+        float distance = Vector3.Distance(senderModule.transform.position, targetModule.transform.position);
+        return distance <= sender.Properties.CommunicationRange;
+    }
+
     public float GetCommunicationDistance(string agent1Id, string agent2Id)
     {
-        if (registeredAgents.ContainsKey(agent1Id) && registeredAgents.ContainsKey(agent2Id))
+        if (string.IsNullOrWhiteSpace(agent1Id) || string.IsNullOrWhiteSpace(agent2Id)) return float.MaxValue;
+        if (!registeredAgents.TryGetValue(agent1Id, out CommunicationModule agent1) ||
+            !registeredAgents.TryGetValue(agent2Id, out CommunicationModule agent2) ||
+            agent1 == null ||
+            agent2 == null)
         {
-            Vector3 pos1 = registeredAgents[agent1Id].transform.position;
-            Vector3 pos2 = registeredAgents[agent2Id].transform.position;
-            return Vector3.Distance(pos1, pos2);
+            return float.MaxValue;
         }
-        return float.MaxValue;
+
+        return Vector3.Distance(agent1.transform.position, agent2.transform.position);
     }
 }

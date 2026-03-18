@@ -64,28 +64,6 @@ public class ReflectionModule : MonoBehaviour
         }
     }
 
-    public void NotifyMissionAccepted(MissionAssignment mission, MissionTaskSlot slot, RoleType role)
-    {
-        EnsureDependencies();
-        consecutiveActionFailures = 0;
-
-        if (memoryModule == null || mission == null) return;
-
-        memoryModule.Remember(
-            AgentMemoryKind.Policy,
-            $"进入自治任务模式: {role}",
-            $"mission={mission.missionDescription}; slot={slot?.slotLabel}; target={slot?.target}",
-            importance: 0.65f,
-            confidence: 0.8f,
-            status: AgentMemoryStatus.Active,
-            sourceModule: "ReflectionModule",
-            missionId: mission.missionId,
-            slotId: slot != null ? slot.slotId : string.Empty,
-            targetRef: slot != null ? slot.target : string.Empty,
-            tags: new[] { role.ToString(), slot != null ? slot.slotLabel : string.Empty },
-            isProceduralHint: true);
-    }
-
     public void NotifyActionOutcome(
         string missionId,
         string missionText,
@@ -134,26 +112,6 @@ public class ReflectionModule : MonoBehaviour
         StartCoroutine(TriggerReflection(request));
     }
 
-    public void NotifyMissionOutcome(MissionAssignment mission, MissionTaskSlot slot, bool success, string summary)
-    {
-        EnsureDependencies();
-        consecutiveActionFailures = 0;
-        if (!autoReflectOnMissionCompletion || mission == null) return;
-
-        ReflectionRequest request = new ReflectionRequest
-        {
-            reason = ReflectionTriggerReason.MissionCompleted,
-            missionId = mission.missionId,
-            missionText = mission.missionDescription,
-            slotId = slot != null ? slot.slotId : string.Empty,
-            targetRef = slot != null ? slot.target : string.Empty,
-            summary = summary,
-            maxSourceMemories = defaultReflectionMemoryCount
-        };
-
-        StartCoroutine(TriggerReflection(request));
-    }
-
     public void NotifyImportantObservation(string missionId, string missionText, string slotId, string stepText, string targetRef, string summary)
     {
         EnsureDependencies();
@@ -170,24 +128,6 @@ public class ReflectionModule : MonoBehaviour
         };
 
         StartCoroutine(TriggerReflection(request));
-    }
-
-    public string GetPlanningGuidance(string missionText, string missionId, MissionTaskSlot slot, int maxInsights = 2)
-    {
-        EnsureDependencies();
-        if (memoryModule == null) return "无稳定反思策略";
-
-        MemoryQuery query = new MemoryQuery
-        {
-            freeText = BuildCombinedText(missionText, slot != null ? slot.slotLabel : string.Empty, slot != null ? slot.target : string.Empty),
-            missionId = missionId,
-            slotId = slot != null ? slot.slotId : string.Empty,
-            targetRef = slot != null ? slot.target : string.Empty,
-            maxCount = maxInsights,
-            preferProceduralHints = true
-        };
-
-        return BuildInsightSummary(memoryModule.GetRelevantInsights(query, maxInsights), "无稳定反思策略");
     }
 
     public string GetActionGuidance(

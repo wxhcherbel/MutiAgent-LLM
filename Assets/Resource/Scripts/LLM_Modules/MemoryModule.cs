@@ -222,27 +222,6 @@ public class MemoryModule : MonoBehaviour
         return StoreMemory(memory);
     }
 
-    public Memory RememberMissionAssignment(MissionAssignment mission, RoleType role, MissionTaskSlot slot, CommunicationMode commMode)
-    {
-        string target = slot != null ? slot.target : string.Empty;
-        string via = slot != null && slot.viaTargets != null && slot.viaTargets.Length > 0
-            ? string.Join("|", slot.viaTargets.Where(v => !string.IsNullOrWhiteSpace(v)).ToArray())
-            : "none";
-
-        return Remember(
-            AgentMemoryKind.Goal,
-            $"接受任务并进入岗位 {role}",
-            $"mission={mission?.missionDescription}; role={role}; commMode={commMode}; slot={slot?.slotLabel}; target={target}; via={via}",
-            importance: 0.92f,
-            confidence: 0.9f,
-            status: AgentMemoryStatus.Active,
-            sourceModule: "PlanningModule",
-            missionId: mission != null ? mission.missionId : string.Empty,
-            slotId: slot != null ? slot.slotId : string.Empty,
-            targetRef: target,
-            tags: BuildTagSet(role.ToString(), slot != null ? slot.slotLabel : string.Empty, target, via));
-    }
-
     public Memory RememberPlanSnapshot(
         string missionId,
         string slotId,

@@ -79,12 +79,6 @@ public class PerceptionModule : MonoBehaviour
     public bool cleanupExpiredDynamicNodes = true;                  // 是否定期清理过期动态节点
     public bool logSmallNodeRegistry = false;                       // 是否输出小节点注册日志
 
-    [Header("校园地点感知（建筑/地图要素）")]
-    public bool enableCampusFeaturePerception = true;               // 是否启用校园地点感知
-    public bool onlyTrackBuildings = true;                          // 是否只记录建筑（false时记录所有有名称地点）
-    public bool enableGridNeighborhoodFeaturePerception = true;     // 是否通过邻域网格补充“看见的地点”
-    [Min(4)] public int maxObservedFeatureCellsPerFeature = 24;     // 每个地点保留的样本网格上限
-    [Min(1)] public int maxPerceptionFeatureCountPerTick = 32;      // 每轮最多记录地点数量（防止过载）
 
     // 调试可视化（仅记录障碍物和资源）
     private List<DetectionPointInfo> detectionPoints = new List<DetectionPointInfo>(); // 检测点信息列表（用于可视化）
@@ -103,9 +97,7 @@ public class PerceptionModule : MonoBehaviour
     private int poolSize = 50; // 最多缓存 50 个球体
     private static bool sharedRegistryInitialized = false;          // 共享库启动标记（仅首个感知模块生效）
     private readonly HashSet<int> sensedObjectIdsThisTick = new HashSet<int>(); // 当前感知周期去重
-    private readonly Dictionary<string, CampusFeaturePerceptionData> detectedCampusFeatures = new Dictionary<string, CampusFeaturePerceptionData>(); // 当前感知周期的地点观测
     [Min(8)] public int maxVisualPoints = 160;                     // 单周期最多可视化点数（防止线段和球体过载）
-    private CampusGrid2D campusGrid;                                // 全局校园逻辑网格（只用于地点语义读取）
 
     private struct MarkerMeta
     {
@@ -158,7 +150,6 @@ public class PerceptionModule : MonoBehaviour
         {
             Debug.LogError("PerceptionModule: 未找到所属智能体组件");
         }
-        campusGrid = FindObjectOfType<CampusGrid2D>();
         InitializeVisualizationComponents(); // 初始化可视化所需组件
     }
 
@@ -356,7 +347,6 @@ public class PerceptionModule : MonoBehaviour
         CleanupOldSphereMarkers(); // 清除旧的球体标记
         detectionPoints.Clear();   // 清空检测点信息（只保留当前帧）
         sensedObjectIdsThisTick.Clear();
-        detectedCampusFeatures.Clear();
 
         // 根据智能体类型执行对应检测逻辑
         if (agentType == AgentType.Quadcopter)
@@ -368,11 +358,6 @@ public class PerceptionModule : MonoBehaviour
             PerceiveAsGroundVehicle();
         }
 
-        // 补充校园地点感知（建筑等大目标），避免仅靠小节点图层时无法感知建筑信息。
-        if (enableCampusFeaturePerception && enableGridNeighborhoodFeaturePerception)
-        {
-            PerceiveCampusFeaturesByGridNeighborhood();
-        }
 
         UpdateAgentState(); // 更新智能体状态（将检测结果同步到智能体）
         DrawGameViewVisualization(); // 绘制Game视图的可视化元素
@@ -501,8 +486,6 @@ public class PerceptionModule : MonoBehaviour
 
         // 使用物体的中心坐标而非击中点
         Vector3 objectPosition = hitObject.transform.position;
-        RegisterCampusFeatureObservationByWorld(hit.point);
-        RegisterCampusFeatureObservationByWorld(objectPosition);
         UpdatePerceptionGrid(objectPosition, detectedType, hitObject);
 
         // 3. 记录小节点信息（用于数据存储和可视化）
@@ -577,173 +560,10 @@ public class PerceptionModule : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// 在网格邻域内补充“当前看见的校园地点”。
-    /// 说明：
-    /// 1) 这是局部感知，不是全图导出；
-    /// 2) 仅把感知半径内的地点写入本轮状态；
-    /// 3) 地面车可额外受扇形视角限制。
-    /// </summary>
-    private void PerceiveCampusFeaturesByGridNeighborhood()
-    {
-        if (!enableCampusFeaturePerception) return;
-        if (campusGrid == null) campusGrid = FindObjectOfType<CampusGrid2D>();
-        if (campusGrid == null || campusGrid.cellTypeGrid == null) return;
 
-        float range = (agent != null && agent.Properties != null)
-            ? Mathf.Max(1f, agent.Properties.PerceptionRange)
-            : 15f;
 
-        Vector2Int center = campusGrid.WorldToGrid(transform.position);
-        if (!campusGrid.IsInBounds(center.x, center.y)) return;
 
-        int radiusCell = Mathf.CeilToInt(range / Mathf.Max(0.1f, campusGrid.cellSize));
-        int featureCount = 0;
 
-        for (int gx = center.x - radiusCell; gx <= center.x + radiusCell; gx++)
-        {
-            for (int gz = center.y - radiusCell; gz <= center.y + radiusCell; gz++)
-            {
-                if (!campusGrid.IsInBounds(gx, gz)) continue;
-                if (!campusGrid.TryGetCellFeatureInfo(gx, gz, out string uid, out string name, out CampusGrid2D.CellType type, out bool blocked)) continue;
-                if (string.IsNullOrWhiteSpace(name)) continue;
-                if (onlyTrackBuildings && type != CampusGrid2D.CellType.Building) continue;
-
-                Vector3 wp = campusGrid.GridToWorldCenter(gx, gz, 0f);
-                Vector3 delta = wp - transform.position;
-                delta.y = 0f;
-                float dist = delta.magnitude;
-                if (dist > range) continue;
-
-                // 地面车按扇形做近似可见约束；无人机默认 360 度。
-                if (agentType != AgentType.Quadcopter && groundHorizontalAngle < 359.9f)
-                {
-                    float angle = Vector3.Angle(transform.forward, delta.normalized);
-                    if (angle > groundHorizontalAngle * 0.5f) continue;
-                }
-
-                RegisterCampusFeatureObservation(gx, gz, wp, uid, name, type.ToString(), blocked);
-                featureCount = detectedCampusFeatures.Count;
-                if (featureCount >= Mathf.Max(1, maxPerceptionFeatureCountPerTick)) return;
-            }
-        }
-    }
-
-    /// <summary>
-    /// 按世界坐标登记一次地点观测（射线命中点/物体中心均可复用此接口）。
-    /// </summary>
-    private void RegisterCampusFeatureObservationByWorld(Vector3 worldPos)
-    {
-        if (!enableCampusFeaturePerception) return;
-        if (campusGrid == null) return;
-        if (!campusGrid.TryGetCellFeatureInfoByWorld(worldPos, out Vector2Int grid, out string uid, out string name, out CampusGrid2D.CellType type, out bool blocked))
-        {
-            return;
-        }
-        if (string.IsNullOrWhiteSpace(name)) return;
-        if (onlyTrackBuildings && type != CampusGrid2D.CellType.Building) return;
-        RegisterCampusFeatureObservation(grid.x, grid.y, worldPos, uid, name, type.ToString(), blocked);
-    }
-
-    /// <summary>
-    /// 把一次网格观测合并进本轮地点感知缓存。
-    /// </summary>
-    private void RegisterCampusFeatureObservation(int gx, int gz, Vector3 sampleWorld, string uid, string name, string kind, bool blocked)
-    {
-        if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(uid)) return;
-
-        string featureKey;
-        if (!string.IsNullOrWhiteSpace(uid)) featureKey = $"uid:{uid.Trim()}";
-        else featureKey = $"name:{name.Trim().ToLowerInvariant()}";
-
-        if (!detectedCampusFeatures.TryGetValue(featureKey, out CampusFeaturePerceptionData data))
-        {
-            data = new CampusFeaturePerceptionData
-            {
-                FeatureUid = uid ?? string.Empty,
-                FeatureName = name ?? string.Empty,
-                FeatureKind = string.IsNullOrWhiteSpace(kind) ? "Other" : kind,
-                BlocksMovement = blocked,
-                AnchorGridCell = new Vector2Int(gx, gz),
-                AnchorWorldPosition = sampleWorld,
-                ApproxCenterWorldPosition = sampleWorld,
-                ObservedCellCount = 0,
-                FirstSeenTime = Time.time,
-                LastSeenTime = Time.time,
-                SeenCount = 0,
-                Confidence = Mathf.Clamp01(confidenceIncrement),
-                SourceAgentId = (agent != null && agent.Properties != null) ? agent.Properties.AgentID : string.Empty
-            };
-            detectedCampusFeatures[featureKey] = data;
-        }
-
-        data.LastSeenTime = Time.time;
-        data.SeenCount += 1;
-        data.Confidence = Mathf.Clamp01(Mathf.Max(data.Confidence, confidenceIncrement));
-        data.BlocksMovement = blocked;
-        if (!string.IsNullOrWhiteSpace(name)) data.FeatureName = name;
-        if (!string.IsNullOrWhiteSpace(uid)) data.FeatureUid = uid;
-        if (!string.IsNullOrWhiteSpace(kind)) data.FeatureKind = kind;
-
-        Vector2Int gridCell = new Vector2Int(gx, gz);
-        if (!ContainsGridCell(data.ObservedSampleCells, gridCell))
-        {
-            if (data.ObservedSampleCells.Count < Mathf.Max(4, maxObservedFeatureCellsPerFeature))
-            {
-                data.ObservedSampleCells.Add(gridCell);
-            }
-            data.ObservedCellCount += 1;
-        }
-        else
-        {
-            data.ObservedCellCount = Mathf.Max(data.ObservedCellCount, data.ObservedSampleCells.Count);
-        }
-
-        UpdateCampusFeatureAnchors(data);
-    }
-
-    /// <summary>
-    /// 更新地点锚点与估计中心。
-    /// </summary>
-    private void UpdateCampusFeatureAnchors(CampusFeaturePerceptionData data)
-    {
-        if (data == null || data.ObservedSampleCells == null || data.ObservedSampleCells.Count == 0) return;
-
-        Vector3 me = transform.position;
-        float bestDist = float.MaxValue;
-        Vector2Int bestCell = data.ObservedSampleCells[0];
-        Vector3 sum = Vector3.zero;
-
-        for (int i = 0; i < data.ObservedSampleCells.Count; i++)
-        {
-            Vector2Int c = data.ObservedSampleCells[i];
-            Vector3 w = campusGrid.GridToWorldCenter(c.x, c.y, 0f);
-            sum += w;
-
-            Vector3 d = w - me;
-            d.y = 0f;
-            float dist = d.sqrMagnitude;
-            if (dist < bestDist)
-            {
-                bestDist = dist;
-                bestCell = c;
-            }
-        }
-
-        data.AnchorGridCell = bestCell;
-        data.AnchorWorldPosition = campusGrid.GridToWorldCenter(bestCell.x, bestCell.y, 0f);
-        data.ApproxCenterWorldPosition = sum / data.ObservedSampleCells.Count;
-    }
-
-    private static bool ContainsGridCell(List<Vector2Int> cells, Vector2Int cell)
-    {
-        if (cells == null) return false;
-        for (int i = 0; i < cells.Count; i++)
-        {
-            if (cells[i] == cell) return true;
-        }
-        return false;
-    }
 
     /// <summary>
     /// 推断小节点类型。
@@ -1010,15 +830,13 @@ public class PerceptionModule : MonoBehaviour
         var currentState = agent.CurrentState;
         if (currentState.NearbyAgents == null) currentState.NearbyAgents = new Dictionary<string, GameObject>();
         if (currentState.DetectedSmallNodes == null) currentState.DetectedSmallNodes = new List<SmallNodeData>();
-        if (currentState.NearbySmallNodes == null) currentState.NearbySmallNodes = new Dictionary<string, SmallNodeData>();
-        if (currentState.NearbyCampusFeatures == null) currentState.NearbyCampusFeatures = new Dictionary<string, CampusFeaturePerceptionData>();
-        if (currentState.DetectedCampusFeatures == null) currentState.DetectedCampusFeatures = new List<CampusFeaturePerceptionData>();
 
         // 每轮感知都重建一次附近智能体集合，避免保留陈旧目标
         currentState.NearbyAgents.Clear();
 
         foreach (var agentObj in nearbyAgents)
         {
+            if (agentObj == null) continue;
             var otherAgent = agentObj.GetComponent<IntelligentAgent>();
             if (otherAgent == null) continue;
 
@@ -1032,7 +850,6 @@ public class PerceptionModule : MonoBehaviour
 
         // 把本轮 detectedObjects 去重后同步到 AgentDynamicState（与 NearbyAgents 同级）
         currentState.DetectedSmallNodes.Clear();
-        currentState.NearbySmallNodes.Clear();
 
         var uniqueNodes = new Dictionary<string, SmallNodeData>();
         for (int i = 0; i < detectedObjects.Count; i++)
@@ -1065,20 +882,12 @@ public class PerceptionModule : MonoBehaviour
 
         foreach (var kv in uniqueNodes)
         {
-            currentState.NearbySmallNodes[kv.Key] = kv.Value;
             currentState.DetectedSmallNodes.Add(kv.Value);
         }
 
-        // 同步当前轮“已看见地点”（建筑等）
-        currentState.NearbyCampusFeatures.Clear();
-        currentState.DetectedCampusFeatures.Clear();
-        foreach (var kv in detectedCampusFeatures)
-        {
-            CampusFeaturePerceptionData copy = CloneCampusFeatureData(kv.Value);
-            currentState.NearbyCampusFeatures[kv.Key] = copy;
-            currentState.DetectedCampusFeatures.Add(copy);
-        }
+        
     }
+
 
     /// <summary>
     /// 复制小节点数据（避免状态层与感知层共享同一个引用对象）。
@@ -1104,36 +913,6 @@ public class PerceptionModule : MonoBehaviour
         };
     }
 
-    /// <summary>
-    /// 复制地点感知数据，避免上层误改感知层缓存。
-    /// </summary>
-    private static CampusFeaturePerceptionData CloneCampusFeatureData(CampusFeaturePerceptionData src)
-    {
-        if (src == null) return null;
-        CampusFeaturePerceptionData dst = new CampusFeaturePerceptionData
-        {
-            FeatureUid = src.FeatureUid,
-            FeatureName = src.FeatureName,
-            FeatureKind = src.FeatureKind,
-            BlocksMovement = src.BlocksMovement,
-            AnchorGridCell = src.AnchorGridCell,
-            AnchorWorldPosition = src.AnchorWorldPosition,
-            ApproxCenterWorldPosition = src.ApproxCenterWorldPosition,
-            ObservedCellCount = src.ObservedCellCount,
-            FirstSeenTime = src.FirstSeenTime,
-            LastSeenTime = src.LastSeenTime,
-            SeenCount = src.SeenCount,
-            Confidence = src.Confidence,
-            SourceAgentId = src.SourceAgentId
-        };
-
-        if (src.ObservedSampleCells != null)
-        {
-            dst.ObservedSampleCells = new List<Vector2Int>(src.ObservedSampleCells);
-        }
-
-        return dst;
-    }
 
     /// <summary>
     /// 绘制实时检测射线（仅障碍物和资源）

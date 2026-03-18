@@ -858,10 +858,10 @@ public class AgentSpawner : MonoBehaviour
 
         // 立即下发边界配置，避免 ML 控制器在首帧将智能体错误夹到固定点
         if (campusGrid == null) EnsureGridReady();
-        if (campusGrid != null)
-        {
-            mlController.ConfigureBoundaryFromCampusGrid(campusGrid);
-        }
+        // if (campusGrid != null)
+        // {
+        //     mlController.ConfigureBoundaryFromCampusGrid(campusGrid);
+        // }
     }
 
     /// <summary>

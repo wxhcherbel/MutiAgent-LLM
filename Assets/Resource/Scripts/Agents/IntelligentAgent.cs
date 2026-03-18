@@ -198,7 +198,7 @@ public class IntelligentAgent : MonoBehaviour
     /// </summary>
     private IEnumerator MakeDecisionCoroutine()
     {
-        Debug.Log($"【IntelligentAgent】智能体 {Properties.AgentID} 进入决策协程 MakeDecisionCoroutine()");
+        //Debug.Log($"【IntelligentAgent】智能体 {Properties.AgentID} 进入决策协程 MakeDecisionCoroutine()");
         isMakingDecision = true;
         CurrentState.Status = AgentStatus.Thinking;
         try
