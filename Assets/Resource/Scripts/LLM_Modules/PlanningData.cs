@@ -139,7 +139,7 @@ public class ActionExecutionContext
     public ADMStatus      status;
 
     public string   currentLocationName;
-    public string   originalGoalName;
+    //public string   originalGoalName;
     public string[] remainingWaypoints;
     public string[] recentEvents;        // 最近3条感知事件，时间倒序
 }

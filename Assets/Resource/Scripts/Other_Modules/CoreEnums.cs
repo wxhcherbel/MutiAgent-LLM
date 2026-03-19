@@ -198,26 +198,6 @@ public enum PlanningState
     Failed    = 8   // 超时或出错
 }
 
-public enum PrimitiveActionType
-{
-    Idle,
-    MoveTo,
-    Stop,
-    TakeOff,
-    Land,
-    Hover,
-    AdjustAltitude,
-    RotateTo,
-    PickUp,
-    Drop,
-    LookAt,
-    Scan,
-    Wait,
-    Align,
-    Follow,
-    Orbit,
-    TransmitMessage
-}
 
 /// <summary>智能体通信消息（含完整路由字段）。</summary>
 [System.Serializable]
@@ -239,26 +219,26 @@ public class AgentMessage
     public bool Reliable;
 }
 
-[System.Serializable]
-public class ActionCommand
-{
-    public PrimitiveActionType ActionType;
-    public Vector3 TargetPosition;
-    public Quaternion TargetRotation;
-    public GameObject TargetObject;
-    public string Parameters;
+// [System.Serializable]
+// public class ActionCommand
+// {
+//     public PrimitiveActionType ActionType;
+//     public Vector3 TargetPosition;
+//     public Quaternion TargetRotation;
+//     public GameObject TargetObject;
+//     public string Parameters;
 
-    public ActionCommand(
-        PrimitiveActionType actionType = PrimitiveActionType.Idle,
-        Vector3 targetPosition = default,
-        Quaternion targetRotation = default,
-        GameObject targetObject = null,
-        string parameters = null)
-    {
-        ActionType = actionType;
-        TargetPosition = targetPosition;
-        TargetRotation = targetRotation;
-        TargetObject = targetObject;
-        Parameters = parameters;
-    }
-}
+//     public ActionCommand(
+//         PrimitiveActionType actionType = PrimitiveActionType.Idle,
+//         Vector3 targetPosition = default,
+//         Quaternion targetRotation = default,
+//         GameObject targetObject = null,
+//         string parameters = null)
+//     {
+//         ActionType = actionType;
+//         TargetPosition = targetPosition;
+//         TargetRotation = targetRotation;
+//         TargetObject = targetObject;
+//         Parameters = parameters;
+//     }
+// }

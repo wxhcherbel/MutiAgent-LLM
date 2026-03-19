@@ -9,7 +9,7 @@ using Newtonsoft.Json;
 using System.Diagnostics;
 using Debug = UnityEngine.Debug;
 
-// ─── 向后兼容类型（MemoryModule / IntelligentAgent / MLAgentsController 仍引用） ───
+// ─── 向后兼容类型(MemoryModule / IntelligentAgent / MLAgentsController 仍引用) ───
 
 [Serializable]
 public class MissionAssignment
@@ -35,10 +35,10 @@ public class MissionRole
 // ─── PlanningModule ──────────────────────────────────────────────────────────
 
 /// <summary>
-/// 规划模块 v3：4阶段协商协议状态机。
+/// 规划模块 v3:4阶段协商协议状态机。
 /// 阶段0: LLM#1 解析任务 → 阶段1: 本地分组 → 阶段2: 广播分组 →
 /// 阶段3/4: 组长生成槽/广播 → 阶段5: 选槽 → 阶段6: 冲突处理+确认 →
-/// 阶段7: LLM#4 拆解步骤 → 阶段8: Active（ActionDecisionModule 消费）
+/// 阶段7: LLM#4 拆解步骤 → 阶段8: Active(ActionDecisionModule 消费)
 /// </summary>
 public class PlanningModule : MonoBehaviour
 {
@@ -102,17 +102,17 @@ public class PlanningModule : MonoBehaviour
     private static string GetConciseTextPromptText()
     {
         return
-            "文本要求：\n" +
+            "文本要求:\n" +
             "1. 自然语言字段使用简洁短句。\n" +
             "2. 优先使用“动作+目标+参数”或“动作+目标”。\n" +
-            "3. 保留核心动作、目标、参数，表达直接易懂。\n";
+            "3. 保留核心动作、目标、参数,表达直接易懂。\n";
     }
 
     // ─────────────────────────────────────────────────────────
     // 用户入口
     // ─────────────────────────────────────────────────────────
 
-    /// <summary>用户触发任务请求，启动 LLM#1。</summary>
+    /// <summary>用户触发任务请求,启动 LLM#1。</summary>
     public void SubmitMissionRequest(string missionDescription, int agentCount)
     {
         if (busy)
@@ -128,32 +128,32 @@ public class PlanningModule : MonoBehaviour
     // LLM 协程
     // ─────────────────────────────────────────────────────────
 
-    /// <summary>LLM#1：解析自然语言任务为 ParsedMission。</summary>
+    /// <summary>LLM#1:解析自然语言任务为 ParsedMission。</summary>
     private IEnumerator RunLLM1(string desc, int cnt)
     {
         SetState(PlanningState.Parsing);
 
         string prompt =
             "你是多智能体任务规划器。请将任务解析为合法 JSON 对象。\n\n" +
-            $"任务：{desc}\n" +
-            $"智能体数量：{cnt}\n\n" +
-            "relType：\n" +
+            $"任务:{desc}\n" +
+            $"智能体数量:{cnt}\n\n" +
+            "relType:\n" +
             "  Cooperation=同队协作  Competition=多队竞争同目标\n" +
             "  Adversarial=多队目标对立  Mixed=多队各有目标\n\n" +
             GetConciseTextPromptText() + "\n" +
-            "输出要求：\n" +
+            "输出要求:\n" +
             "1. 输出内容仅包含 JSON。\n" +
             "2. relType 从上述枚举中选择。\n" +
-            "3. `groupCnt` 为整数，`groupMsns` 长度等于 `groupCnt`。\n" +
-            "4. 若 `relType`=`Cooperation`，表示同队协作，全部智能体必须属于同一组，因此 `groupCnt` 必须为 1，`groupMsns` 只能有 1 条。\n" +
-            "5. 只有 `Competition`、`Adversarial`、`Mixed` 才允许拆成多个组，且 `groupCnt` 必须大于等于 2。\n" +
-            "6. `groupMsns` 中每组任务使用短句，适合直接执行。\n" +
-            "7. `timeLimit` 为秒数，无限制时填 0。\n\n" +
-            "任务拆解示例：\n" +
-            "输入任务：一组无人机协作搜索南区和北区，发现目标后组内共享并统一回传位置\n" +
-            "groupMsns 示例：\n" +
+            "3. `groupCnt` 为整数,`groupMsns` 长度等于 `groupCnt`。\n" +
+            "4. 若 `relType`=`Cooperation`,表示同队协作,全部智能体必须属于同一组,因此 `groupCnt` 必须为 1,`groupMsns` 只能有 1 条。\n" +
+            "5. 只有 `Competition`、`Adversarial`、`Mixed` 才允许拆成多个组,且 `groupCnt` 必须大于等于 2。\n" +
+            "6. `groupMsns` 中每组任务使用短句,适合直接执行。\n" +
+            "7. `timeLimit` 为秒数,无限制时填 0。\n\n" +
+            "任务拆解示例:\n" +
+            "输入任务:一组无人机协作搜索南区和北区,发现目标后组内共享并统一回传位置\n" +
+            "groupMsns 示例:\n" +
             "  \"协作搜索南区和北区并回传目标位置\"\n\n" +
-            "输出格式示例：\n" +
+            "输出格式示例:\n" +
             "{\n" +
             "  \"relType\": \"Cooperation\",\n" +
             "  \"groupCnt\": 1,\n" +
@@ -198,29 +198,29 @@ public class PlanningModule : MonoBehaviour
         AssignGroups(p, agentIds);
     }
 
-    /// <summary>LLM#2（组长）：根据组任务和成员数生成计划槽列表。</summary>
-    private IEnumerator RunLLM2()
+    /// <summary>LLM#2(组长):根据组任务和成员数生成计划槽列表。</summary>
+    private IEnumerator RunLLM2()//【提示词待优化】,coordinationConstraint需要和desc区分,desc需要有明确动作和目标,coordinationConstraint应该作为意图来补充（比如：躲避敌方,避开路径冲突..这种没有指定目标的意图）
     {
         SetState(PlanningState.SlotGen);
         int memberCount = myGroup.memberIds.Length;
         string roleTypes = string.Join("、", Enum.GetNames(typeof(RoleType)));
         string prompt =
             "你是多智能体任务组长。为本组生成计划槽 JSON 数组。\n\n" +
-            $"组任务：{myGroup.mission}\n" +
-            $"成员数：{memberCount}\n\n" +
+            $"组任务:{myGroup.mission}\n" +
+            $"成员数:{memberCount}\n\n" +
             GetConciseTextPromptText() + "\n" +
-            "输出要求：\n" +
-            $"1. 只输出 JSON 数组，长度严格等于 {memberCount}。\n" +
-            "2. slotId 唯一，格式 s0、s1 ...\n" +
-            $"3. role 从以下枚举选择：{roleTypes}\n" +
-            "4. desc 覆盖该成员的完整任务序列（含途径点 + 全部动作），不得遗漏。\n" +
-            "5. 若多个成员 role 相同，每个 desc 必须体现各自的具体分工（不同区域/路径/目标），不得完全一致。\n" +
-            "6. doneCond：该槽有对外可观测的输出（如\"目标坐标已广播\"）时填写；否则填 \" \"。\n" +
-            "7. coordinationConstraint：协同约束，如\"保持前探-侧护-后卫队形\"。\n" +
-            "示例（两个无人机从a出发从不同路径前往b巡逻一周,一个无人机负责通信中继）：\n" +
+            "输出要求:\n" +
+            $"1. 只输出 JSON 数组,长度严格等于 {memberCount}。\n" +
+            "2. slotId 唯一,格式 s0、s1 ...\n" +
+            $"3. role 从以下枚举选择:{roleTypes}\n" +
+            "4. desc 覆盖该成员的完整任务序列(含途径点 + 全部动作),不得遗漏。\n" +
+            "5. 若多个成员 role 相同,每个 desc 必须体现各自的具体分工(不同区域/路径/目标),不得完全一致。\n" +
+            "6. doneCond:完成条件,如\"限制时间\",没有时填 \" \"。\n" +
+            "7. coordinationConstraint:协同约束,如\"保持前探-侧护-后卫队形\"。\n" +
+            "示例(两个无人机从a出发从不同路径前往b巡逻一周,一个无人机负责通信中继):\n" +
             "[\n" +
-            "  {\"slotId\":\"s0\",\"role\":\"Scout\",\"desc\":\"从a出发前往b，到达后巡逻一周\",\"doneCond\":\" \",\"coordinationConstraint\":\"和队友路径不同 \"},\n" +
-            "  {\"slotId\":\"s1\",\"role\":\"Scout\",\"desc\":\"从a出发前往b，到达后巡逻一周\",\"doneCond\":\" \",\"coordinationConstraint\":\" 和队友路径不同 \"},\n" +
+            "  {\"slotId\":\"s0\",\"role\":\"Scout\",\"desc\":\"从a出发前往b,到达后巡逻一周\",\"doneCond\":\" \",\"coordinationConstraint\":\"和队友路径不同 \"},\n" +
+            "  {\"slotId\":\"s1\",\"role\":\"Scout\",\"desc\":\"从a出发前往b,到达后巡逻一周\",\"doneCond\":\" \",\"coordinationConstraint\":\" 和队友路径不同 \"},\n" +
             "  {\"slotId\":\"s2\",\"role\":\"Supporter\",\"desc\":\"飞至高空维持通信中继\",\"doneCond\":\" \",\"coordinationConstraint\":\" \"}\n" +
             "]";
         string llmResult = null;
@@ -237,7 +237,7 @@ public class PlanningModule : MonoBehaviour
         try
         {
             generatedSlots = JsonConvert.DeserializeObject<PlanSlot[]>(ExtractJson(llmResult));
-            Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] LLM#2 生成槽位: {string.Join(", ", generatedSlots.Select(s => s.slotId + ":" + s.role))}");
+            Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] LLM#2 生成槽位: {string.Join(", ", generatedSlots.Select(s => s.slotId + ":" + s.role + ":" + s.desc + ":" + s.coordinationConstraint))}");
         }
         catch (Exception e)
         {
@@ -248,7 +248,7 @@ public class PlanningModule : MonoBehaviour
 
         slots = generatedSlots;
 
-        // 若组内只有自己，直接跳过广播+选槽，本地分配唯一槽
+        // 若组内只有自己,直接跳过广播+选槽,本地分配唯一槽
         if (memberCount == 1)
         {
             confirmedSlot = slots[0];
@@ -257,7 +257,7 @@ public class PlanningModule : MonoBehaviour
             yield break;
         }
 
-        // 广播槽列表给组内所有成员（含自身）
+        // 广播槽列表给组内所有成员(含自身)
         SlotBroadcastPayload broadcastPayload = new SlotBroadcastPayload
         {
             msnId    = parsed.msnId,
@@ -269,7 +269,7 @@ public class PlanningModule : MonoBehaviour
         foreach (string memberId in myGroup.memberIds)
         { 
             if (string.Equals(memberId, props.AgentID, StringComparison.OrdinalIgnoreCase))
-                continue; // 组长跳过自身，下方直接调用 RunLLM3
+                continue; // 组长跳过自身,下方直接调用 RunLLM3
             comm.SendScopedMessage(
                 CommunicationScope.DirectAgent,
                 MessageType.SlotBroadcast,
@@ -282,7 +282,7 @@ public class PlanningModule : MonoBehaviour
         StartCoroutine(RunLLM3(slots));
     }
 
-    /// <summary>LLM#3（全员）：从槽列表中选出最适合自身的槽。</summary>
+    /// <summary>LLM#3(全员):从槽列表中选出最适合自身的槽。</summary>
     private IEnumerator RunLLM3(PlanSlot[] availableSlots)
     {
         SetState(PlanningState.SlotPick);
@@ -292,15 +292,15 @@ public class PlanningModule : MonoBehaviour
         float battery    = dynState != null ? dynState.BatteryLevel : 100f;
 
         string prompt =
-            "你是无人机智能体。请从可选槽中选择最适合自己的一个，并输出合法 JSON 对象。\n\n" +
-            $"可选槽：{slotsJson}\n" +
-            $"当前电量：{battery:F0}%，当前位置：{pos}\n\n" +
+            "你是无人机智能体。请从可选槽中选择最适合自己的一个,并输出合法 JSON 对象。\n\n" +
+            $"可选槽:{slotsJson}\n" +
+            $"当前电量:{battery:F0}%,当前位置:{pos}\n\n" +
             GetConciseTextPromptText() + "\n" +
-            "输出要求：\n" +
+            "输出要求:\n" +
             "1. 输出内容仅包含 JSON。\n" +
             "2. `slotId` 是可选槽中的一个。\n" +
-            "3. `reason` 使用一句短句，根据事实说明依据，不要擅自推断，无法判断请写‘无’。\n\n" +
-            "输出格式示例：\n" +
+            "3. `reason` 使用一句短句,根据事实说明依据,不要擅自推断,无法判断请写‘无’。\n\n" +
+            "输出格式示例:\n" +
             "{\n" +
             "  \"slotId\": \"s0\",\n" +
             "  \"reason\": \"距离近且电量充足\"\n" +
@@ -314,7 +314,7 @@ public class PlanningModule : MonoBehaviour
 
         if (string.IsNullOrWhiteSpace(llmResult))
         {
-            Debug.LogWarning($"{props?.AgentID ?? "Unknown"}: [PlanningModule] LLM#3 返回空，选第一个槽");
+            Debug.LogWarning($"{props?.AgentID ?? "Unknown"}: [PlanningModule] LLM#3 返回空,选第一个槽");
             llmResult = $"{{\"slotId\":\"{availableSlots[0].slotId}\",\"reason\":\"默认\"}}";
         }
 
@@ -344,7 +344,7 @@ public class PlanningModule : MonoBehaviour
 
         if (isLeader)
         {
-            // 组长自身选择本地处理（先到先得）
+            // 组长自身选择本地处理(先到先得)
             OnSlotSelect(selectPayload);
         }
         else
@@ -358,7 +358,7 @@ public class PlanningModule : MonoBehaviour
         }
     }
 
-    /// <summary>LLM#4（全员）：将确认的计划槽拆解为有序步骤。</summary>
+    /// <summary>LLM#4(全员):将确认的计划槽拆解为有序步骤。</summary>
     private IEnumerator RunLLM4()
     {
         SetState(PlanningState.StepGen);
@@ -368,27 +368,30 @@ public class PlanningModule : MonoBehaviour
 
         string prompt =
             "你是无人机任务拆解器。将计划拆成 JSON 步骤数组。\n\n" +
-            $"计划：{confirmedSlot.desc}\n" +
-            $"当前位置：{pos}，电量：{battery:F0}%\n\n" +
-            "要求：\n" +
+            $"计划:{confirmedSlot.desc}\n" +
+            $"角色:{confirmedSlot.role}\n" +
+            $"协同约束:{confirmedSlot.coordinationConstraint}\n" +
+            $"完成条件:{confirmedSlot.doneCond}\n" +
+            $"当前位置:{pos},电量:{battery:F0}%\n\n" +
+            "要求:\n" +
             "1. 只输出 JSON 数组。\n" +
-            "2. 只拆解 desc 中明确出现的动作，禁止补充推断步骤。\n" +
-            "3. text 只能是意图动作（移动/巡逻/侦查/等待等）。\n" +
-            "4. desc 只含一个动作时，输出 1 步。\n" +
-            "5. doneCond 统一填 \" \"（空格）。\n" +
-            "6. stepId 格式：step_1、step_2 ...\n\n" +
-            "7. coordinationConstraint：协同约束，如\"保持前探-侧护-后卫队形\"，没有时填 \" \"。\n" +
-            "示例A（移动+巡逻）desc：\"经A楼接近艺术中心，到达后绕艺术中心巡逻一周\"\n" +
+            "2. 只拆解 desc 中明确出现的动作,禁止补充推断步骤。\n" +
+            "3. text 只能是意图动作(移动/巡逻/侦查/等待等)。\n" +
+            "4. desc 只含一个动作时,输出 1 步。\n" +
+            "5. doneCond:完成条件,如\"限制时间\",没有时填 \" \"。\n" +
+            "6. stepId 格式:step_1、step_2 ...\n\n" +
+            "7. constraint:协同约束,如\"保持前探-侧护-后卫队形\",没有时填 \" \"。\n" +
+            "示例A(移动+巡逻)desc:\"经A楼接近艺术中心,到达后绕艺术中心巡逻一周\"\n" +
             "[\n" +
-            "  {\"stepId\": \"step_1\", \"text\": \"飞往A楼\", \"doneCond\": \" \",\"coordinationConstraint\": \" \"},\n" +
-            "  {\"stepId\": \"step_2\", \"text\": \"飞往艺术中心\", \"doneCond\": \" \",\"coordinationConstraint\": \" \"},\n" +
-            "  {\"stepId\": \"step_3\", \"text\": \"绕艺术中心巡逻一周\", \"doneCond\": \" \",\"coordinationConstraint\": \" \"}\n" +
+            "  {\"stepId\": \"step_1\", \"text\": \"飞往A楼\", \"doneCond\": \" \",\"constraint\": \" \"},\n" +
+            "  {\"stepId\": \"step_2\", \"text\": \"飞往艺术中心\", \"doneCond\": \" \",\"constraint\": \" \"},\n" +
+            "  {\"stepId\": \"step_3\", \"text\": \"绕艺术中心巡逻一周\", \"doneCond\": \" \",\"constraint\": \" \"}\n" +
             "]\n\n" +
-            "示例B（侦查+回传）desc：\"侦查东区目标，发现后回传坐标\"\n" +
+            "示例B(侦查+回传)desc:\"侦查东区目标,发现后回传坐标\"\n" +
             "[\n" +
-            "  {\"stepId\": \"step_1\", \"text\": \"飞往东区\", \"doneCond\": \" \",\"coordinationConstraint\": \" \"},\n" +
-            "  {\"stepId\": \"step_2\", \"text\": \"侦查目标\", \"doneCond\": \" \",\"coordinationConstraint\": \" \"},\n" +
-            "  {\"stepId\": \"step_3\", \"text\": \"回传目标坐标\", \"doneCond\": \" \",\"coordinationConstraint\": \" \"}\n" +
+            "  {\"stepId\": \"step_1\", \"text\": \"飞往东区\", \"doneCond\": \" \",\"constraint\": \" \"},\n" +
+            "  {\"stepId\": \"step_2\", \"text\": \"侦查目标\", \"doneCond\": \" \",\"constraint\": \" \"},\n" +
+            "  {\"stepId\": \"step_3\", \"text\": \"回传目标坐标\", \"doneCond\": \" \",\"constraint\": \" \"}\n" +
             "]\n\n";
 
         string llmResult = null;
@@ -425,15 +428,15 @@ public class PlanningModule : MonoBehaviour
             curIdx = 0
         };
 
-        Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] {props.AgentID} 计划就绪，共 {steps.Length} 步");
+        Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] {props.AgentID} 计划就绪,共 {steps.Length} 步");
         SetState(PlanningState.Active);
     }
 
     // ─────────────────────────────────────────────────────────
-    // 分组逻辑（协调者本地执行）
+    // 分组逻辑(协调者本地执行)
     // ─────────────────────────────────────────────────────────
 
-    /// <summary>按 relType 和 groupCnt 将 agentIds 分配到各组，选组长，广播 GroupBootstrap。</summary>
+    /// <summary>按 relType 和 groupCnt 将 agentIds 分配到各组,选组长,广播 GroupBootstrap。</summary>
     private void AssignGroups(ParsedMission p, string[] agentIds)
     {
         SetState(PlanningState.Grouping);
@@ -472,7 +475,7 @@ public class PlanningModule : MonoBehaviour
             groups  = groups
         };
 
-        // 广播给所有智能体（含自身）
+        // 广播给所有智能体(含自身)
         comm.SendScopedMessage(
             CommunicationScope.Public,
             MessageType.GroupBootstrap,
@@ -503,14 +506,14 @@ public class PlanningModule : MonoBehaviour
     }
 
     // ─────────────────────────────────────────────────────────
-    // 消息接收（由 CommunicationModule 转发调用）
+    // 消息接收(由 CommunicationModule 转发调用)
     // ─────────────────────────────────────────────────────────
 
-    /// <summary>收到分组通知，提取本组信息，分支进入组长或成员路径。</summary>
+    /// <summary>收到分组通知,提取本组信息,分支进入组长或成员路径。</summary>
     public void OnGroupBootstrap(GroupBootstrapPayload p)
     {
-        // 非协调者（parsed==null）直接接受并采用消息中的 msnId；
-        // 协调者则验证 msnId 是否匹配，防止跨任务消息干扰。
+        // 非协调者(parsed==null)直接接受并采用消息中的 msnId；
+        // 协调者则验证 msnId 是否匹配,防止跨任务消息干扰。
         if (parsed == null)
             parsed = new ParsedMission { msnId = p.msnId };
         else if (p.msnId != parsed.msnId)
@@ -538,21 +541,21 @@ public class PlanningModule : MonoBehaviour
             return;
         }
 
-        Debug.Log($"[PlanningModule] {props.AgentID} 加入组 {myGroup.groupId}，isLeader={isLeader}");
+        Debug.Log($"[PlanningModule] {props.AgentID} 加入组 {myGroup.groupId},isLeader={isLeader}");
 
         if (isLeader)
             StartCoroutine(RunLLM2());
         // 成员等待 SlotBroadcast
     }
 
-    /// <summary>收到槽列表广播，启动 LLM#3 选槽。</summary>
+    /// <summary>收到槽列表广播,启动 LLM#3 选槽。</summary>
     public void OnSlotBroadcast(SlotBroadcastPayload p)
     {
         if (parsed == null || p.msnId != parsed.msnId) return;
         StartCoroutine(RunLLM3(p.slots));
     }
 
-    /// <summary>组长收到成员的槽选择，记录并检查是否收齐。</summary>
+    /// <summary>组长收到成员的槽选择,记录并检查是否收齐。</summary>
     public void OnSlotSelect(SlotSelectPayload p)
     {
         if (!isLeader || parsed == null || p.msnId != parsed.msnId) return;
@@ -568,7 +571,7 @@ public class PlanningModule : MonoBehaviour
             ResolveAndConfirm();
     }
 
-    /// <summary>成员收到槽确认，记录 confirmedSlot，等待 StartExec。</summary>
+    /// <summary>成员收到槽确认,记录 confirmedSlot,等待 StartExec。</summary>
     public void OnSlotConfirm(SlotConfirmPayload p)
     {
         if (parsed == null || p.msnId != parsed.msnId) return;
@@ -576,13 +579,13 @@ public class PlanningModule : MonoBehaviour
 
         confirmedSlot = p.slot;
         Debug.Log($"[PlanningModule] {props.AgentID} 确认槽 {p.slot.slotId}" +
-                  (p.adjusted ? $"（调整，原因：{p.adjReason}）" : string.Empty));
+                  (p.adjusted ? $"(调整,原因:{p.adjReason})" : string.Empty));
 
         if (startExecReceived)
             StartCoroutine(RunLLM4());
     }
 
-    /// <summary>收到开始执行信号，启动 LLM#4 拆解步骤。</summary>
+    /// <summary>收到开始执行信号,启动 LLM#4 拆解步骤。</summary>
     public void OnStartExec(StartExecPayload p)
     {
         if (parsed == null || p.msnId != parsed.msnId) return;
@@ -595,13 +598,13 @@ public class PlanningModule : MonoBehaviour
     }
 
     // ─────────────────────────────────────────────────────────
-    // 组长专用：冲突处理
+    // 组长专用:冲突处理
     // ─────────────────────────────────────────────────────────
 
-    /// <summary>所有成员选择收齐后解决冲突，按到达时间先到先得，冲突者分配剩余槽。</summary>
+    /// <summary>所有成员选择收齐后解决冲突,按到达时间先到先得,冲突者分配剩余槽。</summary>
     private void ResolveAndConfirm()
     {
-        // 组长自身排最前，其余按到达时间排序
+        // 组长自身排最前,其余按到达时间排序
         List<string> ordered = myGroup.memberIds
             .OrderBy(id => selectionTs.ContainsKey(id) ? selectionTs[id] : float.MaxValue)
             .ToList();
@@ -644,7 +647,7 @@ public class PlanningModule : MonoBehaviour
             if (string.Equals(agentId, props.AgentID, StringComparison.OrdinalIgnoreCase))
             {
                 confirmedSlot = assigned;
-                Debug.Log($"[PlanningModule] {props.AgentID}（组长）确认槽 {assigned.slotId}");
+                Debug.Log($"[PlanningModule] {props.AgentID}(组长)确认槽 {assigned.slotId}");
             }
             else
             {
@@ -664,7 +667,7 @@ public class PlanningModule : MonoBehaviour
             }
         }
 
-        // 广播 StartExecution 给组内成员（不含自身）
+        // 广播 StartExecution 给组内成员(不含自身)
         StartExecPayload startExec = new StartExecPayload
         {
             msnId   = parsed.msnId,
@@ -706,7 +709,7 @@ public class PlanningModule : MonoBehaviour
 
         if (Time.time - waitStart > WaitSec)
         {
-            Debug.LogWarning($"{props?.AgentID ?? "Unknown"}: [PlanningModule] {props?.AgentID} 等待超时，状态={state}");
+            Debug.LogWarning($"{props?.AgentID ?? "Unknown"}: [PlanningModule] {props?.AgentID} 等待超时,状态={state}");
             SetState(PlanningState.Failed);
             busy = false;
         }
@@ -725,7 +728,7 @@ public class PlanningModule : MonoBehaviour
                agentPlan.steps.Length > 0;
     }
 
-    /// <summary>返回 agentPlan.steps[agentPlan.curIdx]，即当前步骤。</summary>
+    /// <summary>返回 agentPlan.steps[agentPlan.curIdx],即当前步骤。</summary>
     public PlanStep GetCurrentStep()
     {
         if (!HasActiveMission()) return null;
@@ -733,7 +736,7 @@ public class PlanningModule : MonoBehaviour
         return agentPlan.steps[agentPlan.curIdx];
     }
 
-    /// <summary>完成当前步骤：curIdx++，若超出数组长度则转 Done。</summary>
+    /// <summary>完成当前步骤:curIdx++,若超出数组长度则转 Done。</summary>
     public void CompleteCurrentStep()
     {
         if (agentPlan == null || agentPlan.steps == null) return;
@@ -747,10 +750,10 @@ public class PlanningModule : MonoBehaviour
     }
 
     // ─────────────────────────────────────────────────────────
-    // 向后兼容接口（旧模块仍调用）
+    // 向后兼容接口(旧模块仍调用)
     // ─────────────────────────────────────────────────────────
 
-    /// <summary>返回当前任务简要信息（供 MLAgentsController 使用）。</summary>
+    /// <summary>返回当前任务简要信息(供 MLAgentsController 使用)。</summary>
     public MissionAssignment currentMission => parsed == null ? null : new MissionAssignment
     {
         missionId   = parsed.msnId,
@@ -758,7 +761,7 @@ public class PlanningModule : MonoBehaviour
         teamId      = myGroup?.groupId ?? string.Empty
     };
 
-    /// <summary>接收任务分配（存根，供旧链路兼容）。</summary>
+    /// <summary>接收任务分配(存根,供旧链路兼容)。</summary>
     public void ReceiveMissionAssignment(
         MissionAssignment mission,
         object slot,
@@ -769,7 +772,7 @@ public class PlanningModule : MonoBehaviour
     // 工具方法
     // ─────────────────────────────────────────────────────────
 
-    /// <summary>从 LLM 回复字符串中提取 JSON（去除 ```json...``` 包裹）。</summary>
+    /// <summary>从 LLM 回复字符串中提取 JSON(去除 ```json...``` 包裹)。</summary>
     private static string ExtractJson(string raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return raw;
@@ -788,7 +791,7 @@ public class PlanningModule : MonoBehaviour
         return raw.Trim();
     }
 
-    /// <summary>生成任务ID，格式 "msn_yyyyMMdd_N"。</summary>
+    /// <summary>生成任务ID,格式 "msn_yyyyMMdd_N"。</summary>
     private static string GenMsnId()
     {
         return $"msn_{DateTime.Now:yyyyMMdd}_{++msnCounter}";
