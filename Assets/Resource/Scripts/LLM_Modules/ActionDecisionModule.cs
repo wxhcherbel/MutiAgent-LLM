@@ -33,6 +33,10 @@ public class ActionDecisionModule : MonoBehaviour
     // ─── 协程句柄 ─────────────────────────────────────────────────
     private Coroutine activeCoroutine;
 
+    // ─── 重规划计数（防死锁）────────────────────────────────────
+    private int replanCount;
+    private const int MaxReplanCount = 5;
+
     // ─── JSON 提取正则 ────────────────────────────────────────────
     private static readonly Regex JsonBlockRe = new Regex(@"```(?:json)?\s*([\s\S]*?)```");
 
@@ -94,6 +98,7 @@ public class ActionDecisionModule : MonoBehaviour
             recentEvents           = Array.Empty<string>(),
         };
 
+        replanCount = 0;
         SetStatus(ADMStatus.Idle);
         activeCoroutine = StartCoroutine(RunLLMA(step));
     }
@@ -115,24 +120,30 @@ public class ActionDecisionModule : MonoBehaviour
         blackboard[update.agentId] = update;
         Debug.Log($"[ADM] {agentProperties?.AgentID} 收到黑板更新 from {update.agentId}");
 
-        // Running 状态下检测新冲突
-        if (status == ADMStatus.Running && ctx?.actionQueue != null)
+        // 只在 Running 状态响应（Negotiating/Replanning 状态已在处理冲突，不重复触发）
+        if (status != ADMStatus.Running || ctx?.actionQueue == null) return;
+
+        // ③ 全量扫描（修复"只看 incoming"的缺陷）
+        string myId       = agentProperties?.AgentID ?? string.Empty;
+        var    ownTargets = BuildOwnTargetSet();
+        bool   hasConflict = false;
+
+        foreach (var kv in blackboard)
         {
-            var ownTargets = BuildOwnTargetSet();
-            if (update.plannedTargets != null)
+            if (string.Equals(kv.Key, myId, StringComparison.OrdinalIgnoreCase)) continue;
+            if (CountConflicts(kv.Value.plannedTargets, ownTargets) > 0)
             {
-                foreach (string t in update.plannedTargets)
-                {
-                    if (ownTargets.Contains(t))
-                    {
-                        SetStatus(ADMStatus.Interrupted);
-                        activeCoroutine = StartCoroutine(
-                            RunLLMB($"队友 {update.agentId} 黑板更新，发现地点冲突"));
-                        return;
-                    }
-                }
+                hasConflict = true;
+                break;
             }
         }
+
+        if (!hasConflict) return;
+
+        // ④ 打开协商窗口走选举，而非直接调 RunLLMB
+        negotiationWindowEnd = Time.time + NegotiationWindowSec;
+        SetStatus(ADMStatus.Negotiating);
+        // Update() 检测到 Negotiating && 窗口到期 → 调 CheckConflictsAndMaybeReplan
     }
 
     /// <summary>执行层查询当前应执行的原子动作。</summary>
@@ -153,6 +164,9 @@ public class ActionDecisionModule : MonoBehaviour
             SetStatus(ADMStatus.Done);
             planningModule?.CompleteCurrentStep();
             Debug.Log($"[ADM] {agentProperties?.AgentID} 所有动作完成，通知 PlanningModule");
+            // BUG-04 修复：步骤完成后将智能体物理状态归 Idle，
+            // 确保 IntelligentAgent.ShouldMakeDecision() 能检测到并启动下一步
+            if (agentState != null) agentState.Status = AgentStatus.Idle;
         }
         else
         {
@@ -392,34 +406,61 @@ public class ActionDecisionModule : MonoBehaviour
     {
         if (ctx?.actionQueue == null) { SetStatus(ADMStatus.Running); return; }
 
-        var ownTargets = BuildOwnTargetSet();
+        // 防死锁：重规划次数过多，强制 Running
+        if (replanCount >= MaxReplanCount)
+        {
+            Debug.LogWarning($"[ADM] {agentProperties?.AgentID} 重规划次数达上限({MaxReplanCount})，强制 Running");
+            SetStatus(ADMStatus.Running);
+            return;
+        }
+
+        string myId       = agentProperties?.AgentID ?? string.Empty;
+        var    ownTargets = BuildOwnTargetSet();
+
+        // ① 全量扫描，跳过自身条目（修复 self-conflict 误计）
         int myConflict = 0;
         foreach (var kv in blackboard)
+        {
+            if (string.Equals(kv.Key, myId, StringComparison.OrdinalIgnoreCase)) continue;
             myConflict += CountConflicts(kv.Value.plannedTargets, ownTargets);
+        }
 
         if (myConflict == 0) { SetStatus(ADMStatus.Running); return; }
 
-        // 判断是否为解决者（冲突数最多；同数取 agentId 字典序最小）
-        string myId = agentProperties?.AgentID ?? string.Empty;
-        bool iAmResolver = true;
+        // ② 选举：比较各 agent 的【全局冲突总数】，总数更大者优先；相同时字典序大的 ID 优先
+        //    BUG-02 修复：原代码用 pairwise 冲突与 total 冲突比较，在 N≥3 时 pairwise < total
+        //    导致所有 agent 均认为自己是 resolver，现改为对等的 total vs total 比较
+        bool anyoneMoreEligible = false;
         foreach (var kv in blackboard)
         {
-            int theirConflict = CountConflicts(kv.Value.plannedTargets, ownTargets);
-            if (theirConflict > myConflict ||
-                (theirConflict == myConflict && string.Compare(kv.Key, myId, StringComparison.Ordinal) < 0))
+            if (string.Equals(kv.Key, myId, StringComparison.OrdinalIgnoreCase)) continue;
+            int pairwise = CountConflicts(kv.Value.plannedTargets, ownTargets);
+            if (pairwise == 0) continue; // 与我无直接冲突的队友不参与选举
+
+            // 计算该队友与所有其他 agent 的冲突总数（本机有完整黑板可以推算）
+            int theirTotal = ComputeTotalConflictForPeer(kv.Key);
+            if (theirTotal > myConflict ||
+                (theirTotal == myConflict &&
+                 string.Compare(kv.Key, myId, StringComparison.Ordinal) > 0))
             {
-                iAmResolver = false;
+                anyoneMoreEligible = true;
                 break;
             }
         }
 
-        if (iAmResolver)
+        if (!anyoneMoreEligible)
         {
-            activeCoroutine = StartCoroutine(RunLLMB($"与队友地点冲突({myConflict}处)，本机为解决者"));
+            // 本机为 resolver：只为自己重规划，然后广播；非 resolver 收到广播后自行处理
+            replanCount++;
+            // BUG-06 修复：启动新协程前先停止可能残留的旧协程，避免并发操作 ctx.actionQueue
+            if (activeCoroutine != null) { StopCoroutine(activeCoroutine); activeCoroutine = null; }
+            activeCoroutine = StartCoroutine(
+                RunLLMB($"与队友地点冲突({myConflict}处)，本机为解决者"));
         }
         else
         {
-            // 非解决者：先进入 Running 等待解决者的 BoardUpdate 触发后续检测
+            // 非 resolver：进入 Running 等待 resolver 广播，由 OnBoardUpdate 触发下一轮检测
+            Debug.Log($"[ADM] {agentProperties?.AgentID} 非 resolver，等待");
             SetStatus(ADMStatus.Running);
         }
     }
@@ -443,12 +484,36 @@ public class ActionDecisionModule : MonoBehaviour
         return n;
     }
 
+    /// <summary>
+    /// 从本机黑板视角计算指定 peer 的全局冲突总数
+    /// （peer 的 plannedTargets 与黑板中所有其他 agent 的 plannedTargets 的重叠数之和）。
+    /// 用于选举时的对等比较，避免 pairwise vs total 的不对称问题（BUG-02）。
+    /// </summary>
+    private int ComputeTotalConflictForPeer(string peerId)
+    {
+        if (!blackboard.TryGetValue(peerId, out AgentContextUpdate peerEntry)) return 0;
+        int total = 0;
+        foreach (var kv in blackboard)
+        {
+            if (string.Equals(kv.Key, peerId, StringComparison.OrdinalIgnoreCase)) continue;
+            var otherTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (kv.Value.plannedTargets != null)
+                foreach (string t in kv.Value.plannedTargets)
+                    if (!string.IsNullOrWhiteSpace(t)) otherTargets.Add(t);
+            total += CountConflicts(peerEntry.plannedTargets, otherTargets);
+        }
+        return total;
+    }
+
     // ─────────────────────────────────────────────────────────────
     // 感知事件处理
     // ─────────────────────────────────────────────────────────────
 
     private void HandlePendingPerceptionEvents()
     {
+        // BUG-05 修复：ctx 可能为 null（Running 状态由 CheckConflictsAndMaybeReplan 在 actionQueue==null 时设置）
+        if (ctx == null) { pendingPerceptionEvents.Clear(); return; }
+
         while (pendingPerceptionEvents.Count > 0)
         {
             var (desc, loc) = pendingPerceptionEvents.Dequeue();

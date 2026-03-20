@@ -229,6 +229,7 @@ public class PlanningModule : MonoBehaviour
         if (string.IsNullOrWhiteSpace(llmResult))
         {
             Debug.LogError("[PlanningModule] LLM#2 返回空");
+            busy = false; // BUG-03 修复：失败路径必须重置 busy，否则后续任务无法提交
             SetState(PlanningState.Failed);
             yield break;
         }
@@ -242,6 +243,7 @@ public class PlanningModule : MonoBehaviour
         catch (Exception e)
         {
             Debug.LogError($"[PlanningModule] LLM#2 JSON解析失败: {e.Message}");
+            busy = false; // BUG-03 修复
             SetState(PlanningState.Failed);
             yield break;
         }
@@ -400,6 +402,7 @@ public class PlanningModule : MonoBehaviour
         if (string.IsNullOrWhiteSpace(llmResult))
         {
             Debug.LogError("[PlanningModule] LLM#4 返回空");
+            busy = false; // BUG-03 修复：失败路径必须重置 busy
             SetState(PlanningState.Failed);
             yield break;
         }
@@ -413,6 +416,7 @@ public class PlanningModule : MonoBehaviour
         catch (Exception e)
         {
             Debug.LogError($"{props?.AgentID ?? "Unknown"}: [PlanningModule] LLM#4 JSON解析失败: {e.Message}");
+            busy = false; // BUG-03 修复
             SetState(PlanningState.Failed);
             yield break;
         }
@@ -424,7 +428,6 @@ public class PlanningModule : MonoBehaviour
             role   = confirmedSlot.role,
             desc   = confirmedSlot.desc,
             steps  = steps,
-            coordinationConstraint = confirmedSlot.coordinationConstraint,
             curIdx = 0
         };
 
