@@ -66,6 +66,9 @@ public class PerceptionModule : MonoBehaviour
     // 感知数据存储
     public List<SmallNodeData> detectedObjects = new List<SmallNodeData>(); // 检测到的小节点列表（树木/行人/车辆/资源等）
     public List<GameObject> nearbyAgents = new List<GameObject>(); // 附近的其他智能体列表
+    public List<IntelligentAgent> enemyAgents = new List<IntelligentAgent>(); // 敌方智能体列表（每次感知重置）
+    private IPerceptionVisualizer visualizer;                      // 可视化接口（可选，由 PerceptionVisualizer 实现）
+    private ActionDecisionModule adm;                              // ADM 引用（用于感知事件通知）
     private IntelligentAgent agent;                                // 所属智能体组件引用
     private AgentType agentType;                                   // 智能体类型（无人机/无人车）
     // public MapGenerator mapGenerator;                             // 旧地图生成器（已弃用）
@@ -150,6 +153,9 @@ public class PerceptionModule : MonoBehaviour
         {
             Debug.LogError("PerceptionModule: 未找到所属智能体组件");
         }
+        // 获取可选的可视化接口和 ADM 引用
+        visualizer = GetComponent<IPerceptionVisualizer>();
+        adm        = GetComponent<ActionDecisionModule>();
         InitializeVisualizationComponents(); // 初始化可视化所需组件
     }
 
@@ -187,6 +193,15 @@ public class PerceptionModule : MonoBehaviour
             UpdateSphereMarkers();
 
             lastVizUpdateTime = Time.time;
+        }
+
+        // 通知 IPerceptionVisualizer（与旧可视化并行，互不干扰）
+        if (visualizer != null && agent != null)
+        {
+            var snapshots = new System.Collections.Generic.List<DetectionPointSnapshot>();
+            foreach (var pt in detectionPoints)
+                snapshots.Add(new DetectionPointSnapshot { position = pt.position, type = pt.type, timestamp = pt.timestamp });
+            visualizer.OnDetectionUpdated(snapshots, transform.position, agent.Properties.PerceptionRange, agentType);
         }
 
         lastPerceptionTime = Time.time;
@@ -344,6 +359,7 @@ public class PerceptionModule : MonoBehaviour
         // 清空历史数据
         detectedObjects.Clear();
         nearbyAgents.Clear();
+        enemyAgents.Clear();       // 每帧重置敌方列表
         CleanupOldSphereMarkers(); // 清除旧的球体标记
         detectionPoints.Clear();   // 清空检测点信息（只保留当前帧）
         sensedObjectIdsThisTick.Clear();
@@ -477,9 +493,21 @@ public class PerceptionModule : MonoBehaviour
             if (otherAgent != null && otherAgent.gameObject != gameObject)
             {
                 if (!nearbyAgents.Contains(otherAgent.gameObject))
-                {
                     nearbyAgents.Add(otherAgent.gameObject);
+
+                // ─── 敌方检测 ───────────────────────────────────
+                bool isEnemy = agent != null && agent.Properties != null &&
+                               otherAgent.Properties != null &&
+                               otherAgent.Properties.TeamID != agent.Properties.TeamID;
+                if (isEnemy && !enemyAgents.Contains(otherAgent))
+                {
+                    enemyAgents.Add(otherAgent);
+                    visualizer?.OnEnemyDetected(otherAgent, otherAgent.transform.position);
+                    string desc = $"敌方智能体 {otherAgent.Properties.AgentID} @ {otherAgent.transform.position}";
+                    adm?.OnPerceptionEvent(desc, "enemy");
+                    Debug.Log($"[Perception] {agent?.Properties?.AgentID} 发现敌方: {otherAgent.Properties.AgentID}");
                 }
+
                 return; // 真实智能体只写入 NearbyAgents，不参与小节点可视化
             }
         }
@@ -553,10 +581,22 @@ public class PerceptionModule : MonoBehaviour
         };
 
         SmallNodeRegistry.RegisterOrUpdate(data, confidenceIncrement);
+        CheckEmergencyEvent(data);
 
         if (logSmallNodeRegistry)
         {
             Debug.Log($"[PerceptionModule] 小节点登记: id={data.NodeId}, type={data.NodeType}, dynamic={data.IsDynamic}, block={data.BlocksMovement}");
+        }
+    }
+
+    /// <summary>检测紧急事件（TemporaryObstacle 等），通知 ADM 和可视化器。</summary>
+    private void CheckEmergencyEvent(SmallNodeData node)
+    {
+        if (node.NodeType == SmallNodeType.TemporaryObstacle && node.BlocksMovement)
+        {
+            string desc = $"障碍 {node.DisplayName} 阻断路径";
+            adm?.OnPerceptionEvent(desc, node.NodeId);
+            visualizer?.OnEmergencyDetected(desc, node.WorldPosition);
         }
     }
 

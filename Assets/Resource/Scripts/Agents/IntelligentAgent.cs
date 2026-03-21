@@ -198,6 +198,13 @@ public class IntelligentAgent : MonoBehaviour
     /// </summary>
     private IEnumerator MakeDecisionCoroutine()
     {
+        // BUG-M5: ADM 未完成时跳过，避免重复启动同一步骤
+        if (ActionDecisionModule != null && !ActionDecisionModule.IsIdle())
+        {
+            isMakingDecision = false;
+            yield break;
+        }
+
         //Debug.Log($"【IntelligentAgent】智能体 {Properties.AgentID} 进入决策协程 MakeDecisionCoroutine()");
         isMakingDecision = true;
         CurrentState.Status = AgentStatus.Thinking;

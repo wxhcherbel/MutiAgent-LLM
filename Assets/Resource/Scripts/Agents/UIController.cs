@@ -13,7 +13,7 @@ public class UIController : MonoBehaviour
 
     [Header("References")]
     public AgentSpawner agentSpawner; // 智能体生成器
-    public MLAgentsController currentlyControlledAgent; // 当前控制的智能体
+    public AgentMotionExecutor currentlyControlledAgent; // 当前控制的智能体
 
     private IntelligentAgent[] allAgents; // 所有智能体
 

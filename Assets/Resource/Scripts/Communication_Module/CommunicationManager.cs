@@ -52,10 +52,15 @@ public class CommunicationManager : MonoBehaviour
         return registeredAgents.Keys.ToArray();
     }
 
+    /// <summary>返回最近消息日志的只读视图（供 AgentStateServer 使用）。</summary>
+    public IReadOnlyList<AgentMessage> RecentMessageLog => messageLog;
+
     public void ProcessMessage(AgentMessage message)
     {
         if (message == null) return;
         messageLog.Add(message);
+        // BUG-M1: 消息日志上限 2000，FIFO 丢弃最旧
+        if (messageLog.Count > 2000) messageLog.RemoveAt(0);
         float delay = message.Reliable ? 0f : Random.Range(0.05f, 0.15f);
         StartCoroutine(DeliverMessageWithDelay(message, delay));
     }

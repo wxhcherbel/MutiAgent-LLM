@@ -111,7 +111,8 @@ public class LLMInterface : MonoBehaviour
 
     private string fullLog = "";
     private string resultText = "";
-    private readonly List<LogEntry> logEntries = new List<LogEntry>();
+    private readonly List<LogEntry> _logEntries = new List<LogEntry>();
+    public IReadOnlyList<LogEntry> LogEntries => _logEntries;
 
     private int requestCount;
     private string sessionId;
@@ -160,7 +161,7 @@ public class LLMInterface : MonoBehaviour
             max_tokens = maxTokens
         };
 
-        logEntries.Add(entry);
+        _logEntries.Add(entry);
     }
 
     private IEnumerator ScrollToBottomAfterLayout()
@@ -171,7 +172,7 @@ public class LLMInterface : MonoBehaviour
 
     private void SaveLogToFile()
     {
-        if (string.IsNullOrEmpty(logFilePath) || logEntries.Count == 0)
+        if (string.IsNullOrEmpty(logFilePath) || _logEntries.Count == 0)
             return;
 
         try
@@ -186,7 +187,7 @@ public class LLMInterface : MonoBehaviour
                 writer.WriteLine($"Total Requests: {requestCount}");
                 writer.WriteLine("========================\n");
 
-                foreach (LogEntry entry in logEntries)
+                foreach (LogEntry entry in _logEntries)
                 {
                     writer.WriteLine($"[{entry.timestamp}] [{entry.type}]");
                     writer.WriteLine($"Model       : {entry.model}");
@@ -380,12 +381,20 @@ public class LLMInterface : MonoBehaviour
         SaveLogToFile();
     }
 
+    public void SetModel(string model)
+    {
+        if (!string.IsNullOrWhiteSpace(model))
+            providerConfig.defaultModel = model;
+    }
+
+    public string GetCurrentModel() => providerConfig.defaultModel;
+
     private IEnumerator AutoSaveCoroutine()
     {
         while (true)
         {
             yield return new WaitForSeconds(60);
-            if (logEntries.Count > 0)
+            if (_logEntries.Count > 0)
                 SaveLogToFile();
         }
     }

@@ -852,9 +852,9 @@ public class AgentSpawner : MonoBehaviour
         AgentLLMControl llmControl = agentObj.GetComponent<AgentLLMControl>();
         if (llmControl == null) llmControl = agentObj.AddComponent<AgentLLMControl>();
 
-        // 7) ML-Agents 控制器
-        MLAgentsController mlController = agentObj.GetComponent<MLAgentsController>();
-        if (mlController == null) mlController = agentObj.AddComponent<MLAgentsController>();
+        // 7) 运动执行器
+        AgentMotionExecutor mlController = agentObj.GetComponent<AgentMotionExecutor>();
+        if (mlController == null) mlController = agentObj.AddComponent<AgentMotionExecutor>();
 
         // 立即下发边界配置，避免 ML 控制器在首帧将智能体错误夹到固定点
         if (campusGrid == null) EnsureGridReady();

@@ -141,6 +141,8 @@ public class ActionDecisionModule : MonoBehaviour
         if (!hasConflict) return;
 
         // ④ 打开协商窗口走选举，而非直接调 RunLLMB
+        // BUG-H4: 进入 Negotiating 前停止旧协程，避免并发
+        if (activeCoroutine != null) { StopCoroutine(activeCoroutine); activeCoroutine = null; }
         negotiationWindowEnd = Time.time + NegotiationWindowSec;
         SetStatus(ADMStatus.Negotiating);
         // Update() 检测到 Negotiating && 窗口到期 → 调 CheckConflictsAndMaybeReplan
@@ -174,8 +176,15 @@ public class ActionDecisionModule : MonoBehaviour
         }
     }
 
+    /// <summary>当前 ADM 是否空闲（可接受新步骤）。</summary>
+    public bool IsIdle() =>
+        status == ADMStatus.Idle || status == ADMStatus.Done || status == ADMStatus.Failed;
+
+    /// <summary>返回当前 ADM 状态（供外部监控使用）。</summary>
+    public ADMStatus GetStatus() => status;
+
     /// <summary>向后兼容：由 IntelligentAgent.MakeDecisionCoroutine 调用的协程入口。</summary>
-    public IEnumerator<object> DecideNextAction()
+    public IEnumerator DecideNextAction()
     {
         SyncCampusGridReference();
         commModule?.ProcessMessages();
@@ -229,21 +238,23 @@ public class ActionDecisionModule : MonoBehaviour
         {
             Debug.LogError($"[ADM] {agentProperties?.AgentID} LLM-A 返回空");
             SetStatus(ADMStatus.Failed);
+            if (agentState != null) agentState.Status = AgentStatus.Idle;  // CRIT-2
             yield break;
         }
         Debug.Log($"[ADM] {agentProperties?.AgentID} LLM-A 原始回复: {llmResult}");
 
-        // 先用 ExtractJson() 从“可能夹杂说明文字或 ```json 代码块”的回复里提取 JSON 主体，
+        // 先用 ExtractJson() 从”可能夹杂说明文字或 ```json 代码块”的回复里提取 JSON 主体，
         // 再反序列化成 AtomicAction[]。
         AtomicAction[] actions = null;
         try { actions = JsonConvert.DeserializeObject<AtomicAction[]>(ExtractJson(llmResult)); }
-        catch (Exception e) { Debug.LogError($"[ADM] LLM-A JSON解析失败: {e.Message}"); SetStatus(ADMStatus.Failed); yield break; }
+        catch (Exception e) { Debug.LogError($"[ADM] LLM-A JSON解析失败: {e.Message}"); SetStatus(ADMStatus.Failed); if (agentState != null) agentState.Status = AgentStatus.Idle; yield break; }
 
         // 能解析但结果为空，也视为无效输出。
         if (actions == null || actions.Length == 0)
         {
             Debug.LogError($"[ADM] {agentProperties?.AgentID} LLM-A 解析结果为空数组");
             SetStatus(ADMStatus.Failed);
+            if (agentState != null) agentState.Status = AgentStatus.Idle;  // CRIT-2
             yield break;
         }
 
@@ -267,12 +278,12 @@ public class ActionDecisionModule : MonoBehaviour
             $"步骤文本：{step.text}\n" +
             $"当前角色：{ctx.role}\n" +
             $"当前位置：{ctx.currentLocationName}\n" +
-            $"协调约束：{(string.IsNullOrWhiteSpace(ctx.coordinationConstraint) ? "无" : ctx.coordinationConstraint)}\n\n" +
+            $"协同约束：{(string.IsNullOrWhiteSpace(ctx.coordinationConstraint) ? "无" : ctx.coordinationConstraint)}\n\n" +
             $"全局地图：\n{globalMap}\n\n" +
             "原子动作类型枚举：MoveTo, PatrolAround, Observe, Wait, FormationHold, Broadcast, Evade\n\n" +
             "输出要求：\n" +
             "1. 只输出 JSON 数组。\n" +
-            "2. 每项字段：actionId(\"aa_N\"), type(枚举名), targetName(地图中存在的地名，无目标填\"\"), " +
+            "2. 每项字段：actionId(\"aa_N\"), type(枚举名), targetName(根据自然语言推断提取，无目标填\"\"), " +
                "targetAgentId(\"\"), radius(float), duration(float), broadcastContent(\"\")。\n" +
             "3. 禁止使用地图中不存在的地名。\n" +
             "4. 仅包含步骤所需的动作，不额外添加。\n\n" +
@@ -527,6 +538,8 @@ public class ActionDecisionModule : MonoBehaviour
 
             SetStatus(ADMStatus.Interrupted);
             BroadcastContextUpdate();
+            // BUG-H3: 启动 RunLLMB 前停止旧协程
+            if (activeCoroutine != null) { StopCoroutine(activeCoroutine); activeCoroutine = null; }
             activeCoroutine = StartCoroutine(RunLLMB($"感知事件: {desc} @ {loc}"));
             return;   // 每次只触发一次重规划
         }
@@ -548,19 +561,21 @@ public class ActionDecisionModule : MonoBehaviour
     {
         if (commModule == null || agentProperties == null || ctx == null) return;
 
-        // 这里广播的是“当前步骤拆解出来的原子动作目标集合”，
+        // 这里广播的是”当前步骤拆解出来的原子动作目标集合”，
         // 不是规划层的 PlanStep[]。plannedTargets 会从 ctx.actionQueue 中去重提取。
-        var targets = new List<string>();
+        // BUG-M2: 使用 HashSet 去重，避免 O(n²) 的 List.Contains
+        var targetSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (ctx.actionQueue != null)
             foreach (var a in ctx.actionQueue)
-                if (!string.IsNullOrWhiteSpace(a.targetName) && !targets.Contains(a.targetName))
-                    targets.Add(a.targetName);
+                if (!string.IsNullOrWhiteSpace(a.targetName))
+                    targetSet.Add(a.targetName);
+        var targets = new List<string>(targetSet);
 
         AtomicAction cur = GetCurrentAction();
         var update = new AgentContextUpdate
         {
             agentId        = agentProperties.AgentID,
-            locationName   = ctx.currentLocationName,
+            locationName   = ResolveCurrentLocationName(),  // BUG-H1: 实时获取，非缓存
             currentAction  = cur != null ? cur.type.ToString() : "None",
             currentTarget  = cur?.targetName ?? string.Empty,
             role           = ctx.role.ToString(),

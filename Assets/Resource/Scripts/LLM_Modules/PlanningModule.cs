@@ -700,6 +700,8 @@ public class PlanningModule : MonoBehaviour
     {
         state     = s;
         waitStart = Time.time;
+        // BUG-M4: Failed/Done 时自动释放 busy 锁，防止 PlanningModule 卡死
+        if (s == PlanningState.Failed || s == PlanningState.Done) busy = false;
         Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] {props?.AgentID} → {s}");
     }
 
