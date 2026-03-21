@@ -18836,6 +18836,52 @@ Mesh:
     offset: 0
     size: 0
     path: 
+--- !u!1 &462963058
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 462963060}
+  - component: {fileID: 462963059}
+  m_Layer: 0
+  m_Name: AgentStateServer
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &462963059
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 462963058}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 647b6e7c7f4c4874cae347f7845d29e9, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  port: 8765
+  snapshotInterval: 0.5
+--- !u!4 &462963060
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 462963058}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -324.89047, y: 32.649536, z: 210.48068}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!43 &465527873
 Mesh:
   m_ObjectHideFlags: 0
@@ -39417,8 +39463,23 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5be312fc5c29bd48963142a1fa6be27, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  apiKey: sk-767b7b1d22704c20ad1bb871382af636
-  apiUrl: https://api.deepseek.com/v1/chat/completions
+  providerConfig:
+    providerName: Qwen
+    providerKind: 0
+    apiUrl: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+    apiKey: sk-6bad1704eca042d4a19133a7837749af
+    defaultModel: qwen3.5-plus
+    authHeaderName: Authorization
+    authHeaderScheme: Bearer
+    contentType: application/json
+    messagesFieldName: messages
+    modelFieldName: model
+    temperatureFieldName: temperature
+    maxTokensFieldName: max_tokens
+    promptFieldName: prompt
+    responseContentPath: choices[0].message.content
+    extraHeadersJson: 
+    extraBodyJson: 
   logContentUI: {fileID: 470969962}
   logScrollRect: {fileID: 298150795}
 --- !u!1 &936845483
@@ -88915,3 +88976,4 @@ SceneRoots:
   - {fileID: 1868901952}
   - {fileID: 256372482}
   - {fileID: 2018739234}
+  - {fileID: 462963060}
