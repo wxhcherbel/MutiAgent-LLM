@@ -272,6 +272,11 @@ public class CampusGrid2D : MonoBehaviour
     private Dictionary<string, List<string>> featureUidsByName;
     private Dictionary<string, List<string>> featureUidsByCollectionKey;
 
+    private float[,]      _astarGScore;
+    private bool[,]       _astarClosed;
+    private Vector2Int[,] _astarCameFrom;
+    private bool[,]       _astarHasParent;
+
     private Transform visualRoot;
     private readonly List<GameObject> visualCells = new List<GameObject>();
     private Material runtimeDefaultMat;
@@ -480,33 +485,21 @@ public class CampusGrid2D : MonoBehaviour
     public bool TryGetFeatureFirstCell(string featureName, out Vector2Int cell, bool preferWalkable = false, bool ignoreCase = true)
     {
         cell = new Vector2Int(-1, -1);
-        if (string.IsNullOrWhiteSpace(featureName) || cellFeatureNameGrid == null) return false;
+        if (string.IsNullOrWhiteSpace(featureName)) return false;
 
-        StringComparison comp = ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        Vector2Int firstHit = new Vector2Int(-1, -1);
+        if (!TryResolveFeatureSpatialIndex(featureName, out FeatureSpatialIndex idx, ignoreCase)
+            || idx == null || idx.occupiedCells == null || idx.occupiedCells.Count == 0)
+            return false;
 
-        for (int x = 0; x < gridWidth; x++)
+        if (preferWalkable)
         {
-            for (int z = 0; z < gridLength; z++)
+            foreach (Vector2Int c in idx.occupiedCells)
             {
-                string n = cellFeatureNameGrid[x, z];
-                if (string.IsNullOrEmpty(n) || !string.Equals(n, featureName, comp)) continue;
-
-                if (firstHit.x < 0) firstHit = new Vector2Int(x, z);
-                if (!preferWalkable || IsWalkable(x, z))
-                {
-                    cell = new Vector2Int(x, z);
-                    return true;
-                }
+                if (IsWalkable(c.x, c.y)) { cell = c; return true; }
             }
         }
-
-        if (firstHit.x >= 0)
-        {
-            cell = firstHit;
-            return true;
-        }
-        return false;
+        cell = idx.occupiedCells[0];
+        return true;
     }
 
     /// <summary>
@@ -514,33 +507,21 @@ public class CampusGrid2D : MonoBehaviour
     public bool TryGetFeatureFirstCellByUid(string featureUid, out Vector2Int cell, bool preferWalkable = false, bool ignoreCase = true)
     {
         cell = new Vector2Int(-1, -1);
-        if (string.IsNullOrWhiteSpace(featureUid) || cellFeatureUidGrid == null) return false;
+        if (string.IsNullOrWhiteSpace(featureUid) || featureSpatialIndexByUid == null) return false;
 
-        StringComparison comp = ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        Vector2Int firstHit = new Vector2Int(-1, -1);
+        if (!featureSpatialIndexByUid.TryGetValue(featureUid.Trim(), out FeatureSpatialIndex idx)
+            || idx == null || idx.occupiedCells == null || idx.occupiedCells.Count == 0)
+            return false;
 
-        for (int x = 0; x < gridWidth; x++)
+        if (preferWalkable)
         {
-            for (int z = 0; z < gridLength; z++)
+            foreach (Vector2Int c in idx.occupiedCells)
             {
-                string uid = cellFeatureUidGrid[x, z];
-                if (string.IsNullOrEmpty(uid) || !string.Equals(uid, featureUid, comp)) continue;
-
-                if (firstHit.x < 0) firstHit = new Vector2Int(x, z);
-                if (!preferWalkable || IsWalkable(x, z))
-                {
-                    cell = new Vector2Int(x, z);
-                    return true;
-                }
+                if (IsWalkable(c.x, c.y)) { cell = c; return true; }
             }
         }
-
-        if (firstHit.x >= 0)
-        {
-            cell = firstHit;
-            return true;
-        }
-        return false;
+        cell = idx.occupiedCells[0];
+        return true;
     }
 
     /// <summary>
@@ -1111,14 +1092,13 @@ public class CampusGrid2D : MonoBehaviour
     /// 杩戦偦鎺掑簭璁块棶鐐广€?    /// 杩欓噷鏁呮剰淇濇寔鏈寸礌锛氱敤鏈€杩戦偦璐績鍗冲彲锛岄伩鍏嶅湪鍔ㄤ綔灞傚紩鍏ユ洿閲嶇殑 TSP 澶嶆潅搴︺€?    /// </summary>
     private static List<Vector2Int> OrderVisitCellsByNearest(Vector2Int startCell, IReadOnlyList<Vector2Int> visitCells)
     {
-        List<Vector2Int> remaining = new List<Vector2Int>();
+        var seen = new HashSet<Vector2Int>();
+        List<Vector2Int> remaining = new List<Vector2Int>(visitCells.Count);
         for (int i = 0; i < visitCells.Count; i++)
         {
             Vector2Int c = visitCells[i];
-            if (!remaining.Contains(c))
-            {
+            if (seen.Add(c))
                 remaining.Add(c);
-            }
         }
 
         List<Vector2Int> ordered = new List<Vector2Int>(remaining.Count);
@@ -1597,18 +1577,20 @@ public class CampusGrid2D : MonoBehaviour
         if (!IsInBounds(start.x, start.y) || !IsInBounds(goal.x, goal.y)) return path;
         if (!IsPathWalkable(start.x, start.y, transientBlockedKeys) || !IsPathWalkable(goal.x, goal.y, transientBlockedKeys)) return path;
 
-        float[,] gScore = new float[gridWidth, gridLength];
-        bool[,] closed = new bool[gridWidth, gridLength];
-        Vector2Int[,] cameFrom = new Vector2Int[gridWidth, gridLength];
-        bool[,] hasParent = new bool[gridWidth, gridLength];
-
+        Array.Clear(_astarClosed,   0, _astarClosed.Length);
+        Array.Clear(_astarCameFrom, 0, _astarCameFrom.Length);
+        Array.Clear(_astarHasParent,0, _astarHasParent.Length);
         for (int x = 0; x < gridWidth; x++)
         {
             for (int z = 0; z < gridLength; z++)
             {
-                gScore[x, z] = float.PositiveInfinity;
+                _astarGScore[x, z] = float.PositiveInfinity;
             }
         }
+        float[,] gScore = _astarGScore;
+        bool[,] closed = _astarClosed;
+        Vector2Int[,] cameFrom = _astarCameFrom;
+        bool[,] hasParent = _astarHasParent;
 
         var openHeap = new AStarMinHeap();
         gScore[start.x, start.y] = 0f;
@@ -1690,6 +1672,10 @@ public class CampusGrid2D : MonoBehaviour
         cellTypeGrid = new CellType[gridWidth, gridLength];
         cellFeatureUidGrid = new string[gridWidth, gridLength];
         cellFeatureNameGrid = new string[gridWidth, gridLength];
+        _astarGScore   = new float[gridWidth, gridLength];
+        _astarClosed   = new bool[gridWidth, gridLength];
+        _astarCameFrom = new Vector2Int[gridWidth, gridLength];
+        _astarHasParent = new bool[gridWidth, gridLength];
         int[,] cellPriorityGrid = new int[gridWidth, gridLength];
         featureAliasCellMap = new Dictionary<string, Vector2Int>(StringComparer.OrdinalIgnoreCase);
         featureAliasUidMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -2845,12 +2831,18 @@ public class CampusGrid2D : MonoBehaviour
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
+            var profileCache = new Dictionary<string, FeatureSpatialProfile>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (string token in members)
+            {
+                if (TryResolveFeatureSpatialIndex(token, out FeatureSpatialIndex idx))
+                    profileCache[token] = BuildSpatialProfileFromIndex(idx);
+            }
+
             members.Sort((a, b) =>
             {
-                FeatureSpatialIndex ia = TryResolveFeatureSpatialIndex(a, out FeatureSpatialIndex foundA) ? foundA : null;
-                FeatureSpatialIndex ib = TryResolveFeatureSpatialIndex(b, out FeatureSpatialIndex foundB) ? foundB : null;
-                FeatureSpatialProfile pa = ia != null ? BuildSpatialProfileFromIndex(ia) : null;
-                FeatureSpatialProfile pb = ib != null ? BuildSpatialProfileFromIndex(ib) : null;
+                profileCache.TryGetValue(a, out FeatureSpatialProfile pa);
+                profileCache.TryGetValue(b, out FeatureSpatialProfile pb);
                 if (pa == null && pb == null) return StringComparer.OrdinalIgnoreCase.Compare(a, b);
                 if (pa == null) return 1;
                 if (pb == null) return -1;

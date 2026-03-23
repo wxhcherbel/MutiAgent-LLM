@@ -276,7 +276,7 @@ public class AgentMotionExecutor : MonoBehaviour
     private IEnumerator DoPatrol(AtomicAction action)
     {
         float duration = action.duration > 0f ? action.duration : 10f;
-        float radius   = action.radius   > 0f ? action.radius   : 5f;
+        float radius   = ParseRadiusFromParams(action.actionParams, defaultRadius: 5f);
 
         Vector3 center = transform.position;
         if (campusGrid != null && !string.IsNullOrWhiteSpace(action.targetName) &&
@@ -427,6 +427,15 @@ public class AgentMotionExecutor : MonoBehaviour
     // ─────────────────────────────────────────────────────────────
     // 工具
     // ─────────────────────────────────────────────────────────────
+
+    /// <summary>从 actionParams 字符串中提取半径数值（如"环绕半径40米"→40f）。</summary>
+    private static float ParseRadiusFromParams(string actionParams, float defaultRadius)
+    {
+        if (string.IsNullOrWhiteSpace(actionParams)) return defaultRadius;
+        var m = System.Text.RegularExpressions.Regex.Match(actionParams, @"半径\s*(\d+(?:\.\d+)?)");
+        if (m.Success && float.TryParse(m.Groups[1].Value, out float r) && r > 0f) return r;
+        return defaultRadius;
+    }
 
     private Color GetTeamColor()
     {

@@ -51,8 +51,13 @@ body {
   font-size: 11px;
   white-space: nowrap;
 }
-.badge.ok  { border-color: var(--green);  color: var(--green); }
+.badge.ok  { border-color: var(--green);  color: var(--green); animation: badgePulse 2s ease-in-out infinite; }
 .badge.err { border-color: var(--red);    color: var(--red); }
+@keyframes badgePulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(63,185,80,0); }
+  50%      { box-shadow: 0 0 0 3px rgba(63,185,80,0.25); }
+}
+#tooltip { transition: border-color 0.15s; }
 .hdr-stat  { color: var(--muted); font-size: 11px; }
 #hdr-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 select {
@@ -516,6 +521,11 @@ textarea.ctrl-input { resize: vertical; min-height: 60px; }
       <canvas id="mapCanvas"></canvas>
       <div id="map-overlay">点击 Agent 选中 · 再次点击取消</div>
       <div id="tooltip"></div>
+      <div id="map-legend" style="position:absolute;top:8px;left:8px;background:rgba(13,17,23,0.82);border:1px solid #21262d;border-radius:4px;padding:6px 10px;font-size:10px;pointer-events:none;z-index:10">
+        <div style="color:#8b949e;margin-bottom:4px;font-weight:bold">地图图例</div>
+        <div style="display:flex;flex-direction:column;gap:2px" id="map-legend-body"></div>
+      </div>
+      <button id="map-reset-btn" onclick="zoomLevel=1;panX=0;panY=0" style="position:absolute;bottom:34px;right:8px;background:rgba(13,17,23,0.82);color:#8b949e;border:1px solid #21262d;border-radius:3px;padding:3px 8px;font-family:var(--font);font-size:10px;cursor:pointer;z-index:10">重置视图</button>
     </div>
   </div>
 
@@ -646,6 +656,18 @@ const CELL_COLORS = [
   '#1a2e1a', // 7 Green
 ];
 
+const FEATURE_STYLES = {
+  building: { fill:'rgba(100,140,180,0.25)', stroke:'#5588bb', strokeW:1.5, minR:4 },
+  road:     { fill:'rgba(180,160,80,0.15)',  stroke:'#aa9944', strokeW:1,   minR:3 },
+  water:    { fill:'rgba(30,100,200,0.30)',  stroke:'#3366cc', strokeW:1.5, minR:4 },
+  forest:   { fill:'rgba(40,140,60,0.25)',   stroke:'#3a8a40', strokeW:1.5, minR:4 },
+  green:    { fill:'rgba(60,160,80,0.20)',   stroke:'#44aa55', strokeW:1,   minR:3 },
+  parking:  { fill:'rgba(120,100,60,0.20)',  stroke:'#887744', strokeW:1,   minR:3 },
+  sports:   { fill:'rgba(200,120,40,0.20)',  stroke:'#cc7722', strokeW:1,   minR:3 },
+  bridge:   { fill:'rgba(200,180,100,0.25)',stroke:'#ccbb66', strokeW:1.5, minR:3 },
+  default:  { fill:'rgba(150,150,150,0.15)', stroke:'#888888', strokeW:1,   minR:3 },
+};
+
 const TAB_NAMES = ['agents','comms','llm','control','debug'];
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -681,6 +703,11 @@ let bgReady  = false;
 
 // Poll interval
 let pollInterval = 1000;
+
+// Zoom / Pan state
+let zoomLevel = 1.0;
+let panX = 0, panY = 0;
+let isPanning = false, panStartX = 0, panStartY = 0;
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Utilities
@@ -781,18 +808,27 @@ function buildBgCanvas() {
     }
   }
 
-  // Features
+  // Features - per-kind fill+stroke using FEATURE_STYLES
   for (const f of (mapMeta.features || [])) {
     const [cx, cy, sc] = worldToCanvas(f.x, f.z);
-    const r = Math.max(2, f.radius * sc);
+    const kind = (f.kind || 'default').toLowerCase();
+    const sty  = FEATURE_STYLES[kind] || FEATURE_STYLES.default;
+    const r    = Math.max(sty.minR, f.radius * sc);
     bgCtx.beginPath();
     bgCtx.arc(cx, cy, r, 0, Math.PI * 2);
-    bgCtx.strokeStyle = 'rgba(255,255,255,0.06)';
-    bgCtx.lineWidth = 1;
+    bgCtx.fillStyle = sty.fill;
+    bgCtx.fill();
+    bgCtx.strokeStyle = sty.stroke;
+    bgCtx.lineWidth = sty.strokeW;
     bgCtx.stroke();
   }
 
   bgReady = true;
+}
+
+// Screen (canvas element) coords → base (pre-zoom/pan) canvas coords
+function screenToBase(sx, sy) {
+  return [(sx - panX) / zoomLevel, (sy - panY) / zoomLevel];
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -813,11 +849,15 @@ function drawFrame() {
   const W = canvas.width, H = canvas.height;
   ctx.clearRect(0, 0, W, H);
 
+  // Apply zoom/pan transform
+  ctx.save();
+  ctx.setTransform(zoomLevel, 0, 0, zoomLevel, panX, panY);
+
   if (bgReady) {
     ctx.drawImage(bgCanvas, 0, 0);
   } else {
     ctx.fillStyle = '#0d1117';
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillRect(0, 0, W / zoomLevel, H / zoomLevel);
   }
 
   const now = performance.now() / 1000;
@@ -832,21 +872,21 @@ function drawFrame() {
       ctx.beginPath();
       ctx.arc(arc.x1, arc.y1, arc.broadcastR * p, 0, Math.PI * 2);
       ctx.strokeStyle = arc.color;
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 1.5 / zoomLevel;
       ctx.stroke();
     } else {
       ctx.beginPath();
       ctx.moveTo(arc.x1, arc.y1);
       ctx.lineTo(arc.x2, arc.y2);
       ctx.strokeStyle = arc.color;
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 1.5 / zoomLevel;
       ctx.stroke();
 
       // moving dot
       const dx = arc.x1 + (arc.x2 - arc.x1) * p;
       const dy = arc.y1 + (arc.y2 - arc.y1) * p;
       ctx.beginPath();
-      ctx.arc(dx, dy, 3, 0, Math.PI * 2);
+      ctx.arc(dx, dy, 3 / zoomLevel, 0, Math.PI * 2);
       ctx.fillStyle = arc.color;
       ctx.fill();
     }
@@ -865,8 +905,27 @@ function drawFrame() {
       else ctx.lineTo(cx, cy);
     }
     ctx.strokeStyle = col + '55';
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 1 / zoomLevel;
     ctx.stroke();
+  }
+
+  // Node labels for large features (building/water/bridge/sports)
+  const labelKinds = new Set(['building','water','bridge','sports']);
+  for (const f of (mapMeta.features || [])) {
+    const kind = (f.kind || '').toLowerCase();
+    if (!labelKinds.has(kind)) continue;
+    const [fcx, fcy, fsc] = worldToCanvas(f.x, f.z);
+    const rPx = f.radius * fsc;
+    if (rPx < 8) continue;
+    const fontSize = Math.max(8, Math.min(14, 9 * fsc / zoomLevel));
+    ctx.font = fontSize + 'px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(0,0,0,0.9)';
+    ctx.shadowBlur = 3 / zoomLevel;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(f.name, fcx, fcy);
+    ctx.shadowBlur = 0;
   }
 
   // Agents
@@ -874,10 +933,10 @@ function drawFrame() {
     const [cx, cy] = worldToCanvas(ag.position[0], ag.position[2]);
     const col = teamColor(ag.teamId);
     const isSel = ag.agentId === selectedId;
-    const r = isSel ? 7 : 5;
+    const r = (isSel ? 7 : 5) / zoomLevel;
 
     ctx.beginPath();
-    ctx.arc(cx, cy, r + 2, 0, Math.PI * 2);
+    ctx.arc(cx, cy, r + 2 / zoomLevel, 0, Math.PI * 2);
     ctx.fillStyle = col + '33';
     ctx.fill();
 
@@ -888,17 +947,72 @@ function drawFrame() {
 
     if (isSel) {
       ctx.beginPath();
-      ctx.arc(cx, cy, r + 4, 0, Math.PI * 2);
+      ctx.arc(cx, cy, r + 4 / zoomLevel, 0, Math.PI * 2);
       ctx.strokeStyle = col;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2 / zoomLevel;
       ctx.stroke();
+
+      // Perception range circle (dashed)
+      const percRange = ag.perceptionRange ?? 0;
+      if (percRange > 0) {
+        const [,, sc] = worldToCanvas(ag.position[0], ag.position[2]);
+        const percR = percRange * sc;
+        ctx.beginPath();
+        ctx.arc(cx, cy, percR, 0, Math.PI * 2);
+        ctx.strokeStyle = col + '88';
+        ctx.lineWidth = 1 / zoomLevel;
+        ctx.setLineDash([4 / zoomLevel, 4 / zoomLevel]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.font = Math.max(8, 10 / zoomLevel) + 'px monospace';
+        ctx.fillStyle = col + 'cc';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('r=' + percRange.toFixed(0) + 'm', cx + percR + 4 / zoomLevel, cy);
+      }
+
+      // Planned targets with dashed lines + diamond markers
+      const targets = ag.plannedTargets || [];
+      for (const tname of targets) {
+        const feat = (mapMeta.features || []).find(f => f.name === tname);
+        if (!feat) continue;
+        const [tx, ty] = worldToCanvas(feat.x, feat.z);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(tx, ty);
+        ctx.strokeStyle = col + '99';
+        ctx.lineWidth = 1.5 / zoomLevel;
+        ctx.setLineDash([6 / zoomLevel, 4 / zoomLevel]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        const ds = 5 / zoomLevel;
+        ctx.beginPath();
+        ctx.moveTo(tx, ty - ds);
+        ctx.lineTo(tx + ds, ty);
+        ctx.lineTo(tx, ty + ds);
+        ctx.lineTo(tx - ds, ty);
+        ctx.closePath();
+        ctx.fillStyle = col + 'cc';
+        ctx.fill();
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1 / zoomLevel;
+        ctx.stroke();
+      }
     }
 
     ctx.fillStyle = '#fff';
-    ctx.font = 'bold 8px monospace';
+    ctx.font = 'bold ' + Math.max(6, 8 / zoomLevel) + 'px monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(ag.agentId.slice(-2), cx, cy);
+  }
+
+  ctx.restore();
+
+  // Overlay: zoom percentage
+  const overlayEl = document.getElementById('map-overlay');
+  if (overlayEl) {
+    overlayEl.textContent = '点击 Agent 选中 · 再次点击取消  |  缩放: ' + Math.round(zoomLevel * 100) + '%';
   }
 }
 
@@ -906,8 +1020,10 @@ function drawFrame() {
 // Click / hover on canvas
 // ══════════════════════════════════════════════════════════════════════════════
 canvas.addEventListener('click', e => {
+  if (e.button !== 0) return;
   const rect = canvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+  const [mx, my] = screenToBase(sx, sy);
   let hit = null;
   for (const ag of agents) {
     const [cx, cy] = worldToCanvas(ag.position[0], ag.position[2]);
@@ -918,31 +1034,105 @@ canvas.addEventListener('click', e => {
 });
 
 canvas.addEventListener('mousemove', e => {
+  if (isPanning) {
+    panX += e.clientX - panStartX;
+    panY += e.clientY - panStartY;
+    panStartX = e.clientX;
+    panStartY = e.clientY;
+    return;
+  }
   const rect = canvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+  const [mx, my] = screenToBase(sx, sy);
   const tip = document.getElementById('tooltip');
   let hit = null;
+
+  // Agent hit detection (priority)
   for (const ag of agents) {
     const [cx, cy] = worldToCanvas(ag.position[0], ag.position[2]);
     if (Math.hypot(cx - mx, cy - my) < 12) { hit = ag; break; }
   }
+
   if (hit) {
+    canvas.style.cursor = 'pointer';
     tip.style.display = 'block';
-    tip.style.left = (mx + 14) + 'px';
-    tip.style.top  = (my - 10) + 'px';
+    tip.style.left = (sx + 14) + 'px';
+    tip.style.top  = (sy - 10) + 'px';
+    tip.style.borderLeft = '3px solid ' + teamColor(hit.teamId);
     tip.innerHTML = `<b style="color:${teamColor(hit.teamId)}">${escHtml(hit.agentId)}</b><br>
       Team ${hit.teamId} · ${escHtml(hit.role)}<br>
       ADM: <span style="color:var(--orange)">${escHtml(hit.admStatus)}</span><br>
       Plan: <span style="color:var(--blue)">${escHtml(hit.planState)}</span><br>
       Action: ${escHtml(hit.currentAction)} ${hit.currentTarget ? '→ ' + escHtml(hit.currentTarget) : ''}<br>
       Battery: ${(hit.battery * 100).toFixed(0)}%`;
+    return;
+  }
+
+  // Feature hover detection
+  let featHit = null;
+  for (const f of (mapMeta.features || [])) {
+    const [fcx, fcy, fsc] = worldToCanvas(f.x, f.z);
+    const r = Math.max((FEATURE_STYLES[f.kind] || FEATURE_STYLES.default).minR, f.radius * fsc);
+    if (Math.hypot(fcx - mx, fcy - my) <= r + 3) { featHit = f; break; }
+  }
+
+  if (featHit) {
+    const kind = (featHit.kind || 'default').toLowerCase();
+    const sty = FEATURE_STYLES[kind] || FEATURE_STYLES.default;
+    canvas.style.cursor = 'pointer';
+    tip.style.display = 'block';
+    tip.style.left = (sx + 14) + 'px';
+    tip.style.top  = (sy - 10) + 'px';
+    tip.style.borderLeft = '3px solid ' + sty.stroke;
+    tip.innerHTML = `<b style="color:${sty.stroke}">${escHtml(featHit.name)}</b><br>
+      类型: ${escHtml(featHit.kind)}<br>
+      坐标: (${featHit.x.toFixed(1)}, ${featHit.z.toFixed(1)})<br>
+      半径: ${featHit.radius.toFixed(1)} m`;
   } else {
+    canvas.style.cursor = 'crosshair';
     tip.style.display = 'none';
+    tip.style.borderLeft = '';
   }
 });
 canvas.addEventListener('mouseleave', () => {
   document.getElementById('tooltip').style.display = 'none';
+  isPanning = false;
+  canvas.style.cursor = 'crosshair';
 });
+
+// Zoom: mouse wheel
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+  const newZoom = Math.max(0.3, Math.min(8.0, zoomLevel * factor));
+  // Zoom centered on mouse position
+  panX = mx - (mx - panX) * (newZoom / zoomLevel);
+  panY = my - (my - panY) * (newZoom / zoomLevel);
+  zoomLevel = newZoom;
+}, { passive: false });
+
+// Pan: right/middle mouse button
+canvas.addEventListener('mousedown', e => {
+  if (e.button === 1 || e.button === 2) {
+    e.preventDefault();
+    isPanning = true;
+    panStartX = e.clientX;
+    panStartY = e.clientY;
+    canvas.style.cursor = 'grabbing';
+  }
+});
+
+document.addEventListener('mouseup', e => {
+  if (e.button === 1 || e.button === 2) {
+    isPanning = false;
+    canvas.style.cursor = 'crosshair';
+  }
+});
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Tab switching
@@ -1094,7 +1284,7 @@ function updateAgentCard(card, ag) {
       <span class="lbl">Action</span>
       <span class="val">${escHtml(ag.currentAction)}${ag.currentTarget ? ' → ' + escHtml(ag.currentTarget) : ''}</span>
     </div>
-    <div class="battery-bar"><div class="battery-fill" style="width:${(batt*100).toFixed(0)}%;background:${bc}"></div></div>
+    <div class="battery-bar" style="position:relative"><div class="battery-fill" style="width:${(batt*100).toFixed(0)}%;background:${bc}"></div><span style="position:absolute;right:4px;top:-1px;font-size:9px;color:${bc};line-height:1">${(batt*100).toFixed(0)}%</span></div>
     <button class="expand-btn" onclick="toggleDetails(this,'${escHtml(id)}');event.stopPropagation()">
       ${isExpanded ? '▲ 收起' : '▼ 详情'}
     </button>
@@ -1308,6 +1498,17 @@ function setStatus(el, msg, ok) {
 // ══════════════════════════════════════════════════════════════════════════════
 // Debug panel
 // ══════════════════════════════════════════════════════════════════════════════
+function statusColor(s) {
+  if (!s) return 'var(--muted)';
+  const l = s.toLowerCase();
+  if (l === 'idle' || l === 'done') return 'var(--green)';
+  if (l === 'active' || l === 'running') return 'var(--blue)';
+  if (['thinking','interpreting','negotiating','replanning',
+       'parsing','slotgen','slotpick','stepgen','grouping'].includes(l)) return 'var(--orange)';
+  if (l === 'failed' || l === 'error') return 'var(--red)';
+  return 'var(--muted)';
+}
+
 function renderDebug() {
   const pane = document.getElementById('tab-debug');
   const teams = {};
@@ -1327,33 +1528,105 @@ function renderDebug() {
     const s = ag.planState || 'N/A';
     planStates[s] = (planStates[s] || 0) + 1;
   }
-  const planRows = Object.entries(planStates).map(([s, cnt]) =>
-    `<div class="debug-row"><span class="debug-lbl">${escHtml(s)}</span><span>${cnt}</span></div>`).join('');
+  const totalAgents = agents.length || 1;
+  const planRows = Object.entries(planStates).map(([s, cnt]) => {
+    const pct = (cnt / totalAgents * 100).toFixed(0);
+    return `<div class="bar-container">
+      <div class="bar-label">
+        <span style="color:${statusColor(s)}">${escHtml(s)}</span>
+        <span>${cnt} (${pct}%)</span>
+      </div>
+      <div class="bar"><div class="bar-fill" style="width:${pct}%;background:${statusColor(s)}"></div></div>
+    </div>`;
+  }).join('');
+
+  // ADM state distribution
+  const admStates = {};
+  for (const ag of agents) {
+    const s = ag.admStatus || 'N/A';
+    admStates[s] = (admStates[s] || 0) + 1;
+  }
+  const admRows = Object.entries(admStates).map(([s, cnt]) => {
+    const pct = (cnt / totalAgents * 100).toFixed(0);
+    return `<div class="bar-container">
+      <div class="bar-label">
+        <span style="color:${statusColor(s)}">${escHtml(s)}</span>
+        <span>${cnt} (${pct}%)</span>
+      </div>
+      <div class="bar"><div class="bar-fill" style="width:${pct}%;background:${statusColor(s)}"></div></div>
+    </div>`;
+  }).join('');
+
+  // Current action distribution
+  const actionCounts = {};
+  for (const ag of agents) {
+    const a = ag.currentAction || 'None';
+    actionCounts[a] = (actionCounts[a] || 0) + 1;
+  }
+  const actionRows = Object.entries(actionCounts).map(([a, cnt]) =>
+    `<div class="debug-row"><span class="debug-lbl">${escHtml(a)}</span><span>${cnt}</span></div>`
+  ).join('');
+
+  // Map node statistics by kind
+  const kindCounts = {};
+  for (const f of (mapMeta.features || [])) {
+    const k = f.kind || 'unknown';
+    kindCounts[k] = (kindCounts[k] || 0) + 1;
+  }
+  const kindRows = Object.entries(kindCounts).map(([k, cnt]) => {
+    const sty = FEATURE_STYLES[k.toLowerCase()] || FEATURE_STYLES.default;
+    return `<div class="debug-row">
+      <span class="debug-lbl" style="color:${sty.stroke}">${escHtml(k)}</span>
+      <span>${cnt}</span>
+    </div>`;
+  }).join('');
 
   const llmSendCount = llmLogs.filter(e => e.type === 'send').length;
   const llmRecvCount = llmLogs.filter(e => e.type === 'receive').length;
   const llmErrCount  = llmLogs.filter(e => e.type === 'error').length;
 
+  const pingColor = pingMs < 100 ? 'var(--green)' : pingMs < 300 ? 'var(--orange)' : 'var(--red)';
+
+  // Recent events per agent
+  const recentEventsHtml = agents.filter(ag => ag.recentEvents && ag.recentEvents.length > 0).map(ag => {
+    const col = teamColor(ag.teamId);
+    const evts = ag.recentEvents.slice(-3).map(ev => `<div style="color:var(--muted);font-size:10px;margin:1px 0">${escHtml(ev)}</div>`).join('');
+    return `<div style="margin-bottom:6px"><span style="color:${col};font-size:10px">${escHtml(ag.agentId)}</span>${evts}</div>`;
+  }).join('');
+
   pane.innerHTML = `
     <div class="debug-section">
       <div class="debug-title">连接状态</div>
-      <div class="debug-row"><span class="debug-lbl">延迟</span><span>${pingMs} ms</span></div>
+      <div class="debug-row"><span class="debug-lbl">延迟</span><span style="color:${pingColor}">${pingMs} ms</span></div>
       <div class="debug-row"><span class="debug-lbl">Agent 总数</span><span>${agents.length}</span></div>
       <div class="debug-row"><span class="debug-lbl">消息总数</span><span>${messages.length}</span></div>
+      <div class="debug-row"><span class="debug-lbl">缩放</span><span>${Math.round(zoomLevel*100)}%</span></div>
     </div>
     <div class="debug-section">
       <div class="debug-title">Team 分布</div>
       ${teamRows || '<div class="debug-row"><span class="debug-lbl">暂无数据</span></div>'}
     </div>
     <div class="debug-section">
+      <div class="debug-title">ADM 状态分布</div>
+      ${admRows || '<div class="debug-row"><span class="debug-lbl">暂无数据</span></div>'}
+    </div>
+    <div class="debug-section">
       <div class="debug-title">Plan 状态分布</div>
       ${planRows || '<div class="debug-row"><span class="debug-lbl">暂无数据</span></div>'}
+    </div>
+    <div class="debug-section">
+      <div class="debug-title">当前动作分布</div>
+      ${actionRows || '<div class="debug-row"><span class="debug-lbl">暂无数据</span></div>'}
     </div>
     <div class="debug-section">
       <div class="debug-title">LLM 请求统计</div>
       <div class="debug-row"><span class="debug-lbl">Send</span><span style="color:var(--blue)">${llmSendCount}</span></div>
       <div class="debug-row"><span class="debug-lbl">Receive</span><span style="color:var(--green)">${llmRecvCount}</span></div>
       <div class="debug-row"><span class="debug-lbl">Error</span><span style="color:var(--red)">${llmErrCount}</span></div>
+    </div>
+    <div class="debug-section">
+      <div class="debug-title">地图节点统计</div>
+      ${kindRows || '<div class="debug-row"><span class="debug-lbl">暂无地图数据</span></div>'}
     </div>
     <div class="debug-section">
       <div class="debug-title">各 Agent 电量</div>
@@ -1369,7 +1642,12 @@ function renderDebug() {
           <div class="bar"><div class="bar-fill" style="width:${(batt*100).toFixed(0)}%;background:${bc}"></div></div>
         </div>`;
       }).join('')}
-    </div>`;
+    </div>
+    ${recentEventsHtml ? `<div class="debug-section">
+      <div class="debug-title">近期事件</div>
+      ${recentEventsHtml}
+    </div>` : ''}
+  `;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1392,7 +1670,10 @@ async function poll() {
     document.getElementById('conn-badge').className   = 'badge ok';
     document.getElementById('hdr-agents').textContent = `${agents.length} Agents`;
     document.getElementById('hdr-msgs').textContent   = `${messages.length} 消息`;
-    document.getElementById('hdr-ping').textContent   = `${pingMs} ms`;
+    const pingColor = pingMs < 100 ? 'var(--green)' : pingMs < 300 ? 'var(--orange)' : 'var(--red)';
+    const pingEl = document.getElementById('hdr-ping');
+    pingEl.textContent = pingMs + ' ms';
+    pingEl.style.color = pingColor;
 
     renderAgents();
     renderComms();
@@ -1415,9 +1696,24 @@ async function fetchMapData() {
     if (m && m.cellSize) { mapMeta = m; }
     const g = await gridRes.json();
     if (g && g.cells) { gridmap = g; bgReady = false; buildBgCanvas(); }
+    // Build map legend
+    buildMapLegend();
   } catch(e) {
     console.warn('fetchMapData failed', e);
   }
+}
+
+function buildMapLegend() {
+  const body = document.getElementById('map-legend-body');
+  if (!body) return;
+  const kinds = [...new Set((mapMeta.features || []).map(f => (f.kind||'').toLowerCase()))].filter(Boolean);
+  body.innerHTML = kinds.map(k => {
+    const sty = FEATURE_STYLES[k] || FEATURE_STYLES.default;
+    return `<div style="display:flex;align-items:center;gap:5px">
+      <div style="width:10px;height:10px;border-radius:50%;background:${sty.fill};border:1.5px solid ${sty.stroke};flex-shrink:0"></div>
+      <span style="color:${sty.stroke}">${k}</span>
+    </div>`;
+  }).join('');
 }
 
 function changeInterval(v) {

@@ -9,20 +9,6 @@ using Newtonsoft.Json;
 using System.Diagnostics;
 using Debug = UnityEngine.Debug;
 
-// ─── 向后兼容类型(MemoryModule / IntelligentAgent / MLAgentsController 仍引用) ───
-
-[Serializable]
-public class MissionAssignment
-{
-    public string missionId;
-    public string scenarioId;
-    public string teamId;
-    public string missionDescription;
-    public string coordinatorId;
-    public MissionRole[] roles;
-    public int requiredAgentCount;
-}
-
 [Serializable]
 public class MissionRole
 {
@@ -216,15 +202,25 @@ public class PlanningModule : MonoBehaviour
             "4. desc 覆盖该成员的完整任务序列(含途径点 + 全部动作),不得遗漏。\n" +
             "5. 若多个成员 role 相同,每个 desc 必须体现各自的具体分工(不同区域/路径/目标),不得完全一致。\n" +
             "6. doneCond:完成条件,如\"限制时间\",没有时填 \" \"。\n" +
-            "7. coordinationConstraint:协同约束,如\"保持前探-侧护-后卫队形\"。\n" +
-            "示例(两个无人机从a出发从不同路径前往b巡逻一周,一个无人机负责通信中继):\n" +
+            "7. desc 定义：该成员完成的具体任务，包含明确地点、动作和目标序列，只描述本成员自己的行动，不包含与队友的协同关系。\n" +
+            "8. coordinationConstraints 是数组，每条包含：\n" +
+            "   - trigger（约束生效时机描述，供人阅读，如\"出发阶段\"）\n" +
+            "   - slotRef（约束涉及的另一个槽 ID，如\"s1\"；若无则填\"\"）\n" +
+            "   - constraint（约束内容）\n" +
+            "   如角色独立执行，此字段必须为空数组 []，严禁编造。\n" +
+            "9. 禁止将任务行动内容写入 coordinationConstraints；该字段专门描述与队友/敌方的协同关系，不得重复 desc 中的行动内容。\n" +
+            "示例(两个无人机从a出发从不同路径前往b巡逻,一个无人机负责通信中继):\n" +
             "[\n" +
-            "  {\"slotId\":\"s0\",\"role\":\"Scout\",\"desc\":\"从a出发前往b,到达后巡逻一周\",\"doneCond\":\" \",\"coordinationConstraint\":\"和队友路径不同 \"},\n" +
-            "  {\"slotId\":\"s1\",\"role\":\"Scout\",\"desc\":\"从a出发前往b,到达后巡逻一周\",\"doneCond\":\" \",\"coordinationConstraint\":\" 和队友路径不同 \"},\n" +
-            "  {\"slotId\":\"s2\",\"role\":\"Supporter\",\"desc\":\"飞至高空维持通信中继\",\"doneCond\":\" \",\"coordinationConstraint\":\" \"}\n" +
-            "]";
+            "  {\"slotId\":\"s0\",\"role\":\"Scout\",\"desc\":\"从a出发沿东路飞往b,到达后顺时针巡逻一周\"," +
+            "\"doneCond\":\"巡逻完成\",\"coordinationConstraints\":[{\"trigger\":\"出发阶段\",\"slotRef\":\"s1\",\"constraint\":\"与s1选择不同路径(东路vs西路)\"},{\"trigger\":\"到达b后\",\"slotRef\":\"s1\",\"constraint\":\"与s1保持间隔不小于50米\"}]},\n" +
+            "  {\"slotId\":\"s1\",\"role\":\"Scout\",\"desc\":\"从a出发沿西路飞往b,到达后逆时针巡逻一周\"," +
+            "\"doneCond\":\"巡逻完成\",\"coordinationConstraints\":[{\"trigger\":\"出发阶段\",\"slotRef\":\"s0\",\"constraint\":\"与s0选择不同路径(西路vs东路)\"},{\"trigger\":\"到达b后\",\"slotRef\":\"s0\",\"constraint\":\"与s0保持间隔不小于50米\"}]},\n" +
+            "  {\"slotId\":\"s2\",\"role\":\"Supporter\",\"desc\":\"飞至100米高空维持通信中继\"," +
+            "\"doneCond\":\"任务结束\",\"coordinationConstraints\":[]}\n" +
+            "]\n" +
+            "注意：s2 的 coordinationConstraints 为空数组，因为通信中继角色独立执行，不与 s0/s1 存在协同约束。";
         string llmResult = null;
-        yield return StartCoroutine(llm.SendRequest(prompt, r => llmResult = r, maxTokens: 500));
+        yield return StartCoroutine(llm.SendRequest(prompt, r => llmResult = r, maxTokens: 1000));
 
         if (string.IsNullOrWhiteSpace(llmResult))
         {
@@ -238,7 +234,7 @@ public class PlanningModule : MonoBehaviour
         try
         {
             generatedSlots = JsonConvert.DeserializeObject<PlanSlot[]>(ExtractJson(llmResult));
-            Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] LLM#2 生成槽位: {string.Join(", ", generatedSlots.Select(s => s.slotId + ":" + s.role + ":" + s.desc + ":" + s.coordinationConstraint))}");
+            Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] LLM#2 生成槽位: {string.Join(", ", generatedSlots.Select(s => s.slotId + ":" + s.role + ":" + s.desc + ":" + JsonConvert.SerializeObject(s.coordinationConstraints)))}");
         }
         catch (Exception e)
         {
@@ -368,11 +364,12 @@ public class PlanningModule : MonoBehaviour
         Vector3 pos   = dynState != null ? dynState.Position : transform.position;
         float battery = dynState != null ? dynState.BatteryLevel : 100f;
 
+        string constraintsJson = JsonConvert.SerializeObject(confirmedSlot.coordinationConstraints ?? new StepConstraint[0]);
         string prompt =
             "你是无人机任务拆解器。将计划拆成 JSON 步骤数组。\n\n" +
             $"计划:{confirmedSlot.desc}\n" +
             $"角色:{confirmedSlot.role}\n" +
-            $"协同约束:{confirmedSlot.coordinationConstraint}\n" +
+            $"步骤级协同约束列表:{constraintsJson}\n" +
             $"完成条件:{confirmedSlot.doneCond}\n" +
             $"当前位置:{pos},电量:{battery:F0}%\n\n" +
             "要求:\n" +
@@ -381,23 +378,26 @@ public class PlanningModule : MonoBehaviour
             "3. text 只能是意图动作(移动/巡逻/侦查/等待等)。\n" +
             "4. desc 只含一个动作时,输出 1 步。\n" +
             "5. doneCond:完成条件,如\"限制时间\",没有时填 \" \"。\n" +
-            "6. stepId 格式:step_1、step_2 ...\n\n" +
-            "7. constraint:协同约束,如\"保持前探-侧护-后卫队形\",没有时填 \" \"。\n" +
-            "示例A(移动+巡逻)desc:\"经A楼接近艺术中心,到达后绕艺术中心巡逻一周\"\n" +
+            "6. stepId 格式:step_1、step_2 ...\n" +
+            "7. constraints 字段：从协同约束列表中，判断哪些约束适用于本步骤，将其 constraint 文本放入数组；不适用则填 []。\n" +
+            "8. 每条约束只归属最合适的一个步骤，禁止重复绑定。\n\n" +
+            "示例A(移动+巡逻，含协同约束):\n" +
+            "desc:\"从a出发沿东路飞往b,到达后顺时针巡逻一周\"\n" +
+            "协同约束列表:[{\"trigger\":\"出发阶段\",\"slotRef\":\"s1\",\"constraint\":\"与s1选择不同路径(东路vs西路)\"},{\"trigger\":\"到达b后\",\"slotRef\":\"s1\",\"constraint\":\"与s1保持间隔不小于50米\"}]\n" +
             "[\n" +
-            "  {\"stepId\": \"step_1\", \"text\": \"飞往A楼\", \"doneCond\": \" \",\"constraint\": \" \"},\n" +
-            "  {\"stepId\": \"step_2\", \"text\": \"飞往艺术中心\", \"doneCond\": \" \",\"constraint\": \" \"},\n" +
-            "  {\"stepId\": \"step_3\", \"text\": \"绕艺术中心巡逻一周\", \"doneCond\": \" \",\"constraint\": \" \"}\n" +
+            "  {\"stepId\":\"step_1\",\"text\":\"从a出发沿东路飞往b\",\"doneCond\":\" \",\"constraints\":[\"与s1选择不同路径(东路vs西路)\"]},\n" +
+            "  {\"stepId\":\"step_2\",\"text\":\"顺时针巡逻一周\",\"doneCond\":\"巡逻完成\",\"constraints\":[\"与s1保持间隔不小于50米\"]}\n" +
             "]\n\n" +
-            "示例B(侦查+回传)desc:\"侦查东区目标,发现后回传坐标\"\n" +
+            "示例B(独立任务，无协同约束):\n" +
+            "desc:\"飞至100米高空维持通信中继\"\n" +
+            "协同约束列表:[]\n" +
             "[\n" +
-            "  {\"stepId\": \"step_1\", \"text\": \"飞往东区\", \"doneCond\": \" \",\"constraint\": \" \"},\n" +
-            "  {\"stepId\": \"step_2\", \"text\": \"侦查目标\", \"doneCond\": \" \",\"constraint\": \" \"},\n" +
-            "  {\"stepId\": \"step_3\", \"text\": \"回传目标坐标\", \"doneCond\": \" \",\"constraint\": \" \"}\n" +
+            "  {\"stepId\": \"step_1\", \"text\": \"飞至100米高空\", \"doneCond\": \" \",\"constraints\": []},\n" +
+            "  {\"stepId\": \"step_2\", \"text\": \"维持通信中继\", \"doneCond\": \"任务结束\",\"constraints\": []}\n" +
             "]\n\n";
 
         string llmResult = null;
-        yield return StartCoroutine(llm.SendRequest(prompt, r => llmResult = r, maxTokens: 600));
+        yield return StartCoroutine(llm.SendRequest(prompt, r => llmResult = r, maxTokens: 800));
 
         if (string.IsNullOrWhiteSpace(llmResult))
         {
@@ -433,6 +433,8 @@ public class PlanningModule : MonoBehaviour
 
         Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] {props.AgentID} 计划就绪,共 {steps.Length} 步");
         SetState(PlanningState.Active);
+        if (parsed != null && parsed.timeLimit > 0f)
+            StartCoroutine(TimeLimitCoroutine(parsed.timeLimit));
     }
 
     // ─────────────────────────────────────────────────────────
@@ -754,25 +756,31 @@ public class PlanningModule : MonoBehaviour
         }
     }
 
-    // ─────────────────────────────────────────────────────────
-    // 向后兼容接口(旧模块仍调用)
-    // ─────────────────────────────────────────────────────────
-
-    /// <summary>返回当前任务简要信息(供 MLAgentsController 使用)。</summary>
-    public MissionAssignment currentMission => parsed == null ? null : new MissionAssignment
+    /// <summary>由 ADM 在重规划次数耗尽时调用，通知规划层步骤失败。</summary>
+    public void OnStepFailed(string stepId, string reason)
     {
-        missionId   = parsed.msnId,
-        scenarioId  = string.Empty,
-        teamId      = myGroup?.groupId ?? string.Empty
-    };
+        Debug.LogWarning($"[Planning] 步骤 {stepId} 失败：{reason}");
+        if (agentPlan == null) return;
+        // 跳过当前失败步骤，尝试推进到下一步
+        agentPlan.curIdx++;
+        if (agentPlan.curIdx >= agentPlan.steps.Length)
+        {
+            state = PlanningState.Failed;
+            busy = false;
+            Debug.LogError($"[Planning] 任务 {agentPlan.msnId} 所有步骤失败或完成，终止。");
+        }
+    }
 
-    /// <summary>接收任务分配(存根,供旧链路兼容)。</summary>
-    public void ReceiveMissionAssignment(
-        MissionAssignment mission,
-        object slot,
-        object directive,
-        object extra) { }
-
+    private IEnumerator TimeLimitCoroutine(float seconds)
+    {
+        yield return new WaitForSeconds(seconds);
+        if (state == PlanningState.Active)
+        {
+            Debug.LogWarning($"[Planning] 任务 {parsed?.msnId} 时间限制 {seconds}s 到达，强制终止。");
+            state = PlanningState.Failed;
+            busy = false;
+        }
+    }
     // ─────────────────────────────────────────────────────────
     // 工具方法
     // ─────────────────────────────────────────────────────────

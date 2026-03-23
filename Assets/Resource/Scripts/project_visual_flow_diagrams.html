@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UnityLLM Visual Flow Diagrams</title>
+<style>
+  :root {
+    --bg: #f4efe6;
+    --paper: #fffdf9;
+    --ink: #163238;
+    --muted: #5f7278;
+    --line: #d6cec1;
+    --teal: #0f766e;
+    --teal-soft: #d8f3ef;
+    --orange: #d97706;
+    --orange-soft: #ffedd5;
+    --red: #b42318;
+    --red-soft: #fee4e2;
+    --blue: #155eef;
+    --blue-soft: #dbe8ff;
+    --green: #027a48;
+    --green-soft: #dff7e8;
+    --slate: #475467;
+    --slate-soft: #eef2f6;
+    --shadow: 0 18px 40px rgba(22, 50, 56, 0.09);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    color: var(--ink);
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background:
+      radial-gradient(circle at top right, rgba(21, 94, 239, 0.08), transparent 25%),
+      radial-gradient(circle at top left, rgba(15, 118, 110, 0.08), transparent 22%),
+      linear-gradient(180deg, #f9f4ea 0%, #f1eadf 100%);
+  }
+
+  .wrap {
+    max-width: 1480px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+
+  header {
+    margin-bottom: 20px;
+    padding: 24px 28px;
+    background: rgba(255, 253, 249, 0.88);
+    border: 1px solid rgba(214, 206, 193, 0.9);
+    border-radius: 24px;
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(8px);
+  }
+
+  h1, h2, h3 {
+    margin: 0;
+    line-height: 1.2;
+  }
+
+  h1 {
+    font-size: 34px;
+    letter-spacing: 0.02em;
+  }
+
+  h2 {
+    font-size: 24px;
+    margin-bottom: 14px;
+  }
+
+  h3 {
+    font-size: 17px;
+    margin-bottom: 10px;
+  }
+
+  .sub {
+    margin-top: 10px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 16px;
+  }
+
+  .chip {
+    padding: 7px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    border: 1px solid var(--line);
+    background: #fff;
+  }
+
+  .chip.teal { background: var(--teal-soft); color: var(--teal); }
+  .chip.orange { background: var(--orange-soft); color: var(--orange); }
+  .chip.blue { background: var(--blue-soft); color: var(--blue); }
+  .chip.green { background: var(--green-soft); color: var(--green); }
+
+  nav {
+    position: sticky;
+    top: 10px;
+    z-index: 10;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 18px;
+    padding: 12px;
+    background: rgba(255, 253, 249, 0.88);
+    border: 1px solid rgba(214, 206, 193, 0.9);
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+  }
+
+  nav a {
+    text-decoration: none;
+    color: var(--teal);
+    font-size: 13px;
+    font-weight: 700;
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: var(--teal-soft);
+  }
+
+  section {
+    margin-bottom: 22px;
+    padding: 20px;
+    background: rgba(255, 253, 249, 0.9);
+    border: 1px solid rgba(214, 206, 193, 0.9);
+    border-radius: 24px;
+    box-shadow: var(--shadow);
+  }
+
+  .grid {
+    display: grid;
+    gap: 16px;
+  }
+
+  .grid-2 {
+    grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  }
+
+  .grid-3 {
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  }
+
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    background: var(--paper);
+    padding: 16px;
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    background: #fff;
+    border: 1px solid var(--line);
+  }
+
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+
+  .d-teal { background: var(--teal); }
+  .d-orange { background: var(--orange); }
+  .d-red { background: var(--red); }
+  .d-blue { background: var(--blue); }
+  .d-green { background: var(--green); }
+  .d-slate { background: var(--slate); }
+
+  svg {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+
+  .svg-panel {
+    padding: 12px;
+    border-radius: 18px;
+    border: 1px solid var(--line);
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.8), rgba(244,239,230,0.55));
+  }
+
+  .lane-board {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(180px, 1fr));
+    gap: 12px;
+    margin-top: 10px;
+  }
+
+  .lane {
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: var(--paper);
+    overflow: hidden;
+  }
+
+  .lane .title {
+    padding: 10px 12px;
+    font-size: 13px;
+    font-weight: 800;
+    color: #fff;
+  }
+
+  .lane .body {
+    padding: 12px;
+    display: grid;
+    gap: 10px;
+    min-height: 240px;
+  }
+
+  .title.teal { background: var(--teal); }
+  .title.orange { background: var(--orange); }
+  .title.blue { background: var(--blue); }
+  .title.green { background: var(--green); }
+  .title.slate { background: var(--slate); }
+
+  .node {
+    position: relative;
+    padding: 10px 12px;
+    border-radius: 14px;
+    border: 1px solid var(--line);
+    background: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    min-height: 56px;
+    display: grid;
+    align-content: center;
+  }
+
+  .node small {
+    display: block;
+    margin-top: 4px;
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 11px;
+  }
+
+  .node.teal { background: var(--teal-soft); }
+  .node.orange { background: var(--orange-soft); }
+  .node.blue { background: var(--blue-soft); }
+  .node.green { background: var(--green-soft); }
+  .node.red { background: var(--red-soft); }
+  .node.slate { background: var(--slate-soft); }
+
+  .schema {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 12px;
+  }
+
+  .schema-card {
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    overflow: hidden;
+    background: var(--paper);
+  }
+
+  .schema-card .hd {
+    padding: 12px 14px;
+    color: #fff;
+    font-weight: 800;
+    font-size: 14px;
+  }
+
+  .schema-card .bd {
+    padding: 12px 14px;
+    display: grid;
+    gap: 8px;
+  }
+
+  .kv {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: 8px;
+    align-items: start;
+    padding: 8px 10px;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.84);
+    border: 1px solid rgba(214,206,193,0.75);
+    font-size: 12px;
+  }
+
+  .kv b { color: var(--ink); }
+  .kv span { color: var(--muted); }
+
+  .tiny {
+    margin-top: 10px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .pulse {
+    animation: pulse 2.6s infinite;
+  }
+
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(21,94,239,0.24); }
+    70% { box-shadow: 0 0 0 14px rgba(21,94,239,0); }
+    100% { box-shadow: 0 0 0 0 rgba(21,94,239,0); }
+  }
+
+  @media (max-width: 1100px) {
+    .lane-board {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>UnityLLM 图板版流程图与架构图</h1>
+    <div class="sub">主流程图 / 架构图 / 黑板设计图 / 冲突协商图 / 状态图</div>
+    <div class="chips">
+      <span class="chip teal">图为主</span>
+      <span class="chip blue">重点放大 ActionDecisionModule</span>
+      <span class="chip orange">黑板同步与冲突协商单独拆图</span>
+      <span class="chip green">尽量少长文</span>
+    </div>
+  </header>
+
+  <nav>
+    <a href="#arch">总架构</a>
+    <a href="#main">主任务链</a>
+    <a href="#adm">动作决策</a>
+    <a href="#board">黑板设计</a>
+    <a href="#sync">黑板同步环</a>
+    <a href="#conflict">冲突协商</a>
+    <a href="#state">状态图</a>
+    <a href="#schema">黑板字段</a>
+  </nav>
+
+  <section id="arch">
+    <h2>总架构图</h2>
+    <div class="svg-panel">
+      <svg viewBox="0 0 1400 640" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arrowA" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+            <path d="M0,0 L12,6 L0,12 z" fill="#5f7278"/>
+          </marker>
+          <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#163238" flood-opacity="0.10"/>
+          </filter>
+        </defs>
+
+        <rect x="28" y="28" width="1344" height="584" rx="30" fill="#fffdf9" stroke="#d6cec1"/>
+
+        <rect x="60" y="70" width="270" height="120" rx="22" fill="#d8f3ef" stroke="#0f766e" filter="url(#softShadow)"/>
+        <text x="195" y="112" text-anchor="middle" font-size="24" font-weight="800" fill="#0f766e">任务入口层</text>
+        <text x="195" y="148" text-anchor="middle" font-size="17" font-weight="700" fill="#163238">AgentSelectionManager</text>
+        <text x="195" y="174" text-anchor="middle" font-size="17" font-weight="700" fill="#163238">dashboard /api/task</text>
+
+        <rect x="380" y="55" width="310" height="150" rx="24" fill="#dbe8ff" stroke="#155eef" filter="url(#softShadow)"/>
+        <text x="535" y="96" text-anchor="middle" font-size="26" font-weight="800" fill="#155eef">任务规划层</text>
+        <text x="535" y="132" text-anchor="middle" font-size="18" font-weight="700" fill="#163238">PlanningModule</text>
+        <text x="535" y="160" text-anchor="middle" font-size="15" font-weight="700" fill="#5f7278">LLM#1 解析任务</text>
+        <text x="535" y="183" text-anchor="middle" font-size="15" font-weight="700" fill="#5f7278">LLM#2 生成槽位</text>
+        <text x="535" y="206" text-anchor="middle" font-size="15" font-weight="700" fill="#5f7278">LLM#3 选槽 / LLM#4 拆步骤</text>
+
+        <rect x="738" y="55" width="286" height="150" rx="24" fill="#ffedd5" stroke="#d97706" filter="url(#softShadow)"/>
+        <text x="881" y="96" text-anchor="middle" font-size="26" font-weight="800" fill="#d97706">通信协商层</text>
+        <text x="881" y="132" text-anchor="middle" font-size="18" font-weight="700" fill="#163238">CommunicationModule</text>
+        <text x="881" y="160" text-anchor="middle" font-size="18" font-weight="700" fill="#163238">CommunicationManager</text>
+        <text x="881" y="190" text-anchor="middle" font-size="15" font-weight="700" fill="#5f7278">GroupBootstrap / Slot* / BoardUpdate</text>
+
+        <rect x="1080" y="55" width="252" height="150" rx="24" fill="#eef2f6" stroke="#475467" filter="url(#softShadow)"/>
+        <text x="1206" y="96" text-anchor="middle" font-size="26" font-weight="800" fill="#475467">LLM 接口层</text>
+        <text x="1206" y="136" text-anchor="middle" font-size="18" font-weight="700" fill="#163238">LLMInterface</text>
+        <text x="1206" y="165" text-anchor="middle" font-size="15" font-weight="700" fill="#5f7278">SendRequest / SetModel</text>
+        <text x="1206" y="190" text-anchor="middle" font-size="15" font-weight="700" fill="#5f7278">日志采样 -> dashboard</text>
+
+        <rect x="182" y="278" width="330" height="170" rx="24" fill="#dbe8ff" stroke="#155eef" filter="url(#softShadow)"/>
+        <text x="347" y="322" text-anchor="middle" font-size="26" font-weight="800" fill="#155eef">动作决策层</text>
+        <text x="347" y="360" text-anchor="middle" font-size="20" font-weight="800" fill="#163238">ActionDecisionModule</text>
+        <text x="347" y="392" text-anchor="middle" font-size="15" font-weight="700" fill="#5f7278">RunLLMA -> AtomicAction[]</text>
+        <text x="347" y="416" text-anchor="middle" font-size="15" font-weight="700" fill="#5f7278">BroadcastContextUpdate</text>
+        <text x="347" y="440" text-anchor="middle" font-size="15" font-weight="700" fill="#5f7278">RunLLMB 重规划</text>
+
+        <rect x="560" y="278" width="310" height="170" rx="24" fill="#dff7e8" stroke="#027a48" filter="url(#softShadow)"/>
+        <text x="715" y="322" text-anchor="middle" font-size="26" font-weight="800" fill="#027a48">执行层</text>
+        <text x="715" y="360" text-anchor="middle" font-size="20" font-weight="800" fill="#163238">AgentMotionExecutor</text>
+        <text x="715" y="392" text-anchor="middle" font-size="15" font-weight="700" fill="#5f7278">MoveTo / Observe / Wait</text>
+        <text x="715" y="416" text-anchor="middle" font-size="15" font-weight="700" fill="#5f7278">Formation / Broadcast / Evade</text>
+        <text x="715" y="440" text-anchor="middle" font-size="15" font-weight="700" fill="#5f7278">完成后 -> CompleteCurrentAction()</text>
+
+        <rect x="918" y="278" width="210" height="170" rx="24" fill="#d8f3ef" stroke="#0f766e" filter="url(#softShadow)"/>
+        <text x="1023" y="322" text-anchor="middle" font-size="26" font-weight="800" fill="#0f766e">感知层</text>
+        <text x="1023" y="360" text-anchor="middle" font-size="18" font-weight="700" fill="#163238">PerceptionModule</text>
+        <text x="1023" y="392" text-anchor="middle" font-size="15" font-weight="700" fill="#5f7278">NearbyAgents</text>
+        <text x="1023" y="416" text-anchor="middle" font-size="15" font-weight="700" fill="#5f7278">DetectedSmallNodes</text>
+        <text x="1023" y="440" text-anchor="middle" font-size="15" font-weight="700" fill="#5f7278">OnPerceptionEvent()</text>
+
+        <rect x="1180" y="278" width="150" height="170" rx="24" fill="#fff1f3" stroke="#b42318" filter="url(#softShadow)"/>
+        <text x="1255" y="322" text-anchor="middle" font-size="24" font-weight="800" fill="#b42318">监控层</text>
+        <text x="1255" y="360" text-anchor="middle" font-size="16" font-weight="700" fill="#163238">AgentStateServer</text>
+        <text x="1255" y="388" text-anchor="middle" font-size="16" font-weight="700" fill="#163238">dashboard.html</text>
+        <text x="1255" y="416" text-anchor="middle" font-size="14" font-weight="700" fill="#5f7278">/api/state</text>
+
+        <rect x="280" y="498" width="300" height="82" rx="22" fill="#eef2f6" stroke="#475467" filter="url(#softShadow)"/>
+        <text x="430" y="530" text-anchor="middle" font-size="22" font-weight="800" fill="#475467">地图底座</text>
+        <text x="430" y="558" text-anchor="middle" font-size="15" font-weight="700" fill="#163238">CampusJsonMapLoader + CampusGrid2D</text>
+
+        <rect x="640" y="498" width="300" height="82" rx="22" fill="#ffedd5" stroke="#d97706" filter="url(#softShadow)"/>
+        <text x="790" y="530" text-anchor="middle" font-size="22" font-weight="800" fill="#d97706">黑板与队内共享</text>
+        <text x="790" y="558" text-anchor="middle" font-size="15" font-weight="700" fill="#163238">AgentContextUpdate / plannedTargets / recentEvents</text>
+
+        <line x1="330" y1="130" x2="380" y2="130" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowA)"/>
+        <line x1="690" y1="130" x2="738" y2="130" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowA)"/>
+        <line x1="1024" y1="130" x2="1080" y2="130" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowA)"/>
+        <line x1="535" y1="205" x2="347" y2="278" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowA)"/>
+        <line x1="512" y1="363" x2="560" y2="363" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowA)"/>
+        <line x1="870" y1="363" x2="918" y2="363" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowA)"/>
+        <line x1="1128" y1="363" x2="1180" y2="363" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowA)"/>
+        <line x1="430" y1="498" x2="430" y2="448" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowA)"/>
+        <line x1="790" y1="498" x2="790" y2="448" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowA)"/>
+        <line x1="738" y1="205" x2="790" y2="498" stroke="#5f7278" stroke-width="3" stroke-dasharray="10 8" marker-end="url(#arrowA)"/>
+        <line x1="1023" y1="278" x2="430" y2="580" stroke="#5f7278" stroke-width="3" stroke-dasharray="10 8" marker-end="url(#arrowA)"/>
+      </svg>
+    </div>
+    <div class="legend">
+      <span><i class="dot d-teal"></i>入口 / 感知</span>
+      <span><i class="dot d-blue"></i>规划 / 决策</span>
+      <span><i class="dot d-orange"></i>通信 / 黑板</span>
+      <span><i class="dot d-green"></i>执行</span>
+      <span><i class="dot d-red"></i>监控</span>
+      <span><i class="dot d-slate"></i>公共底座</span>
+    </div>
+  </section>
+
+  <section id="main">
+    <h2>主任务链流程图</h2>
+    <div class="lane-board">
+      <div class="lane">
+        <div class="title teal">1. 任务入口</div>
+        <div class="body">
+          <div class="node teal pulse">用户输入任务<small>本地 UI / Web</small></div>
+          <div class="node teal">SubmitMissionRequest()<small>mission + agentCount</small></div>
+          <div class="node teal">锁定 busy<small>进入规划态</small></div>
+        </div>
+      </div>
+
+      <div class="lane">
+        <div class="title blue">2. PlanningModule</div>
+        <div class="body">
+          <div class="node blue">LLM#1<small>ParsedMission</small></div>
+          <div class="node blue">AssignGroups<small>groupId / leaderId</small></div>
+          <div class="node blue">LLM#2<small>PlanSlot[]</small></div>
+          <div class="node blue">LLM#3<small>选槽</small></div>
+          <div class="node blue">LLM#4<small>PlanStep[]</small></div>
+        </div>
+      </div>
+
+      <div class="lane">
+        <div class="title orange">3. 通信协商</div>
+        <div class="body">
+          <div class="node orange">GroupBootstrap<small>广播分组</small></div>
+          <div class="node orange">SlotBroadcast<small>组长广播槽位</small></div>
+          <div class="node orange">SlotSelect<small>成员回传选择</small></div>
+          <div class="node orange">SlotConfirm<small>组长确认分配</small></div>
+          <div class="node orange">StartExecution<small>全组开始执行</small></div>
+        </div>
+      </div>
+
+      <div class="lane">
+        <div class="title green">4. ADM + 执行</div>
+        <div class="body">
+          <div class="node green">ShouldMakeDecision()<small>Idle + HasActiveMission</small></div>
+          <div class="node green">RunLLMA<small>PlanStep -> AtomicAction[]</small></div>
+          <div class="node green">Negotiating<small>黑板广播</small></div>
+          <div class="node green">AgentMotionExecutor<small>逐条动作执行</small></div>
+          <div class="node green">CompleteCurrentStep()<small>推进到下一步</small></div>
+        </div>
+      </div>
+
+      <div class="lane">
+        <div class="title slate">5. 感知 / 监控</div>
+        <div class="body">
+          <div class="node slate">PerceptionModule<small>SenseOnce / NearbyAgents</small></div>
+          <div class="node slate">SmallNodeRegistry<small>共享小节点</small></div>
+          <div class="node slate">AgentStateServer<small>采样快照</small></div>
+          <div class="node slate">dashboard.html<small>地图 / 卡片 / 日志</small></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="adm">
+    <h2>动作决策层图</h2>
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>ADM 主循环</h3>
+        <div class="svg-panel">
+          <svg viewBox="0 0 760 480" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <marker id="arrowB" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+                <path d="M0,0 L12,6 L0,12 z" fill="#5f7278"/>
+              </marker>
+            </defs>
+
+            <rect x="22" y="22" width="716" height="436" rx="24" fill="#fffdf9" stroke="#d6cec1"/>
+
+            <rect x="60" y="60" width="180" height="74" rx="18" fill="#dbe8ff" stroke="#155eef"/>
+            <text x="150" y="92" text-anchor="middle" font-size="20" font-weight="800" fill="#155eef">GetCurrentStep</text>
+            <text x="150" y="116" text-anchor="middle" font-size="13" font-weight="700" fill="#5f7278">PlanningModule</text>
+
+            <rect x="290" y="60" width="180" height="74" rx="18" fill="#dbe8ff" stroke="#155eef"/>
+            <text x="380" y="92" text-anchor="middle" font-size="20" font-weight="800" fill="#155eef">StartStep</text>
+            <text x="380" y="116" text-anchor="middle" font-size="13" font-weight="700" fill="#5f7278">ctx 初始化</text>
+
+            <rect x="520" y="60" width="180" height="74" rx="18" fill="#dbe8ff" stroke="#155eef"/>
+            <text x="610" y="92" text-anchor="middle" font-size="20" font-weight="800" fill="#155eef">RunLLMA</text>
+            <text x="610" y="116" text-anchor="middle" font-size="13" font-weight="700" fill="#5f7278">step -> actions</text>
+
+            <rect x="520" y="190" width="180" height="74" rx="18" fill="#ffedd5" stroke="#d97706"/>
+            <text x="610" y="222" text-anchor="middle" font-size="20" font-weight="800" fill="#d97706">Negotiating</text>
+            <text x="610" y="246" text-anchor="middle" font-size="13" font-weight="700" fill="#5f7278">BoardUpdate</text>
+
+            <rect x="290" y="190" width="180" height="74" rx="18" fill="#dff7e8" stroke="#027a48"/>
+            <text x="380" y="222" text-anchor="middle" font-size="20" font-weight="800" fill="#027a48">Running</text>
+            <text x="380" y="246" text-anchor="middle" font-size="13" font-weight="700" fill="#5f7278">GetCurrentAction</text>
+
+            <rect x="60" y="190" width="180" height="74" rx="18" fill="#d8f3ef" stroke="#0f766e"/>
+            <text x="150" y="222" text-anchor="middle" font-size="20" font-weight="800" fill="#0f766e">Perception</text>
+            <text x="150" y="246" text-anchor="middle" font-size="13" font-weight="700" fill="#5f7278">OnPerceptionEvent</text>
+
+            <rect x="60" y="322" width="180" height="74" rx="18" fill="#fee4e2" stroke="#b42318"/>
+            <text x="150" y="354" text-anchor="middle" font-size="20" font-weight="800" fill="#b42318">RunLLMB</text>
+            <text x="150" y="378" text-anchor="middle" font-size="13" font-weight="700" fill="#5f7278">重规划</text>
+
+            <rect x="290" y="322" width="180" height="74" rx="18" fill="#dff7e8" stroke="#027a48"/>
+            <text x="380" y="354" text-anchor="middle" font-size="20" font-weight="800" fill="#027a48">CompleteAction</text>
+            <text x="380" y="378" text-anchor="middle" font-size="13" font-weight="700" fill="#5f7278">currentActionIdx++</text>
+
+            <rect x="520" y="322" width="180" height="74" rx="18" fill="#eef2f6" stroke="#475467"/>
+            <text x="610" y="354" text-anchor="middle" font-size="20" font-weight="800" fill="#475467">CompleteStep</text>
+            <text x="610" y="378" text-anchor="middle" font-size="13" font-weight="700" fill="#5f7278">下一步 / Done</text>
+
+            <line x1="240" y1="97" x2="290" y2="97" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowB)"/>
+            <line x1="470" y1="97" x2="520" y2="97" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowB)"/>
+            <line x1="610" y1="134" x2="610" y2="190" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowB)"/>
+            <line x1="520" y1="227" x2="470" y2="227" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowB)"/>
+            <line x1="240" y1="227" x2="290" y2="227" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowB)"/>
+            <line x1="150" y1="264" x2="150" y2="322" stroke="#5f7278" stroke-width="4" stroke-dasharray="10 8" marker-end="url(#arrowB)"/>
+            <line x1="240" y1="359" x2="290" y2="359" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowB)"/>
+            <line x1="470" y1="359" x2="520" y2="359" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowB)"/>
+            <line x1="610" y1="322" x2="610" y2="264" stroke="#5f7278" stroke-width="4" stroke-dasharray="10 8" marker-end="url(#arrowB)"/>
+            <line x1="150" y1="190" x2="150" y2="134" stroke="#5f7278" stroke-width="4" stroke-dasharray="10 8" marker-end="url(#arrowB)"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>ADM 内部观察视角</h3>
+        <div class="svg-panel">
+          <svg viewBox="0 0 760 480" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <marker id="arrowC" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+                <path d="M0,0 L12,6 L0,12 z" fill="#5f7278"/>
+              </marker>
+            </defs>
+
+            <rect x="30" y="30" width="700" height="420" rx="24" fill="#fffdf9" stroke="#d6cec1"/>
+            <circle cx="380" cy="220" r="88" fill="#ffedd5" stroke="#d97706" stroke-width="4"/>
+            <text x="380" y="202" text-anchor="middle" font-size="24" font-weight="800" fill="#d97706">blackboard</text>
+            <text x="380" y="230" text-anchor="middle" font-size="15" font-weight="700" fill="#163238">agentId -> AgentContextUpdate</text>
+            <text x="380" y="254" text-anchor="middle" font-size="15" font-weight="700" fill="#163238">plannedTargets / role / events</text>
+
+            <rect x="70" y="72" width="190" height="88" rx="18" fill="#dbe8ff" stroke="#155eef"/>
+            <text x="165" y="106" text-anchor="middle" font-size="20" font-weight="800" fill="#155eef">ctx</text>
+            <text x="165" y="132" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">stepText / actionQueue</text>
+            <text x="165" y="152" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">currentActionIdx / recentEvents</text>
+
+            <rect x="500" y="72" width="190" height="88" rx="18" fill="#d8f3ef" stroke="#0f766e"/>
+            <text x="595" y="106" text-anchor="middle" font-size="20" font-weight="800" fill="#0f766e">Perception</text>
+            <text x="595" y="132" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">NearbyAgents</text>
+            <text x="595" y="152" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">DetectedSmallNodes</text>
+
+            <rect x="70" y="298" width="190" height="88" rx="18" fill="#dff7e8" stroke="#027a48"/>
+            <text x="165" y="332" text-anchor="middle" font-size="20" font-weight="800" fill="#027a48">AgentMotionExecutor</text>
+            <text x="165" y="358" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">GetCurrentAction()</text>
+
+            <rect x="500" y="298" width="190" height="88" rx="18" fill="#fee4e2" stroke="#b42318"/>
+            <text x="595" y="332" text-anchor="middle" font-size="20" font-weight="800" fill="#b42318">RunLLMB</text>
+            <text x="595" y="358" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">冲突 / 中断后重规划</text>
+
+            <line x1="260" y1="116" x2="301" y2="158" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowC)"/>
+            <line x1="500" y1="116" x2="459" y2="158" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowC)"/>
+            <line x1="260" y1="342" x2="305" y2="268" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowC)"/>
+            <line x1="500" y1="342" x2="455" y2="268" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowC)"/>
+
+            <text x="380" y="95" text-anchor="middle" font-size="13" font-weight="700" fill="#5f7278">动作上下文</text>
+            <text x="380" y="403" text-anchor="middle" font-size="13" font-weight="700" fill="#5f7278">执行与重规划双向围绕 blackboard 转</text>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="board">
+    <h2>黑板设计图</h2>
+    <div class="grid grid-3">
+      <div class="card">
+        <h3>黑板不是全局服务器</h3>
+        <div class="svg-panel">
+          <svg viewBox="0 0 420 300" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <marker id="arrowD" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+                <path d="M0,0 L10,5 L0,10 z" fill="#5f7278"/>
+              </marker>
+            </defs>
+            <rect x="18" y="18" width="384" height="264" rx="24" fill="#fffdf9" stroke="#d6cec1"/>
+            <rect x="52" y="44" width="118" height="70" rx="18" fill="#dbe8ff" stroke="#155eef"/>
+            <text x="111" y="75" text-anchor="middle" font-size="18" font-weight="800" fill="#155eef">Agent A</text>
+            <text x="111" y="97" text-anchor="middle" font-size="12" font-weight="700" fill="#163238">本地 blackboard_A</text>
+
+            <rect x="250" y="44" width="118" height="70" rx="18" fill="#dbe8ff" stroke="#155eef"/>
+            <text x="309" y="75" text-anchor="middle" font-size="18" font-weight="800" fill="#155eef">Agent B</text>
+            <text x="309" y="97" text-anchor="middle" font-size="12" font-weight="700" fill="#163238">本地 blackboard_B</text>
+
+            <rect x="52" y="180" width="118" height="70" rx="18" fill="#dbe8ff" stroke="#155eef"/>
+            <text x="111" y="211" text-anchor="middle" font-size="18" font-weight="800" fill="#155eef">Agent C</text>
+            <text x="111" y="233" text-anchor="middle" font-size="12" font-weight="700" fill="#163238">本地 blackboard_C</text>
+
+            <rect x="250" y="180" width="118" height="70" rx="18" fill="#ffedd5" stroke="#d97706"/>
+            <text x="309" y="211" text-anchor="middle" font-size="18" font-weight="800" fill="#d97706">BoardUpdate</text>
+            <text x="309" y="233" text-anchor="middle" font-size="12" font-weight="700" fill="#163238">通信同步包</text>
+
+            <line x1="170" y1="79" x2="250" y2="79" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowD)"/>
+            <line x1="309" y1="114" x2="309" y2="180" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowD)"/>
+            <line x1="250" y1="214" x2="170" y2="214" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowD)"/>
+            <line x1="111" y1="180" x2="111" y2="114" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowD)"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>黑板里放什么</h3>
+        <div class="svg-panel">
+          <svg viewBox="0 0 420 300" xmlns="http://www.w3.org/2000/svg">
+            <rect x="18" y="18" width="384" height="264" rx="24" fill="#fffdf9" stroke="#d6cec1"/>
+            <rect x="70" y="40" width="280" height="220" rx="20" fill="#ffedd5" stroke="#d97706" stroke-width="3"/>
+            <text x="210" y="72" text-anchor="middle" font-size="22" font-weight="800" fill="#d97706">AgentContextUpdate</text>
+            <text x="96" y="108" font-size="15" font-weight="700" fill="#163238">agentId</text>
+            <text x="96" y="136" font-size="15" font-weight="700" fill="#163238">locationName</text>
+            <text x="96" y="164" font-size="15" font-weight="700" fill="#163238">currentAction</text>
+            <text x="96" y="192" font-size="15" font-weight="700" fill="#163238">currentTarget</text>
+            <text x="96" y="220" font-size="15" font-weight="700" fill="#163238">role</text>
+            <text x="220" y="108" font-size="15" font-weight="700" fill="#163238">plannedTargets[]</text>
+            <text x="220" y="136" font-size="15" font-weight="700" fill="#163238">recentEvents[]</text>
+            <text x="220" y="164" font-size="15" font-weight="700" fill="#163238">timestamp</text>
+            <text x="210" y="246" text-anchor="middle" font-size="13" font-weight="700" fill="#5f7278">重点不是完整计划，而是“足够协商”的局部状态</text>
+          </svg>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>黑板为什么要轻量</h3>
+        <div class="svg-panel">
+          <svg viewBox="0 0 420 300" xmlns="http://www.w3.org/2000/svg">
+            <rect x="18" y="18" width="384" height="264" rx="24" fill="#fffdf9" stroke="#d6cec1"/>
+            <rect x="56" y="48" width="132" height="92" rx="18" fill="#fee4e2" stroke="#b42318"/>
+            <text x="122" y="82" text-anchor="middle" font-size="19" font-weight="800" fill="#b42318">不放</text>
+            <text x="122" y="108" text-anchor="middle" font-size="12" font-weight="700" fill="#163238">完整 prompt</text>
+            <text x="122" y="126" text-anchor="middle" font-size="12" font-weight="700" fill="#163238">完整 actionQueue 文本</text>
+
+            <rect x="232" y="48" width="132" height="92" rx="18" fill="#dff7e8" stroke="#027a48"/>
+            <text x="298" y="82" text-anchor="middle" font-size="19" font-weight="800" fill="#027a48">只放</text>
+            <text x="298" y="108" text-anchor="middle" font-size="12" font-weight="700" fill="#163238">plannedTargets</text>
+            <text x="298" y="126" text-anchor="middle" font-size="12" font-weight="700" fill="#163238">当前动作 / 目标 / 事件</text>
+
+            <rect x="56" y="176" width="308" height="70" rx="18" fill="#eef2f6" stroke="#475467"/>
+            <text x="210" y="206" text-anchor="middle" font-size="18" font-weight="800" fill="#475467">目标</text>
+            <text x="210" y="230" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">低带宽、快比较、冲突检测直接用</text>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="sync">
+    <h2>黑板同步环</h2>
+    <div class="svg-panel">
+      <svg viewBox="0 0 1380 520" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arrowE" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+            <path d="M0,0 L12,6 L0,12 z" fill="#5f7278"/>
+          </marker>
+        </defs>
+
+        <rect x="24" y="24" width="1332" height="472" rx="28" fill="#fffdf9" stroke="#d6cec1"/>
+
+        <rect x="58" y="70" width="180" height="86" rx="18" fill="#dbe8ff" stroke="#155eef"/>
+        <text x="148" y="103" text-anchor="middle" font-size="20" font-weight="800" fill="#155eef">1. RunLLMA</text>
+        <text x="148" y="130" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">生成 actionQueue</text>
+
+        <rect x="286" y="70" width="180" height="86" rx="18" fill="#dbe8ff" stroke="#155eef"/>
+        <text x="376" y="103" text-anchor="middle" font-size="20" font-weight="800" fill="#155eef">2. 提取目标集</text>
+        <text x="376" y="130" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">targetName 去重 -> plannedTargets</text>
+
+        <rect x="514" y="70" width="180" height="86" rx="18" fill="#ffedd5" stroke="#d97706"/>
+        <text x="604" y="103" text-anchor="middle" font-size="20" font-weight="800" fill="#d97706">3. 组包</text>
+        <text x="604" y="130" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">AgentContextUpdate</text>
+
+        <rect x="742" y="70" width="180" height="86" rx="18" fill="#ffedd5" stroke="#d97706"/>
+        <text x="832" y="103" text-anchor="middle" font-size="20" font-weight="800" fill="#d97706">4. BoardUpdate</text>
+        <text x="832" y="130" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">CommunicationScope.Team</text>
+
+        <rect x="970" y="70" width="180" height="86" rx="18" fill="#d8f3ef" stroke="#0f766e"/>
+        <text x="1060" y="103" text-anchor="middle" font-size="20" font-weight="800" fill="#0f766e">5. 队友接收</text>
+        <text x="1060" y="130" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">OnBoardUpdate()</text>
+
+        <rect x="1198" y="70" width="124" height="86" rx="18" fill="#d8f3ef" stroke="#0f766e"/>
+        <text x="1260" y="103" text-anchor="middle" font-size="20" font-weight="800" fill="#0f766e">6. 写入</text>
+        <text x="1260" y="130" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">blackboard</text>
+
+        <rect x="156" y="286" width="230" height="106" rx="20" fill="#eef2f6" stroke="#475467"/>
+        <text x="271" y="322" text-anchor="middle" font-size="20" font-weight="800" fill="#475467">本机黑板视角</text>
+        <text x="271" y="350" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">self + peers</text>
+        <text x="271" y="372" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">plannedTargets 对比</text>
+
+        <rect x="460" y="286" width="230" height="106" rx="20" fill="#ffedd5" stroke="#d97706"/>
+        <text x="575" y="322" text-anchor="middle" font-size="20" font-weight="800" fill="#d97706">冲突扫描</text>
+        <text x="575" y="350" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">CountConflicts()</text>
+        <text x="575" y="372" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">ComputeTotalConflictForPeer()</text>
+
+        <rect x="764" y="286" width="230" height="106" rx="20" fill="#fee4e2" stroke="#b42318"/>
+        <text x="879" y="322" text-anchor="middle" font-size="20" font-weight="800" fill="#b42318">选出 resolver</text>
+        <text x="879" y="350" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">更高 total conflict</text>
+        <text x="879" y="372" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">再比 agentId</text>
+
+        <rect x="1068" y="286" width="230" height="106" rx="20" fill="#dff7e8" stroke="#027a48"/>
+        <text x="1183" y="322" text-anchor="middle" font-size="20" font-weight="800" fill="#027a48">重规划或继续执行</text>
+        <text x="1183" y="350" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">RunLLMB / Running</text>
+
+        <line x1="238" y1="113" x2="286" y2="113" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowE)"/>
+        <line x1="466" y1="113" x2="514" y2="113" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowE)"/>
+        <line x1="694" y1="113" x2="742" y2="113" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowE)"/>
+        <line x1="922" y1="113" x2="970" y2="113" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowE)"/>
+        <line x1="1150" y1="113" x2="1198" y2="113" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowE)"/>
+
+        <line x1="1260" y1="156" x2="1260" y2="214" stroke="#5f7278" stroke-width="4"/>
+        <line x1="1260" y1="214" x2="271" y2="214" stroke="#5f7278" stroke-width="4"/>
+        <line x1="271" y1="214" x2="271" y2="286" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowE)"/>
+
+        <line x1="386" y1="339" x2="460" y2="339" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowE)"/>
+        <line x1="690" y1="339" x2="764" y2="339" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowE)"/>
+        <line x1="994" y1="339" x2="1068" y2="339" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowE)"/>
+      </svg>
+    </div>
+  </section>
+
+  <section id="conflict">
+    <h2>冲突协商图</h2>
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>目标冲突判定</h3>
+        <div class="svg-panel">
+          <svg viewBox="0 0 700 360" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <marker id="arrowF" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+                <path d="M0,0 L12,6 L0,12 z" fill="#5f7278"/>
+              </marker>
+            </defs>
+            <rect x="22" y="22" width="656" height="316" rx="24" fill="#fffdf9" stroke="#d6cec1"/>
+            <rect x="54" y="60" width="170" height="92" rx="18" fill="#dbe8ff" stroke="#155eef"/>
+            <text x="139" y="94" text-anchor="middle" font-size="20" font-weight="800" fill="#155eef">我方 actionQueue</text>
+            <text x="139" y="122" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">targetName -> Set</text>
+
+            <rect x="264" y="60" width="170" height="92" rx="18" fill="#ffedd5" stroke="#d97706"/>
+            <text x="349" y="94" text-anchor="middle" font-size="20" font-weight="800" fill="#d97706">队友 blackboard</text>
+            <text x="349" y="122" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">plannedTargets[]</text>
+
+            <rect x="474" y="60" width="170" height="92" rx="18" fill="#fee4e2" stroke="#b42318"/>
+            <text x="559" y="94" text-anchor="middle" font-size="20" font-weight="800" fill="#b42318">CountConflicts</text>
+            <text x="559" y="122" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">名字完全匹配</text>
+
+            <rect x="160" y="214" width="170" height="92" rx="18" fill="#eef2f6" stroke="#475467"/>
+            <text x="245" y="248" text-anchor="middle" font-size="20" font-weight="800" fill="#475467">myConflict</text>
+            <text x="245" y="276" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">总冲突数</text>
+
+            <rect x="370" y="214" width="170" height="92" rx="18" fill="#dff7e8" stroke="#027a48"/>
+            <text x="455" y="248" text-anchor="middle" font-size="20" font-weight="800" fill="#027a48">resolver?</text>
+            <text x="455" y="276" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">total conflict + agentId</text>
+
+            <line x1="224" y1="106" x2="264" y2="106" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowF)"/>
+            <line x1="434" y1="106" x2="474" y2="106" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowF)"/>
+            <line x1="559" y1="152" x2="455" y2="214" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowF)"/>
+            <line x1="474" y1="152" x2="245" y2="214" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowF)"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>resolver 之后</h3>
+        <div class="svg-panel">
+          <svg viewBox="0 0 700 360" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <marker id="arrowG" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+                <path d="M0,0 L12,6 L0,12 z" fill="#5f7278"/>
+              </marker>
+            </defs>
+            <rect x="22" y="22" width="656" height="316" rx="24" fill="#fffdf9" stroke="#d6cec1"/>
+            <rect x="70" y="64" width="210" height="86" rx="18" fill="#fee4e2" stroke="#b42318"/>
+            <text x="175" y="98" text-anchor="middle" font-size="20" font-weight="800" fill="#b42318">我是 resolver</text>
+            <text x="175" y="124" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">replanCount++</text>
+
+            <rect x="420" y="64" width="210" height="86" rx="18" fill="#eef2f6" stroke="#475467"/>
+            <text x="525" y="98" text-anchor="middle" font-size="20" font-weight="800" fill="#475467">不是 resolver</text>
+            <text x="525" y="124" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">等待队友新黑板</text>
+
+            <rect x="70" y="210" width="210" height="86" rx="18" fill="#dbe8ff" stroke="#155eef"/>
+            <text x="175" y="244" text-anchor="middle" font-size="20" font-weight="800" fill="#155eef">RunLLMB</text>
+            <text x="175" y="270" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">新 actionQueue</text>
+
+            <rect x="420" y="210" width="210" height="86" rx="18" fill="#dff7e8" stroke="#027a48"/>
+            <text x="525" y="244" text-anchor="middle" font-size="20" font-weight="800" fill="#027a48">回到 Running</text>
+            <text x="525" y="270" text-anchor="middle" font-size="13" font-weight="700" fill="#163238">继续执行 / 接收更新</text>
+
+            <line x1="175" y1="150" x2="175" y2="210" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowG)"/>
+            <line x1="525" y1="150" x2="525" y2="210" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowG)"/>
+            <line x1="280" y1="253" x2="420" y2="253" stroke="#5f7278" stroke-width="4" stroke-dasharray="10 8" marker-end="url(#arrowG)"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="state">
+    <h2>ADM 状态图</h2>
+    <div class="svg-panel">
+      <svg viewBox="0 0 1320 360" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arrowH" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+            <path d="M0,0 L12,6 L0,12 z" fill="#5f7278"/>
+          </marker>
+        </defs>
+        <rect x="22" y="22" width="1276" height="316" rx="24" fill="#fffdf9" stroke="#d6cec1"/>
+
+        <rect x="54" y="132" width="150" height="82" rx="18" fill="#eef2f6" stroke="#475467"/>
+        <text x="129" y="164" text-anchor="middle" font-size="22" font-weight="800" fill="#475467">Idle</text>
+        <text x="129" y="190" text-anchor="middle" font-size="12" font-weight="700" fill="#163238">等待新 step</text>
+
+        <rect x="256" y="132" width="180" height="82" rx="18" fill="#dbe8ff" stroke="#155eef"/>
+        <text x="346" y="164" text-anchor="middle" font-size="22" font-weight="800" fill="#155eef">Interpreting</text>
+        <text x="346" y="190" text-anchor="middle" font-size="12" font-weight="700" fill="#163238">RunLLMA</text>
+
+        <rect x="488" y="132" width="180" height="82" rx="18" fill="#ffedd5" stroke="#d97706"/>
+        <text x="578" y="164" text-anchor="middle" font-size="22" font-weight="800" fill="#d97706">Negotiating</text>
+        <text x="578" y="190" text-anchor="middle" font-size="12" font-weight="700" fill="#163238">黑板广播 / 冲突判断</text>
+
+        <rect x="720" y="132" width="150" height="82" rx="18" fill="#dff7e8" stroke="#027a48"/>
+        <text x="795" y="164" text-anchor="middle" font-size="22" font-weight="800" fill="#027a48">Running</text>
+        <text x="795" y="190" text-anchor="middle" font-size="12" font-weight="700" fill="#163238">动作执行</text>
+
+        <rect x="922" y="48" width="170" height="82" rx="18" fill="#fee4e2" stroke="#b42318"/>
+        <text x="1007" y="80" text-anchor="middle" font-size="22" font-weight="800" fill="#b42318">Interrupted</text>
+        <text x="1007" y="106" text-anchor="middle" font-size="12" font-weight="700" fill="#163238">感知 / 黑板打断</text>
+
+        <rect x="922" y="236" width="170" height="82" rx="18" fill="#fee4e2" stroke="#b42318"/>
+        <text x="1007" y="268" text-anchor="middle" font-size="22" font-weight="800" fill="#b42318">Replanning</text>
+        <text x="1007" y="294" text-anchor="middle" font-size="12" font-weight="700" fill="#163238">RunLLMB</text>
+
+        <rect x="1144" y="84" width="126" height="82" rx="18" fill="#dff7e8" stroke="#027a48"/>
+        <text x="1207" y="116" text-anchor="middle" font-size="22" font-weight="800" fill="#027a48">Done</text>
+        <text x="1207" y="142" text-anchor="middle" font-size="12" font-weight="700" fill="#163238">本 step 完成</text>
+
+        <rect x="1144" y="194" width="126" height="82" rx="18" fill="#fee4e2" stroke="#b42318"/>
+        <text x="1207" y="226" text-anchor="middle" font-size="22" font-weight="800" fill="#b42318">Failed</text>
+        <text x="1207" y="252" text-anchor="middle" font-size="12" font-weight="700" fill="#163238">重规划耗尽</text>
+
+        <line x1="204" y1="173" x2="256" y2="173" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowH)"/>
+        <line x1="436" y1="173" x2="488" y2="173" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowH)"/>
+        <line x1="668" y1="173" x2="720" y2="173" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowH)"/>
+        <line x1="870" y1="173" x2="1144" y2="125" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowH)"/>
+        <line x1="795" y1="132" x2="922" y2="89" stroke="#5f7278" stroke-width="4" stroke-dasharray="10 8" marker-end="url(#arrowH)"/>
+        <line x1="1007" y1="130" x2="1007" y2="236" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowH)"/>
+        <line x1="1092" y1="277" x2="1144" y2="235" stroke="#5f7278" stroke-width="4" marker-end="url(#arrowH)"/>
+        <line x1="1007" y1="236" x2="870" y2="194" stroke="#5f7278" stroke-width="4" stroke-dasharray="10 8" marker-end="url(#arrowH)"/>
+      </svg>
+    </div>
+  </section>
+
+  <section id="schema">
+    <h2>黑板字段图</h2>
+    <div class="schema">
+      <div class="schema-card">
+        <div class="hd" style="background:#d97706;">AgentContextUpdate</div>
+        <div class="bd">
+          <div class="kv"><b>agentId</b><span>谁发的</span></div>
+          <div class="kv"><b>locationName</b><span>当前地名</span></div>
+          <div class="kv"><b>currentAction</b><span>当前动作类型</span></div>
+          <div class="kv"><b>currentTarget</b><span>当前目标</span></div>
+          <div class="kv"><b>role</b><span>当前角色</span></div>
+          <div class="kv"><b>plannedTargets[]</b><span>接下来准备去的地点集合</span></div>
+          <div class="kv"><b>recentEvents[]</b><span>最近事件</span></div>
+          <div class="kv"><b>timestamp</b><span>更新时间</span></div>
+        </div>
+      </div>
+
+      <div class="schema-card">
+        <div class="hd" style="background:#155eef;">ActionExecutionContext</div>
+        <div class="bd">
+          <div class="kv"><b>msnId / stepId</b><span>当前任务 / 当前步骤</span></div>
+          <div class="kv"><b>stepText</b><span>步骤文本</span></div>
+          <div class="kv"><b>coordinationConstraints[]</b><span>本步骤协同约束</span></div>
+          <div class="kv"><b>role</b><span>当前角色</span></div>
+          <div class="kv"><b>actionQueue[]</b><span>LLM-A 或 LLM-B 生成动作队列</span></div>
+          <div class="kv"><b>currentActionIdx</b><span>当前执行到哪一条</span></div>
+          <div class="kv"><b>status</b><span>ADMStatus</span></div>
+          <div class="kv"><b>recentEvents[]</b><span>供重规划参考</span></div>
+        </div>
+      </div>
+
+      <div class="schema-card">
+        <div class="hd" style="background:#027a48;">plannedTargets 来源</div>
+        <div class="bd">
+          <div class="kv"><b>输入</b><span>ctx.actionQueue</span></div>
+          <div class="kv"><b>抽取规则</b><span>遍历每条 AtomicAction.targetName</span></div>
+          <div class="kv"><b>去重规则</b><span>HashSet 去重</span></div>
+          <div class="kv"><b>广播结果</b><span>targets.ToArray()</span></div>
+          <div class="kv"><b>用途</b><span>冲突检测 / resolver 选举 / 队友可见性</span></div>
+        </div>
+      </div>
+
+      <div class="schema-card">
+        <div class="hd" style="background:#475467;">当前代码里的黑板边界</div>
+        <div class="bd">
+          <div class="kv"><b>黑板粒度</b><span>队内局部共享</span></div>
+          <div class="kv"><b>不做</b><span>完整全局任务数据库</span></div>
+          <div class="kv"><b>不做</b><span>跨队全局一致状态</span></div>
+          <div class="kv"><b>冲突依据</b><span>targetName 字符串完全匹配</span></div>
+          <div class="kv"><b>已知局限</b><span>路径交叉、近义地点、半径占用还没进黑板</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="tiny">图里已经把黑板重点压到最小：谁、在哪、做什么、准备去哪、最近发生了什么。</div>
+  </section>
+</div>
+</body>
+</html>

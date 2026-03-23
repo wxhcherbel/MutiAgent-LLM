@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UnityLLM Project Code Review And Task Flow</title>
+<style>
+  :root {
+    --bg: #f5efe4;
+    --bg-soft: #fbf8f1;
+    --panel: #fffdf8;
+    --ink: #1f2a30;
+    --muted: #5e6a71;
+    --line: #d9d0c2;
+    --brand: #0e6b66;
+    --brand-soft: #d9f0ec;
+    --warn: #a8551d;
+    --warn-soft: #fde6d7;
+    --danger: #9f2d2d;
+    --danger-soft: #fde1df;
+    --ok: #2f6b3d;
+    --ok-soft: #e2f4e5;
+    --shadow: 0 10px 30px rgba(31, 42, 48, 0.08);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: var(--ink);
+    background:
+      radial-gradient(circle at top right, rgba(14, 107, 102, 0.12), transparent 28%),
+      linear-gradient(180deg, #f9f3e8 0%, #f3ebdf 100%);
+    line-height: 1.65;
+  }
+  header {
+    padding: 40px 24px 28px;
+    border-bottom: 1px solid rgba(217, 208, 194, 0.7);
+    background:
+      linear-gradient(135deg, rgba(14, 107, 102, 0.08), rgba(255, 255, 255, 0.35)),
+      rgba(255, 253, 248, 0.65);
+    backdrop-filter: blur(8px);
+  }
+  .wrap {
+    max-width: 1300px;
+    margin: 0 auto;
+    padding: 0 24px 48px;
+  }
+  h1, h2, h3 {
+    margin: 0 0 12px;
+    line-height: 1.25;
+  }
+  h1 {
+    font-size: 34px;
+    letter-spacing: 0.02em;
+  }
+  h2 {
+    margin-top: 36px;
+    padding-top: 12px;
+    font-size: 26px;
+    border-top: 2px solid rgba(14, 107, 102, 0.16);
+  }
+  h3 {
+    font-size: 19px;
+    margin-top: 24px;
+  }
+  p, li, td, th { font-size: 14px; }
+  .lead {
+    max-width: 1000px;
+    color: var(--muted);
+    margin-top: 12px;
+  }
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 18px;
+  }
+  .chip {
+    padding: 8px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.78);
+    color: var(--muted);
+    font-size: 13px;
+  }
+  nav {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    margin: 18px 0 24px;
+    padding: 10px 14px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: rgba(255, 253, 248, 0.88);
+    backdrop-filter: blur(10px);
+    box-shadow: var(--shadow);
+  }
+  nav a {
+    display: inline-block;
+    margin: 6px 10px 6px 0;
+    color: var(--brand);
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 13px;
+  }
+  .grid {
+    display: grid;
+    gap: 16px;
+  }
+  .grid-2 {
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 18px;
+    box-shadow: var(--shadow);
+  }
+  .flag {
+    display: inline-block;
+    margin-bottom: 10px;
+    padding: 4px 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+  }
+  .p0 { background: var(--danger-soft); color: var(--danger); }
+  .p1 { background: var(--warn-soft); color: var(--warn); }
+  .p2 { background: var(--brand-soft); color: var(--brand); }
+  .ok { background: var(--ok-soft); color: var(--ok); }
+  .flow {
+    counter-reset: step;
+    display: grid;
+    gap: 14px;
+  }
+  .step {
+    position: relative;
+    padding: 16px 16px 16px 62px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+  }
+  .step::before {
+    counter-increment: step;
+    content: counter(step);
+    position: absolute;
+    left: 16px;
+    top: 16px;
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--brand);
+    color: #fff;
+    font-weight: 800;
+  }
+  .step ul { margin: 8px 0 0 18px; }
+  .mono {
+    font-family: "Cascadia Mono", Consolas, monospace;
+    background: #f4f0e8;
+    padding: 1px 5px;
+    border-radius: 6px;
+  }
+  .codeblock {
+    white-space: pre-wrap;
+    background: #f7f2ea;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 14px;
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 12px;
+    overflow-x: auto;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 14px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  th, td {
+    padding: 12px 10px;
+    border-bottom: 1px solid rgba(217, 208, 194, 0.75);
+    vertical-align: top;
+    text-align: left;
+  }
+  th {
+    background: #f0e7d8;
+    font-size: 13px;
+  }
+  tr:last-child td { border-bottom: none; }
+  details {
+    margin-top: 14px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 0 14px 10px;
+    box-shadow: var(--shadow);
+  }
+  summary {
+    cursor: pointer;
+    font-weight: 700;
+    padding: 14px 0;
+  }
+  .footnote {
+    margin-top: 28px;
+    padding: 16px 18px;
+    border-radius: 14px;
+    border: 1px dashed var(--line);
+    color: var(--muted);
+    background: rgba(255, 253, 248, 0.7);
+  }
+  @media (max-width: 900px) {
+    header { padding: 28px 18px 22px; }
+    .wrap { padding: 0 16px 36px; }
+    h1 { font-size: 28px; }
+    h2 { font-size: 22px; }
+    .step { padding-left: 56px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>UnityLLM 脚本目录代码审查与任务流程链总览</h1>
+    <p class="lead">
+      这份文档覆盖当前可访问目录 <span class="mono">Assets/Resource/Scripts</span> 下的运行时脚本、前端页面、配置和设计文档，
+      目标不是简单罗列文件，而是把“任务从哪里进入、在谁手里变成计划、如何变成动作、如何执行、如何被监控”讲成一条完整链路，
+      同时指出当前实现里最值得优先修的结构性问题。
+    </p>
+    <div class="meta">
+      <span class="chip">审查范围：Scripts 目录内 51 个源代码 / 文档 / 配置文件</span>
+      <span class="chip">主运行链：Campus 地图 + Planning LLM#1~#4 + ADM LLM-A/B + 物理执行 + Dashboard</span>
+      <span class="chip">未纳入逐行解释：.meta / onnx / pt / tfevents 等二进制与 Unity 资源元文件</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav>
+    <a href="#scope">范围与结论</a>
+    <a href="#findings">关键发现</a>
+    <a href="#main-flow">主任务链</a>
+    <a href="#example">示例走查</a>
+    <a href="#state">状态与消息</a>
+    <a href="#catalog-runtime">运行时代码全表</a>
+    <a href="#catalog-docs">文档与配置全表</a>
+    <a href="#diff">设计图与现状差异</a>
+  </nav>
+
+  <section id="scope">
+    <h2>范围与结论</h2>
+    <div class="grid grid-2">
+      <div class="card">
+        <span class="flag ok">当前真实主链</span>
+        <p>
+          当前真正形成闭环的主链是：
+          <span class="mono">AgentSelectionManager / dashboard -> PlanningModule -> CommunicationModule/Manager -> ActionDecisionModule -> AgentMotionExecutor -> PerceptionModule -> AgentStateServer + web/dashboard.html</span>。
+        </p>
+        <p>
+          地图主底座是 <span class="mono">CampusJsonMapLoader + CampusGrid2D</span>，旧的 <span class="mono">MapGenerator</span> 和多份旧流程图更像保留分支或历史方案。
+        </p>
+      </div>
+      <div class="card">
+        <span class="flag p2">整体判断</span>
+        <p>
+          项目已经具备“多智能体任务提交、组内协商、步骤拆解、原子动作执行、局部冲突协商、Web 可视化”的完整骨架，
+          但仍存在三类明显断层：
+        </p>
+        <ul>
+          <li>一类是 <strong>编译级断链</strong>，旧字段引用没有清干净。</li>
+          <li>一类是 <strong>行为级断链</strong>，感知事件和记忆反思链没有真正闭环。</li>
+          <li>一类是 <strong>文档级漂移</strong>，部分 Mermaid 图和旧说明仍在讲已被替换的类名和流程。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="findings">
+    <h2>关键发现</h2>
+    <div class="grid grid-2">
+      <div class="card">
+        <span class="flag p0">P0 编译断链</span>
+        <p>
+          <span class="mono">LLM_Modules/ActionDecisionModule.cs:88</span> 和
+          <span class="mono">Other_Modules/AgentStateServer.cs:204</span> 仍在访问
+          <span class="mono">PlanningModule.currentMission</span>，但当前
+          <span class="mono">LLM_Modules/PlanningModule.cs</span> 已没有这个字段定义。
+        </p>
+        <p>
+          这不是“逻辑可能不准”，而是静态搜索层面就已经能确认的旧接口残留。只要 Unity 重新编译到这些文件，当前代码就会在这一层卡住。
+        </p>
+      </div>
+
+      <div class="card">
+        <span class="flag p0">P0 密钥泄露</span>
+        <p>
+          <span class="mono">LLM_API/LLMInterface.cs:61</span> 和
+          <span class="mono">LLM_API/LLMInterface.cs:93</span> 在默认配置里写入了真实形态的 API Key。
+        </p>
+        <p>
+          这意味着源码、日志、Inspector 序列化、多人协作仓库都会直接暴露密钥，必须立刻改成环境变量、外部配置或本地忽略文件注入。
+        </p>
+      </div>
+
+      <div class="card">
+        <span class="flag p1">P1 感知重规划失效</span>
+        <p>
+          <span class="mono">PerceptionModule</span> 会把敌方和临时障碍事件送到
+          <span class="mono">ActionDecisionModule.OnPerceptionEvent()</span>，
+          见 <span class="mono">Other_Modules/PerceptionModule.cs:507</span> 和
+          <span class="mono">Other_Modules/PerceptionModule.cs:598</span>。
+        </p>
+        <p>
+          但 <span class="mono">LLM_Modules/ActionDecisionModule.cs:607-610</span> 里的
+          <span class="mono">EventRequiresReplan()</span> 永远返回 <span class="mono">false</span>，
+          所以这些事件会入队，但运行态不会因事件真正触发 LLM-B 重规划。
+        </p>
+      </div>
+
+      <div class="card">
+        <span class="flag p1">P1 记忆/反思链未真正接入主链</span>
+        <p>
+          <span class="mono">MemoryModule</span> 和 <span class="mono">ReflectionModule</span> 实现得很完整，
+          但跨文件调用检索显示，真正被运行链使用的只有
+          <span class="mono">AgentLLMControl.RecordEvent() -> MemoryModule.AddMemory()</span> 这种旧接口。
+        </p>
+        <p>
+          当前没有看到 <span class="mono">RememberPlanSnapshot</span>、
+          <span class="mono">RememberActionExecution</span>、
+          <span class="mono">NotifyBlocked</span>、
+          <span class="mono">GetActionGuidance</span> 等被 Planning / ADM / 执行层稳定调用，
+          所以“学习反思闭环”更多停留在模块已实现、但未接线的状态。
+        </p>
+      </div>
+
+      <div class="card">
+        <span class="flag p2">P2 文档与实际实现漂移</span>
+        <p>
+          多份设计图仍在使用
+          <span class="mono">CoordinationManager</span>、
+          <span class="mono">MLAgentsController</span>、
+          <span class="mono">AnalyzeMissionDescription</span>、
+          <span class="mono">ReceiveMissionAssignment</span> 等旧名词，
+          而实际代码已经切到
+          <span class="mono">CommunicationManager</span>、
+          <span class="mono">AgentMotionExecutor</span>、
+          <span class="mono">RunLLM1-4</span> 与四阶段槽位协商。
+        </p>
+      </div>
+
+      <div class="card">
+        <span class="flag p2">P2 UI / 工作区存在历史残留</span>
+        <p>
+          <span class="mono">Agents/UIController.cs</span> 的手动控制按钮逻辑为空，
+          <span class="mono">.vscode/launch.json</span> 指向的是无关的 C 程序路径，
+          说明仓库里仍混有历史实验或个人工作区残留配置。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section id="main-flow">
+    <h2>主任务流程链</h2>
+    <p>
+      下面这条链是按当前代码静态串出来的“真实执行版”，每一步都标了输入、处理中枢、状态变化、输出和下游影响。
+    </p>
+    <div class="flow">
+      <div class="step">
+        <strong>入口层：任务是怎么进入系统的</strong>
+        <ul>
+          <li>本地 UI 入口：<span class="mono">Other_Modules/AgentSelectionManager.cs</span> 选中某个 Agent 后调用 <span class="mono">PlanningModule.SubmitMissionRequest(desc, agentCount)</span>。</li>
+          <li>Web 入口：<span class="mono">web/dashboard.html</span> 调 <span class="mono">POST /api/task</span>，后台由 <span class="mono">AgentStateServer</span> 入队，再在 Unity 主线程找到一个空闲 <span class="mono">PlanningModule</span> 提交任务。</li>
+          <li>假设前提：场景里至少已有一个可工作的智能体与 <span class="mono">CommunicationManager</span> / <span class="mono">LLMInterface</span>。</li>
+        </ul>
+      </div>
+
+      <div class="step">
+        <strong>规划阶段 1：自然语言任务被解析成结构化任务</strong>
+        <ul>
+          <li>执行者：<span class="mono">PlanningModule.RunLLM1()</span>。</li>
+          <li>输入：任务描述 + 智能体数量。</li>
+          <li>处理：调用 <span class="mono">LLMInterface.SendRequest()</span>，要求 LLM 返回 <span class="mono">ParsedMission</span> JSON，核心字段是 <span class="mono">relType / groupCnt / groupMsns / timeLimit</span>。</li>
+          <li>状态变化：<span class="mono">PlanningState.Idle -> Parsing</span>。</li>
+          <li>输出：本轮任务 ID <span class="mono">msn_xxx</span> 与分组草案。</li>
+        </ul>
+      </div>
+
+      <div class="step">
+        <strong>规划阶段 2：本地分组并广播 GroupBootstrap</strong>
+        <ul>
+          <li>执行者：<span class="mono">PlanningModule.AssignGroups()</span>。</li>
+          <li>处理：根据 <span class="mono">groupCnt</span> 把当前已注册的 Agent ID 分组，再通过 <span class="mono">SelectLeader()</span> 用电量最高者做组长。</li>
+          <li>消息：经 <span class="mono">CommunicationModule.SendScopedMessage(Public, GroupBootstrap)</span> 广播给所有智能体。</li>
+          <li>状态变化：<span class="mono">Parsing -> Grouping</span>。</li>
+          <li>风险：组长选择依赖所有 Agent 已经注册进 <span class="mono">CommunicationManager</span>；仓库里已有 <span class="mono">p2_design_issues.html</span> 专门记录这一类时序问题。</li>
+        </ul>
+      </div>
+
+      <div class="step">
+        <strong>规划阶段 3：组长生成 PlanSlot，成员选择槽位</strong>
+        <ul>
+          <li>组长走 <span class="mono">PlanningModule.RunLLM2()</span>：基于组任务和成员数，让 LLM 生成与成员数等长的 <span class="mono">PlanSlot[]</span>。</li>
+          <li>成员走 <span class="mono">PlanningModule.RunLLM3()</span>：结合自己位置、电量，从可选槽中挑一个最适合自己的槽位。</li>
+          <li>消息链：<span class="mono">SlotBroadcast -> SlotSelect -> SlotConfirm</span>。</li>
+          <li>状态变化：组长常见是 <span class="mono">SlotGen</span>，成员常见是 <span class="mono">SlotPick</span>。</li>
+          <li>冲突解决策略：当前实现是“组长先处理自己，再按选择到达时间先到先得”，冲突者被分配到剩余槽位。</li>
+        </ul>
+      </div>
+
+      <div class="step">
+        <strong>规划阶段 4：确认槽位后拆成步骤</strong>
+        <ul>
+          <li>执行者：<span class="mono">PlanningModule.RunLLM4()</span>。</li>
+          <li>输入：某个 Agent 已确认的 <span class="mono">PlanSlot</span>。</li>
+          <li>处理：把槽位描述 <span class="mono">desc</span> 拆成顺序化的 <span class="mono">PlanStep[]</span>，并把协同约束绑定到最合适的步骤上。</li>
+          <li>输出：<span class="mono">AgentPlan</span>，内部有 <span class="mono">steps[]</span> 与 <span class="mono">curIdx</span>。</li>
+          <li>状态变化：<span class="mono">StepGen -> Active</span>。</li>
+        </ul>
+      </div>
+
+      <div class="step">
+        <strong>自治触发门：什么时候从“有步骤”变成“开始决策”</strong>
+        <ul>
+          <li>执行者：<span class="mono">Agents/IntelligentAgent.cs</span>。</li>
+          <li>处理：每 2 秒检查一次 <span class="mono">ShouldMakeDecision()</span>。当 <span class="mono">PlanningModule.HasActiveMission()</span> 为真且当前状态是 <span class="mono">Idle</span>，就启动 <span class="mono">MakeDecisionCoroutine()</span>。</li>
+          <li>它本质上是“任务节拍器”，不负责推理内容，只负责决定何时唤起 ADM。</li>
+        </ul>
+      </div>
+
+      <div class="step">
+        <strong>执行规划：PlanStep 被 ADM 解释成 AtomicAction[]</strong>
+        <ul>
+          <li>执行者：<span class="mono">LLM_Modules/ActionDecisionModule.cs</span>。</li>
+          <li>链路：<span class="mono">DecideNextAction() -> StartStep() -> RunLLMA()</span>。</li>
+          <li>输入：当前步骤文本、角色、当前位置、协同约束、周边相对地图、当前感知快照。</li>
+          <li>地图文本来源：<span class="mono">MapTopologySerializer.GetAgentRelativeMap()</span>。</li>
+          <li>输出：<span class="mono">AtomicAction[]</span>，动作类型包括 <span class="mono">MoveTo / PatrolAround / Observe / Wait / FormationHold / Broadcast / Evade</span>。</li>
+          <li>状态变化：<span class="mono">ADMStatus.Idle -> Interpreting -> Negotiating</span>。</li>
+        </ul>
+      </div>
+
+      <div class="step">
+        <strong>协商窗口：先广播自己的动作目标，再决定是否需要重规划</strong>
+        <ul>
+          <li>执行者：<span class="mono">ActionDecisionModule.BroadcastContextUpdate()</span>。</li>
+          <li>处理：把自己当前动作目标集合整理成 <span class="mono">AgentContextUpdate</span>，通过 <span class="mono">MessageType.BoardUpdate</span> 发给同队。</li>
+          <li>黑板缓存：每个 Agent 在本地维护 <span class="mono">blackboard</span>，记录队友当前位置、角色、当前动作、计划目标。</li>
+          <li>协商结果：<span class="mono">CheckConflictsAndMaybeReplan()</span> 统计目标冲突，按“总冲突数更大优先、再按 AgentID 字典序”选出 resolver，必要时走 <span class="mono">RunLLMB()</span> 重规划。</li>
+        </ul>
+      </div>
+
+      <div class="step">
+        <strong>物理执行：AtomicAction 被刚体控制器逐条消费</strong>
+        <ul>
+          <li>执行者：<span class="mono">Other_Modules/AgentMotionExecutor.cs</span>。</li>
+          <li>轮询方式：每帧从 <span class="mono">adm.GetCurrentAction()</span> 取当前动作，动作变了就启动对应协程。</li>
+          <li><span class="mono">MoveTo</span> 会把地名解析到 <span class="mono">CampusGrid2D</span> 的格子，再调用 A*，最终转成世界坐标 waypoint。</li>
+          <li><span class="mono">Observe</span> 会强制调用 <span class="mono">PerceptionModule.SenseOnce()</span>。</li>
+          <li>动作结束后回调 <span class="mono">adm.CompleteCurrentAction()</span>，当动作队列走完，ADM 再通知 <span class="mono">PlanningModule.CompleteCurrentStep()</span>。</li>
+        </ul>
+      </div>
+
+      <div class="step">
+        <strong>感知与反馈：环境变化怎样反向影响执行</strong>
+        <ul>
+          <li>执行者：<span class="mono">Other_Modules/PerceptionModule.cs</span>。</li>
+          <li>输入：基于 Agent 类型的射线扫描，检测层按障碍 / 资源 / Agent 分层处理。</li>
+          <li>输出一：更新 <span class="mono">AgentDynamicState.NearbyAgents</span> 和 <span class="mono">DetectedSmallNodes</span>。</li>
+          <li>输出二：登记到全局 <span class="mono">SmallNodeRegistry</span>，供后续查询。</li>
+          <li>输出三：敌方或临时障碍会向 ADM 发事件，但当前默认实现不会因这些事件真正触发重规划，这是上面列出的 P1 问题。</li>
+        </ul>
+      </div>
+
+      <div class="step">
+        <strong>监控与运维：系统如何把运行态暴露给浏览器</strong>
+        <ul>
+          <li>执行者：<span class="mono">Other_Modules/AgentStateServer.cs</span>。</li>
+          <li>主线程定期采样 Agent 快照、消息日志、位置历史、地图元数据、LLM 日志。</li>
+          <li>后台线程用 <span class="mono">HttpListener</span> 提供 <span class="mono">/api/state</span>、<span class="mono">/api/messages</span>、<span class="mono">/api/history</span>、<span class="mono">/api/map</span>、<span class="mono">/api/gridmap</span>、<span class="mono">/api/llm-logs</span>、<span class="mono">/api/task</span>、<span class="mono">/api/model</span>。</li>
+          <li>前端页面 <span class="mono">web/dashboard.html</span> 把这些数据画成 2D 地图、Agent 卡片、通信面板、LLM 日志和控制台。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="example">
+    <h2>示例走查</h2>
+    <p>
+      下面用一个当前代码最容易映射的例子，把“任务链”翻译成你能跟着代码走的故事。
+    </p>
+
+    <div class="card">
+      <h3>例子：4 架无人机执行“侦察 A 楼北侧并实时共享异常”</h3>
+      <div class="codeblock">1. 用户在 AgentSelectionManager 或 dashboard 输入任务：
+“4 架无人机侦察 A 楼北侧并实时共享异常”
+
+2. PlanningModule.RunLLM1() 可能得到：
+{
+  "relType": "Cooperation",
+  "groupCnt": 1,
+  "groupMsns": ["协作侦察A楼北侧并共享异常信息"],
+  "timeLimit": 300
+}
+
+3. 组长 RunLLM2() 可能得到 4 个槽位：
+- s0 Scout: 从东路接近 A 楼北侧
+- s1 Scout: 从西路接近 A 楼北侧
+- s2 Supporter: 在高空维持中继
+- s3 Defender: 在北门附近待命并回传异常
+
+4. 每个成员 RunLLM3() 选槽。
+比如离东路更近、电量更高的 drone_01 选择 s0。
+
+5. drone_01 的 RunLLM4() 可能得到步骤：
+- step_1: 从当前位置飞往 A 楼北侧
+- step_2: 对 A 楼北侧进行侦察
+- step_3: 广播侦察结果
+
+6. ActionDecisionModule.RunLLMA() 继续把 step_1 变成动作：
+- aa_1 Evade: 上升到安全高度
+- aa_2 MoveTo: 飞往 A楼北侧
+- aa_3 Observe: 观察 15 秒
+- aa_4 Broadcast: 向队友广播侦察状态
+
+7. AgentMotionExecutor 执行：
+- MoveTo -> CampusGrid2D 解析地名 + A*
+- Observe -> 触发 PerceptionModule.SenseOnce()
+- Broadcast -> BoardUpdate 广播给队友
+
+8. 如果队友和自己都计划去同一目标，
+ADM 会在 Negotiating 阶段用黑板比较 plannedTargets，
+必要时由 resolver 调用 RunLLMB() 重新生成动作队列。</div>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>这个例子里地图如何参与</h3>
+        <ul>
+          <li><span class="mono">CampusJsonMapLoader</span> 把校园 JSON 建成可视地物。</li>
+          <li><span class="mono">CampusGrid2D</span> 把这些地物离散成可寻路网格，并保留地名、uid、空间画像。</li>
+          <li><span class="mono">MapTopologySerializer</span> 把地图压成 LLM 能读的相对文本，而不是把整个网格丢给模型。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>这个例子里通信如何参与</h3>
+        <ul>
+          <li>规划期消息：<span class="mono">GroupBootstrap / SlotBroadcast / SlotSelect / SlotConfirm / StartExecution</span>。</li>
+          <li>执行期消息：<span class="mono">BoardUpdate</span>。</li>
+          <li>监控期日志：<span class="mono">CommunicationManager.RecentMessageLog</span> 被仪表板读取。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="state">
+    <h2>状态与消息</h2>
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>PlanningState</h3>
+        <p>
+          <span class="mono">Idle -> Parsing -> Grouping -> SlotGen / SlotPick -> StepGen -> Active -> Done / Failed</span>
+        </p>
+        <p>
+          其中 <span class="mono">PlanningModule</span> 真正对外暴露给 ADM 的只有三个关键接口：
+          <span class="mono">HasActiveMission()</span>、
+          <span class="mono">GetCurrentStep()</span>、
+          <span class="mono">CompleteCurrentStep()</span>。
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>ADMStatus</h3>
+        <p>
+          <span class="mono">Idle -> Interpreting -> Negotiating -> Running -> Interrupted / Replanning -> Done / Failed</span>
+        </p>
+        <p>
+          这层是“步骤内执行状态”，不是任务总状态。一个任务完成会经过多个 ADM 周期。
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>主消息类型</h3>
+        <ul>
+          <li><span class="mono">GroupBootstrap</span>：全局分组通知。</li>
+          <li><span class="mono">SlotBroadcast</span>：组长发可选槽位。</li>
+          <li><span class="mono">SlotSelect</span>：成员回报选择。</li>
+          <li><span class="mono">SlotConfirm</span>：组长确认最终槽位。</li>
+          <li><span class="mono">StartExecution</span>：全组开始步骤拆解。</li>
+          <li><span class="mono">BoardUpdate</span>：执行态黑板更新。</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>当前链路的边界保护</h3>
+        <ul>
+          <li><span class="mono">PlanningModule.CheckTimeout()</span> 防止长时间卡死在中间状态。</li>
+          <li><span class="mono">ActionDecisionModule.MaxReplanCount</span> 防止黑板冲突无限重规划。</li>
+          <li><span class="mono">CommunicationManager</span> 对消息日志做 2000 条上限裁剪。</li>
+          <li><span class="mono">SmallNodeRegistry</span> 对动态节点做 TTL 清理。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="catalog-runtime">
+    <h2>运行时代码全表</h2>
+    <p>这一节按目录覆盖所有 <span class="mono">.cs</span> 文件，不遗漏当前脚本目录里的任意一个运行时代码文件。</p>
+
+    <details open>
+      <summary>Agents（5 个文件）</summary>
+      <table>
+        <thead>
+          <tr><th>文件</th><th>角色</th><th>主入口 / 关键结构</th><th>在任务链里的位置</th><th>审查备注</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Agents/IntelligentAgent.cs</td><td>智能体总控器</td><td><span class="mono">InitializeAgent / CheckForDecision / MakeDecisionCoroutine</span></td><td>把 Planning 的步骤节拍交给 ADM，是“任务转执行”的门</td><td>当前主链核心之一；负责编排模块，但不直接做 LLM 推理</td></tr>
+          <tr><td>Agents/AgentLLMControl.cs</td><td>LLM 附属模块装配器</td><td><span class="mono">InitializeAgent / RecordEvent / StartDecisionProcess</span></td><td>补挂 Memory / Reflection / Planning / ADM</td><td>更像旧接口兼容层；真正决策入口现在主要在 <span class="mono">IntelligentAgent</span></td></tr>
+          <tr><td>Agents/AgentProperties.cs</td><td>静态属性与动态状态数据容器</td><td><span class="mono">AgentProperties / AgentDynamicState</span></td><td>被几乎所有模块读取</td><td>项目的共享基础数据模型</td></tr>
+          <tr><td>Agents/AgentSpawner.cs</td><td>运行时生成 Agent</td><td><span class="mono">OpenSpawnPanel / OnSpawnButtonClicked / SpawnSingleAgent / InitializeAgent</span></td><td>场景初始化与实验入口</td><td>当前已切到 <span class="mono">CampusGrid2D</span> 判可通行；manual 模式是主路径</td></tr>
+          <tr><td>Agents/UIController.cs</td><td>基础 UI 控制器</td><td><span class="mono">OnCreateAgentClicked / RefreshAgentList</span></td><td>辅助入口</td><td><span class="mono">OnManualControlClicked()</span> 为空，属于未完成 UI</td></tr>
+        </tbody>
+      </table>
+    </details>
+
+    <details open>
+      <summary>Communication_Module（2 个文件）</summary>
+      <table>
+        <thead>
+          <tr><th>文件</th><th>角色</th><th>主入口 / 关键结构</th><th>在任务链里的位置</th><th>审查备注</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Communication_Module/CommunicationManager.cs</td><td>全局消息路由器</td><td><span class="mono">RegisterAgent / ProcessMessage / ResolveRecipients</span></td><td>跨 Agent 协商与日志中枢</td><td>主链核心；Public/Team/DirectAgent 三层路由清楚</td></tr>
+          <tr><td>Communication_Module/CommunicationModule.cs</td><td>单 Agent 消息端点</td><td><span class="mono">SendScopedMessage / ReceiveMessage / ProcessMessages / HandleMessage</span></td><td>把规划消息和黑板消息转发给 Planning / ADM</td><td>当前四阶段协商和 BoardUpdate 都走这里</td></tr>
+        </tbody>
+      </table>
+    </details>
+
+    <details open>
+      <summary>GameStartSettings（1 个文件）</summary>
+      <table>
+        <thead>
+          <tr><th>文件</th><th>角色</th><th>主入口 / 关键结构</th><th>在任务链里的位置</th><th>审查备注</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>GameStartSettings/StartGameTopDownCamera.cs</td><td>开始按钮后的俯视镜头切换</td><td><span class="mono">OnClickStart / ApplyTopDownFullView</span></td><td>仅影响演示视角</td><td>更多是展示层；部分 Inspector 参数最终没有完全用起来，核心逻辑是硬切到正交俯视</td></tr>
+        </tbody>
+      </table>
+    </details>
+
+    <details open>
+      <summary>LLM_API（3 个文件）</summary>
+      <table>
+        <thead>
+          <tr><th>文件</th><th>角色</th><th>主入口 / 关键结构</th><th>在任务链里的位置</th><th>审查备注</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>LLM_API/LLMInterface.cs</td><td>统一 LLM 请求封装</td><td><span class="mono">SendRequest / BuildRequestJson / ExtractContent / SetModel</span></td><td>Planning 和 ADM 的网络出口</td><td>主链核心；存在硬编码 API Key 高风险问题</td></tr>
+          <tr><td>LLM_API/LLMJsonUtils.cs</td><td>通用 JSON 片段提取器</td><td><span class="mono">ExtractJson</span></td><td>本应给 Planning/ADM 共用</td><td>工具已存在，但两大模块仍保留各自私有实现，说明重构未收尾</td></tr>
+          <tr><td>LLM_API/LLMResponse.cs</td><td>旧 OpenAI 风格响应模型</td><td><span class="mono">LLMResponse / Choice / Usage</span></td><td>数据结构层</td><td>当前主要解析改走 <span class="mono">JObject.SelectToken</span>，本文件更像兼容模型</td></tr>
+        </tbody>
+      </table>
+    </details>
+
+    <details open>
+      <summary>LLM_Modules（5 个文件）</summary>
+      <table>
+        <thead>
+          <tr><th>文件</th><th>角色</th><th>主入口 / 关键结构</th><th>在任务链里的位置</th><th>审查备注</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>LLM_Modules/PlanningModule.cs</td><td>四阶段任务规划状态机</td><td><span class="mono">SubmitMissionRequest / RunLLM1~4 / OnGroupBootstrap / ResolveAndConfirm</span></td><td>任务主链上半段核心</td><td>当前项目最关键的“任务拆组 -> 槽位 -> 步骤”控制器</td></tr>
+          <tr><td>LLM_Modules/PlanningData.cs</td><td>规划层共享数据模型</td><td><span class="mono">ParsedMission / PlanSlot / PlanStep / AgentPlan / AtomicAction / AgentContextUpdate</span></td><td>规划和执行的合同层</td><td>读懂这一个文件能大幅降低理解成本</td></tr>
+          <tr><td>LLM_Modules/ActionDecisionModule.cs</td><td>步骤转原子动作、黑板协商、重规划</td><td><span class="mono">DecideNextAction / RunLLMA / RunLLMB / BroadcastContextUpdate</span></td><td>任务主链下半段核心</td><td>当前最复杂的行为层；存在 <span class="mono">currentMission</span> 旧字段残留和感知重规划失效</td></tr>
+          <tr><td>LLM_Modules/MemoryModule.cs</td><td>结构化记忆检索</td><td><span class="mono">Remember* / Recall / BuildPlanningContext / BuildActionContext</span></td><td>理论上应给 Planning / ADM 提供经验上下文</td><td>模块本身成熟，但当前与主链接线不足</td></tr>
+          <tr><td>LLM_Modules/ReflectionModule.cs</td><td>复盘与策略沉淀</td><td><span class="mono">NotifyActionOutcome / NotifyBlocked / TriggerReflection / GetActionGuidance</span></td><td>理论上应给记忆层回灌策略</td><td>设计完整，但当前更多处于“能力已实现、调用未打通”状态</td></tr>
+        </tbody>
+      </table>
+    </details>
+
+    <details open>
+      <summary>Maps（9 个文件）</summary>
+      <table>
+        <thead>
+          <tr><th>文件</th><th>角色</th><th>主入口 / 关键结构</th><th>在任务链里的位置</th><th>审查备注</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Maps/CampusJsonMapLoader.cs</td><td>校园 JSON 地图建模器</td><td><span class="mono">ImportAndBuild / ParseCampusJson / SpawnExtrudedArea / SpawnStrokeRibbon</span></td><td>提供底图几何和可视对象</td><td>当前地图链起点；负责把 GIS 风格数据变成场景可见网格底座</td></tr>
+          <tr><td>Maps/CampusGrid2D.cs</td><td>二维逻辑网格与地物语义索引</td><td><span class="mono">BuildGridFromCampusJson / TryResolveFeatureCell / FindPathAStar / featureSpatialProfileByUid</span></td><td>给 Planning / ADM / 执行层提供“名字到网格”的统一支撑</td><td>当前地图主链核心；文件体量最大、职责也最重</td></tr>
+          <tr><td>Maps/MapTopologySerializer.cs</td><td>地图压缩成 LLM 可读文本</td><td><span class="mono">GetGlobalFoldedMap / GetAgentRelativeMap / GetTaskSubgraph</span></td><td>LLM prompt 的地图接口层</td><td>这是“地图太大不能直接喂模型”的关键中间层</td></tr>
+          <tr><td>Maps/AStarPathVisualizer.cs</td><td>A* 路径显示器</td><td><span class="mono">ShowPath / ClearPath</span></td><td>执行层调试可视化</td><td>由 <span class="mono">AgentMotionExecutor</span> 驱动</td></tr>
+          <tr><td>Maps/CameraController.cs</td><td>场景相机控制器</td><td><span class="mono">SetFreeCameraMode / SetPivot / FitToBoundsXZ</span></td><td>交互与观察层</td><td>辅助浏览地图，不参与任务逻辑</td></tr>
+          <tr><td>Maps/CampusMiniMap2D.cs</td><td>2D 小地图组件</td><td><span class="mono">InitializeMiniMap / FocusOnFullMap / FocusOnAllDrones</span></td><td>前端式场景内可视化</td><td>与 Web Dashboard 不同，这是 Unity 内部 UI 小地图</td></tr>
+          <tr><td>Maps/CampusSmallNodeSpawner.cs</td><td>小节点刷点器</td><td><span class="mono">SpawnNodes / ClearNodes / SpawnRule / CampusSmallNodeWanderMover</span></td><td>给感知层提供树木、行人、资源点等运行时实体</td><td>感知链的重要上游</td></tr>
+          <tr><td>Maps/SmallNodeRuntimeInfo.cs</td><td>小节点运行时语义标签</td><td><span class="mono">nodeType / isDynamic / blocksMovement</span></td><td>Perception 对场景对象做语义判别的第一手信息</td><td>虽小但关键，没有它感知会退回猜测式识别</td></tr>
+          <tr><td>Maps/MapGenerator.cs</td><td>旧规则网格地图生成器</td><td><span class="mono">GenerateMap / SaveMap / LoadMap / RegenerateResourcesAndObstacles</span></td><td>旧分支地图系统</td><td>当前主链已转 Campus 地图；此文件更像保留实验分支或训练用旧系统</td></tr>
+        </tbody>
+      </table>
+    </details>
+
+    <details open>
+      <summary>Other_Modules（7 个文件）</summary>
+      <table>
+        <thead>
+          <tr><th>文件</th><th>角色</th><th>主入口 / 关键结构</th><th>在任务链里的位置</th><th>审查备注</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Other_Modules/AgentMotionExecutor.cs</td><td>原子动作物理执行器</td><td><span class="mono">PollADM / ExecuteAction / DoMoveTo / DoObserve</span></td><td>执行链核心</td><td>取代旧 MLAgentsController，当前是真正的动作落地层</td></tr>
+          <tr><td>Other_Modules/PerceptionModule.cs</td><td>环境感知与共享小节点登记</td><td><span class="mono">SenseOnce / UpdatePerception / ProcessValidDetection / SmallNodeRegistry</span></td><td>感知反馈链核心</td><td>功能很完整，但和 ADM 重规划的最后一步还没闭环</td></tr>
+          <tr><td>Other_Modules/PerceptionVisualizer.cs</td><td>感知结果显示器</td><td><span class="mono">OnDetectionUpdated / OnEnemyDetected / OnEmergencyDetected</span></td><td>辅助观察层</td><td>不改变业务逻辑，但对调试很有帮助</td></tr>
+          <tr><td>Other_Modules/IPerceptionVisualizer.cs</td><td>感知可视化接口</td><td><span class="mono">DetectionPointSnapshot / IPerceptionVisualizer</span></td><td>感知层与显示层解耦</td><td>接口设计清楚</td></tr>
+          <tr><td>Other_Modules/AgentStateServer.cs</td><td>HTTP 服务与快照采样</td><td><span class="mono">CaptureSnapshot / StartHttpServer / ListenLoop</span></td><td>浏览器监控和远程控制链核心</td><td>重要，但当前也带着 <span class="mono">currentMission</span> 旧字段引用</td></tr>
+          <tr><td>Other_Modules/AgentSelectionManager.cs</td><td>选中 Agent 并下发任务的 UI 控制器</td><td><span class="mono">TrySelectAgent / OnSubmitMissionClicked</span></td><td>本地任务入口</td><td>是“从点击某个 Agent 到发任务”的最直接入口</td></tr>
+          <tr><td>Other_Modules/CoreEnums.cs</td><td>核心枚举与通用消息定义</td><td><span class="mono">AgentType / RoleType / MessageType / PlanningState / ADMStatus / AgentMessage</span></td><td>整个项目的类型地基</td><td>对理解项目术语最重要的基础文件之一</td></tr>
+        </tbody>
+      </table>
+    </details>
+  </section>
+
+  <section id="catalog-docs">
+    <h2>文档与配置全表</h2>
+    <p>这一节覆盖当前脚本目录里所有非 <span class="mono">.cs</span> 的说明文件、前端页面和配置文件。</p>
+
+    <details open>
+      <summary>根目录文档 / 页面 / 配置</summary>
+      <table>
+        <thead>
+          <tr><th>文件</th><th>类型</th><th>作用</th><th>与当前实现关系</th><th>备注</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>AGENTS.md</td><td>协作说明</td><td>约束修改原则、注释要求、Debug 日志要求</td><td>是当前协作说明，不是运行时代码</td><td>对后续维护风格影响很大</td></tr>
+          <tr><td>README.md</td><td>项目总览</td><td>概述 LLM 驱动多智能体协同框架和主模块</td><td>整体上贴近当前代码，但个别“已知限制”说明了尚未收尾的问题</td><td>是理解主链的最快入口之一</td></tr>
+          <tr><td>p2_design_issues.html</td><td>设计缺陷说明</td><td>总结 P2 冲突解决系统的设计问题</td><td>仍有参考价值，尤其是组长选择与序列化风险</td><td>这是仓库里已有的一份“历史审查报告”</td></tr>
+          <tr><td>trainer_config.yaml</td><td>训练配置</td><td>ML-Agents PPO 训练超参数</td><td>对应旧训练链，不直接参与当前 Campus+LLM 主流程</td><td>说明仓库保留了强化学习实验支线</td></tr>
+          <tr><td>results/my_first_training/configuration.yaml</td><td>训练产物配置</td><td>某次训练 run 的落盘配置</td><td>属于结果工件说明，不是运行态主链</td><td>和 <span class="mono">results</span> 下模型文件配套</td></tr>
+          <tr><td>web/dashboard.html</td><td>Web 前端</td><td>2D 地图、Agent 卡片、通信、LLM 日志、控制台、调试页</td><td>与 <span class="mono">AgentStateServer</span> 紧密联动，是当前最完整的监控界面</td><td>前后端耦合度高，但功能面覆盖很全</td></tr>
+        </tbody>
+      </table>
+    </details>
+
+    <details open>
+      <summary>photo 目录设计说明（9 个文件）</summary>
+      <table>
+        <thead>
+          <tr><th>文件</th><th>作用</th><th>与现状匹配度</th><th>备注</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>photo/planningModule.md</td><td>早期规划模块说明，描述 AnalyzeMissionDescription / ReceiveMissionAssignment 等旧命名流程</td><td>中低</td><td>可帮助理解设计意图，但当前代码已经切换到 LLM#1~#4 和槽位协商</td></tr>
+          <tr><td>photo/地图系统简化介绍.md</td><td>解释 CampusJsonMapLoader、CampusGrid2D、CampusSmallNodeSpawner 的地图分层关系</td><td>高</td><td>这份文档和当前地图实现非常接近</td></tr>
+          <tr><td>photo/ActDecison流程.mmd</td><td>动作决策流程图</td><td>低</td><td>仍提到 <span class="mono">MLAgentsController</span>，而当前代码已改成 <span class="mono">AgentMotionExecutor</span></td></tr>
+          <tr><td>photo/Agent-Agent通信架构.mmd</td><td>Agent 间通信示意图</td><td>中</td><td>表达了广播/同步思想，但没有体现当前的 Scoped Message 细节</td></tr>
+          <tr><td>photo/Agent-Server通信架构.mmd</td><td>Agent 到中心协调/网络的时序图</td><td>中低</td><td>更接近旧集中式协调设计，不等同于当前四阶段协商</td></tr>
+          <tr><td>photo/planning运行流程.mmd</td><td>旧版规划运行图</td><td>低</td><td>函数名与现代码不一致，可作为历史演进记录</td></tr>
+          <tr><td>photo/模块架构.mmd</td><td>整体模块架构图</td><td>低</td><td>仍包含 <span class="mono">CoordinationManager</span> / <span class="mono">MLAgentsController</span> 等旧组件名</td></tr>
+          <tr><td>photo/系统流程.mmd</td><td>系统总流程图</td><td>低</td><td>仍按旧奖励系统和协调管理器建模，不是当前主链</td></tr>
+          <tr><td>photo/学习反思架构.mmd</td><td>学习反思闭环图</td><td>中低</td><td>表达的是目标设计，但当前代码接线没有图里那么完整</td></tr>
+        </tbody>
+      </table>
+    </details>
+
+    <details open>
+      <summary>工作区配置（4 个文件）</summary>
+      <table>
+        <thead>
+          <tr><th>文件</th><th>作用</th><th>状态判断</th><th>备注</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>.vscode/c_cpp_properties.json</td><td>VS Code C/C++ IntelliSense 配置</td><td>与 Unity C# 主链无关</td><td>更像本机工具配置</td></tr>
+          <tr><td>.vscode/launch.json</td><td>VS Code 调试配置</td><td>明显陈旧</td><td>路径指向外部 C 程序目录，不属于当前 Unity 项目链</td></tr>
+          <tr><td>.vscode/settings.json</td><td>C/C++ Runner 配置</td><td>与当前脚本目录无直接业务关系</td><td>属于个人工作区残留概率较高</td></tr>
+          <tr><td>.claude/settings.local.json</td><td>本地权限配置</td><td>仅影响工具使用</td><td>不参与运行时逻辑</td></tr>
+        </tbody>
+      </table>
+    </details>
+  </section>
+
+  <section id="diff">
+    <h2>设计图与现状差异</h2>
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>现在代码里真正活着的术语</h3>
+        <ul>
+          <li><span class="mono">CommunicationManager</span>，不是 <span class="mono">CoordinationManager</span>。</li>
+          <li><span class="mono">AgentMotionExecutor</span>，不是 <span class="mono">MLAgentsController</span>。</li>
+          <li><span class="mono">RunLLM1 / RunLLM2 / RunLLM3 / RunLLM4</span>，不是 <span class="mono">AnalyzeMissionDescription / ParseAndCreatePlan</span>。</li>
+          <li><span class="mono">GroupBootstrap / SlotBroadcast / SlotSelect / SlotConfirm / StartExecution</span>，不是单次“任务广播 -> 接收任务”老链。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>还停留在“设计意图”的能力</h3>
+        <ul>
+          <li>记忆驱动 Planning prompt。</li>
+          <li>反思驱动 ADM 策略调整。</li>
+          <li>感知事件驱动真实重规划。</li>
+          <li>旧 ML-Agents 与当前 LLM 主链的统一桥接。</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <h3>一句话结论</h3>
+      <p>
+        如果你要向别人解释这个项目，最稳妥的说法不是“它已经完整实现了学习反思闭环”，
+        而是：“它已经完整实现了 <strong>LLM 任务协商 + 原子动作执行 + Web 监控</strong> 的主框架，
+        并且已经预留了 <strong>记忆、反思、感知重规划</strong> 的模块，但后两者还没有完全接上线。”
+      </p>
+    </div>
+  </section>
+
+  <div class="footnote">
+    <strong>说明与假设</strong><br>
+    1. 这份文档的分析范围限定在当前可访问目录 <span class="mono">Assets/Resource/Scripts</span>。<br>
+    2. 我没有在这里运行 Unity 场景或编译整个工程，因此对 Inspector 绑定、Prefab 挂载、Scene 组织的判断依赖脚本静态关系。<br>
+    3. 但像 <span class="mono">currentMission</span> 缺失、API Key 硬编码、事件重规划恒 false 这几类问题，不依赖运行场景，属于静态代码层面就可以确认的风险。<br>
+    4. 如果你后面需要，我可以继续基于这份 HTML，帮你再生成第二版“按类图/按时序图/按数据结构”拆开的更细化文档，或者直接开始修复上面列出的 P0/P1 问题。
+  </div>
+</div>
+</body>
+</html>

@@ -45,6 +45,68 @@ public static class MapTopologySerializer
     }
 
     /// <summary>
+    /// 生成以智能体为中心、按罗盘方位分组的相对地图（约100-150 token）。
+    /// 格式：[正北~80m] 图书馆 / [正东~120m] 教学楼A、体育馆
+    /// </summary>
+    public static string GetAgentRelativeMap(
+        CampusGrid2D grid, Vector3 agentWorldPos,
+        float radiusMeters = 300f, int maxEntries = 30)
+    {
+        if (grid?.featureSpatialProfileByUid == null) return "(地图不可用)";
+
+        // 收集半径内地标，按罗盘方位分组
+        var byDir = new Dictionary<string, List<(int dist, string name)>>();
+
+        int count = 0;
+        foreach (var p in grid.featureSpatialProfileByUid.Values)
+        {
+            if (count >= maxEntries) break;
+            string displayName = !string.IsNullOrWhiteSpace(p.runtimeAlias) ? p.runtimeAlias : p.name;
+            if (string.IsNullOrWhiteSpace(displayName)) continue;
+
+            float dist = Vector3.Distance(agentWorldPos, p.centroidWorld);
+            if (dist > radiusMeters) continue;
+
+            string dir = GetCompassDir(agentWorldPos, p.centroidWorld);
+            int distRounded = Mathf.RoundToInt(dist / 10f) * 10;
+
+            if (!byDir.ContainsKey(dir)) byDir[dir] = new List<(int, string)>();
+            byDir[dir].Add((distRounded, displayName));
+            count++;
+        }
+
+        if (byDir.Count == 0) return "（半径内无已知地标）";
+
+        // 组内按距离升序排列
+        var sb = new StringBuilder($"周边地图（以本机为中心，半径{(int)radiusMeters}m）：\n");
+        string[] orderedDirs = { "正北", "东北", "正东", "东南", "正南", "西南", "正西", "西北" };
+        foreach (string dir in orderedDirs)
+        {
+            if (!byDir.TryGetValue(dir, out var entries)) continue;
+            entries.Sort((a, b) => a.dist.CompareTo(b.dist));
+            // 同方位同距离的合并成同一行
+            var grouped = new Dictionary<int, List<string>>();
+            foreach (var (d, n) in entries)
+            {
+                if (!grouped.ContainsKey(d)) grouped[d] = new List<string>();
+                grouped[d].Add(n);
+            }
+            foreach (var kv in grouped)
+                sb.AppendLine($"[{dir}~{kv.Key}m] {string.Join("、", kv.Value)}");
+        }
+        return sb.ToString().TrimEnd();
+    }
+
+    // 仅供 GetAgentRelativeMap 内部使用。Z+ = 正北（Unity 左手坐标系）
+    private static string GetCompassDir(Vector3 from, Vector3 to)
+    {
+        float angle = Mathf.Atan2(to.x - from.x, to.z - from.z) * Mathf.Rad2Deg;
+        if (angle < 0f) angle += 360f;
+        string[] dirs = { "正北", "东北", "正东", "东南", "正南", "西南", "正西", "西北" };
+        return dirs[Mathf.RoundToInt(angle / 45f) % 8];
+    }
+
+    /// <summary>
     /// 生成 fromNode→toNode 任务子图（约100-150 token），含威胁标注。
     /// 格式：列出两节点路径走廊内的邻近地物及威胁标记。
     /// </summary>

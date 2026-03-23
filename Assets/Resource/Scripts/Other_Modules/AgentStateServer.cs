@@ -30,6 +30,7 @@ public class AgentStateSnapshot
     public string[] recentEvents;
     public string[] nearbyAgentIds;
     public string[] enemyAgentIds;
+    public float    perceptionRange;
     public float    timestamp;
 }
 
@@ -202,14 +203,15 @@ public class AgentStateServer : MonoBehaviour
                 currentTarget = curAction?.targetName ?? string.Empty,
                 missionDesc   = plan?.currentMission?.missionDescription ?? string.Empty,
                 currentStep   = curStep?.text ?? string.Empty,
-                plannedTargets = Array.Empty<string>(),
-                recentEvents  = Array.Empty<string>(),
+                plannedTargets = adm?.GetPlannedTargets() ?? Array.Empty<string>(),
+                recentEvents  = adm?.GetRecentEvents() ?? Array.Empty<string>(),
                 nearbyAgentIds = pm?.nearbyAgents
                     ?.ConvertAll(go => go?.GetComponent<IntelligentAgent>()?.Properties?.AgentID ?? "?")
                     ?.ToArray() ?? Array.Empty<string>(),
                 enemyAgentIds = pm?.enemyAgents
                     ?.ConvertAll(ea => ea?.Properties?.AgentID ?? "?")
                     ?.ToArray() ?? Array.Empty<string>(),
+                perceptionRange = a.Properties.PerceptionRange,
                 timestamp = Time.time
             };
             snapshots.Add(snap);
@@ -399,12 +401,34 @@ public class AgentStateServer : MonoBehaviour
 
     private void StartHttpServer()
     {
-        string[] prefixCandidates = {
+        // 同时注册两个前缀，避免 Host header 不匹配导致 Bad Request
+        string[] bothPrefixes = {
             $"http://127.0.0.1:{port}/",
             $"http://localhost:{port}/",
         };
 
-        foreach (var prefix in prefixCandidates)
+        // 策略1：同时注册两个前缀（最佳，覆盖所有访问方式）
+        try
+        {
+            listener = new HttpListener();
+            listener.Prefixes.Clear();
+            foreach (var p in bothPrefixes) listener.Prefixes.Add(p);
+            listener.Start();
+            running = true;
+            listenerThread = new Thread(ListenLoop) { IsBackground = true, Name = "AgentStateServer" };
+            listenerThread.Start();
+            Debug.Log($"[AgentStateServer] 已启动，同时监听 127.0.0.1 和 localhost:{port}");
+            return;
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[AgentStateServer] 双前缀启动失败: {e.Message}，回退到单前缀…");
+            try { listener?.Stop(); } catch { }
+            listener = null;
+        }
+
+        // 策略2：逐一尝试单前缀
+        foreach (var prefix in bothPrefixes)
         {
             try
             {
@@ -415,7 +439,7 @@ public class AgentStateServer : MonoBehaviour
                 running = true;
                 listenerThread = new Thread(ListenLoop) { IsBackground = true, Name = "AgentStateServer" };
                 listenerThread.Start();
-                Debug.Log($"[AgentStateServer] 已启动：{prefix}  （浏览器访问 http://127.0.0.1:{port}/）");
+                Debug.Log($"[AgentStateServer] 已启动：{prefix}");
                 return;
             }
             catch (Exception e)
@@ -428,7 +452,8 @@ public class AgentStateServer : MonoBehaviour
 
         Debug.LogError($"[AgentStateServer] 所有前缀均启动失败。" +
             $"可尝试以管理员身份运行 Unity，或执行：\n" +
-            $"  netsh http add urlacl url=http://127.0.0.1:{port}/ user=Everyone");
+            $"  netsh http add urlacl url=http://127.0.0.1:{port}/ user=Everyone\n" +
+            $"  netsh http add urlacl url=http://localhost:{port}/ user=Everyone");
     }
 
     private void ListenLoop()

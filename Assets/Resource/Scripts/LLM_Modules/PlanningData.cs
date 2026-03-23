@@ -47,6 +47,15 @@ public class SlotBroadcastPayload
     public PlanSlot[] slots;    // 可选计划槽，数量=本组成员数
 }
 
+/// <summary>步骤级协同约束条目，包含触发时机和约束内容。</summary>
+[Serializable]
+public class StepConstraint
+{
+    public string trigger;      // 约束生效时机（描述性，供人阅读）
+    public string slotRef;      // 约束涉及的另一个槽 ID，如 "s1"（可为空）
+    public string constraint;   // 约束内容
+}
+
 /// <summary>一个计划槽，代表组内一个成员需要承担的子任务。</summary>
 [Serializable]
 public class PlanSlot
@@ -55,7 +64,7 @@ public class PlanSlot
     public string role;         // 对应角色，如 "Scout"/"Defender"
     public string desc;         // 任务描述，成员和 LLM#3 读此字段判断是否适合
     public string doneCond;     // 完成条件
-    public string coordinationConstraint; // 协同约束，如"保持前探-侧护-后卫队形"
+    public StepConstraint[] coordinationConstraints; // 步骤级协同约束列表，空数组=无约束
 }
 
 /// <summary>成员发给组长的槽选择。</summary>
@@ -91,10 +100,10 @@ public class StartExecPayload
 [Serializable]
 public class PlanStep
 {
-    public string stepId;       // 步骤ID，格式 "step_N"，N 从 1 开始
-    public string text;         // 步骤指令，格式"动作+目标(+参数)"
-    public string doneCond;     // 本步骤完成条件
-    public string constraint;   // 继承自 PlanSlot.coordinationConstraint，ADM 拆原子动作时使用
+    public string stepId;         // 步骤ID，格式 "step_N"，N 从 1 开始
+    public string text;           // 步骤指令，格式"动作+目标(+参数)"
+    public string doneCond;       // 本步骤完成条件
+    public string[] constraints;  // 绑定到本步骤的协同约束列表（由 RunLLM4 后处理填入）
 }
 
 /// <summary>智能体本地保存的完整计划，由 SlotConfirm + LLM#4 共同填充。</summary>
@@ -119,9 +128,10 @@ public class AtomicAction
     public AtomicActionType type;        // 动作类型（枚举在 CoreEnums.cs）
     public string targetName;            // 目标地名（MoveTo/PatrolAround/Observe 用）
     public string targetAgentId;         // 目标智能体ID（FormationHold 用）
-    public float  radius;                // 巡逻半径（PatrolAround 用）
     public float  duration;              // 持续秒数（Wait/Observe 用；-1=条件触发结束）
     public string broadcastContent;      // 广播文本（Broadcast 用）
+    public string actionParams;          // LLM填写：具体参数，如"高度50米"、"环绕半径30米"、"速度慢速"
+    public string spatialHint;           // LLM填写：方向/空间修饰，如"从东侧接近"、"绕行西路"
 }
 
 /// <summary>ADM 当前步骤的完整执行上下文。</summary>
@@ -131,7 +141,7 @@ public class ActionExecutionContext
     public string   msnId;
     public string   stepId;
     public string   stepText;
-    public string   coordinationConstraint;
+    public string[] coordinationConstraints;  // 本步骤的协同约束列表
     public RoleType role;
 
     public AtomicAction[] actionQueue;

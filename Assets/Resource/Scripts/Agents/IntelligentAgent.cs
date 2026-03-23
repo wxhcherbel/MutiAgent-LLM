@@ -301,17 +301,6 @@ public class IntelligentAgent : MonoBehaviour
     }
 
     /// <summary>
-    /// 接收任务分配（由 PlanningModule 调用）
-    /// </summary>
-    public void OnMissionAssigned(MissionAssignment mission)
-    {
-        Debug.Log($"智能体 {Properties.AgentID} 接收到任务分配: {mission.missionDescription}");
-        
-        // 立即触发决策来处理新任务
-        TriggerImmediateDecision();
-    }
-
-    /// <summary>
     /// 接收消息处理（由 CommunicationModule 调用）
     /// </summary>
     public void OnMessageReceived(AgentMessage message)

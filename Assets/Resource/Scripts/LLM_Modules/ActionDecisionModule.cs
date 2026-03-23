@@ -3,6 +3,8 @@ using UnityEngine;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json;
 
@@ -25,7 +27,6 @@ public class ActionDecisionModule : MonoBehaviour
 
     // ─── 协商窗口 ─────────────────────────────────────────────────
     private float              negotiationWindowEnd;
-    private const float        NegotiationWindowSec = 0.5f;
 
     // ─── 感知事件队列 ─────────────────────────────────────────────
     private readonly Queue<(string desc, string location)> pendingPerceptionEvents = new();
@@ -84,11 +85,11 @@ public class ActionDecisionModule : MonoBehaviour
         //   因此后面拿它去构造任务子图时，可能出现“整句步骤文本无法定位节点”的情况。
         ctx = new ActionExecutionContext
         {
-            msnId                  = planningModule?.currentMission?.missionId ?? string.Empty,
-            stepId                 = step.stepId,
-            stepText               = step.text,
-            coordinationConstraint = step.constraint ?? string.Empty,
-            role                   = agentProperties != null ? agentProperties.Role : RoleType.Scout,
+            msnId                    = planningModule?.currentMission?.missionId ?? string.Empty,
+            stepId                   = step.stepId,
+            stepText                 = step.text,
+            coordinationConstraints  = step.constraints ?? Array.Empty<string>(),
+            role                     = agentProperties != null ? agentProperties.Role : RoleType.Scout,
             actionQueue            = null,
             currentActionIdx       = 0,
             status                 = ADMStatus.Idle,
@@ -143,7 +144,7 @@ public class ActionDecisionModule : MonoBehaviour
         // ④ 打开协商窗口走选举，而非直接调 RunLLMB
         // BUG-H4: 进入 Negotiating 前停止旧协程，避免并发
         if (activeCoroutine != null) { StopCoroutine(activeCoroutine); activeCoroutine = null; }
-        negotiationWindowEnd = Time.time + NegotiationWindowSec;
+        negotiationWindowEnd = Time.time + GetNegotiationWindow();
         SetStatus(ADMStatus.Negotiating);
         // Update() 检测到 Negotiating && 窗口到期 → 调 CheckConflictsAndMaybeReplan
     }
@@ -221,17 +222,19 @@ public class ActionDecisionModule : MonoBehaviour
         // 这里只是切换 ADM 运行状态，同时把同一个状态同步到 ctx.status；
         // 它不会推进动作，也不会自动开始执行。
 
-        // 给 LLM 的全局地图摘要。这里是“全图概览”，帮助模型知道有哪些合法地名。
-        string globalMap    = campusGrid != null ? MapTopologySerializer.GetGlobalFoldedMap(campusGrid) : "(地图不可用)";
+        // 给 LLM 的相对地图（以本机为中心，带罗盘方位）
+        string relativeMap = campusGrid != null
+            ? MapTopologySerializer.GetAgentRelativeMap(campusGrid, agentState.Position)
+            : "(地图不可用)";
 
-        string prompt = BuildLLMAPrompt(step, globalMap);
+        string prompt = BuildLLMAPrompt(step, relativeMap);
 
         string llmResult = null;
 
         // 这里的 yield return StartCoroutine(...) 表示：
         // 当前协程会暂停，等待 SendRequest() 完成网络请求并通过回调写入 llmResult，
         // 然后再继续往下执行。
-        yield return StartCoroutine(llmInterface.SendRequest(prompt, r => llmResult = r, maxTokens: 600));
+        yield return StartCoroutine(llmInterface.SendRequest(prompt, r => llmResult = r, maxTokens: 900));
 
         // 如果 LLM 连可用文本都没返回，这一步直接失败。
         if (string.IsNullOrWhiteSpace(llmResult))
@@ -267,39 +270,84 @@ public class ActionDecisionModule : MonoBehaviour
         // 先把当前动作目标广播到队伍黑板，让队友知道我接下来打算去哪些地点；
         // 然后打开一个短暂协商窗口，进入 Negotiating，等待冲突检测/重规划。
         BroadcastContextUpdate();
-        negotiationWindowEnd = Time.time + NegotiationWindowSec;
+        negotiationWindowEnd = Time.time + GetNegotiationWindow();
         SetStatus(ADMStatus.Negotiating);
     }
 
-    private string BuildLLMAPrompt(PlanStep step, string globalMap)//【待优化】对于一个步骤，是否一定可以拆成动作和目标的集合；
+    private string BuildLLMAPrompt(PlanStep step, string relativeMap)
     {
+        string constraintStr = ctx.coordinationConstraints?.Length > 0
+            ? string.Join("; ", ctx.coordinationConstraints)
+            : null;
+        string constraintBlock = string.IsNullOrWhiteSpace(constraintStr)
+            ? "无（本步骤独立执行）"
+            : constraintStr + "\n【强制要求】上述约束必须体现在至少一个动作的 spatialHint 或 actionParams 中，不得只把它当背景信息忽略。";
+
+        string perception = BuildPerceptionSnapshot();
+        string perceptionBlock = string.IsNullOrWhiteSpace(perception) ? "无感知数据" : perception;
+
         return
-            "你是无人机任务执行层。将步骤文本拆解为 JSON 原子动作数组。\n\n" +
+            "你是无人机战术执行规划器，负责将一个任务步骤分解为具体的原子动作序列（通常3~6个动作）。\n" +
+            "你的输出将直接驱动无人机执行，每个动作必须具体、可执行、有明确目标。\n\n" +
+            "═══ 任务信息 ═══\n" +
             $"步骤文本：{step.text}\n" +
             $"当前角色：{ctx.role}\n" +
-            $"当前位置：{ctx.currentLocationName}\n" +
-            $"协同约束：{(string.IsNullOrWhiteSpace(ctx.coordinationConstraint) ? "无" : ctx.coordinationConstraint)}\n\n" +
-            $"全局地图：\n{globalMap}\n\n" +
-            "原子动作类型枚举：MoveTo, PatrolAround, Observe, Wait, FormationHold, Broadcast, Evade\n\n" +
-            "输出要求：\n" +
-            "1. 只输出 JSON 数组。\n" +
-            "2. 每项字段：actionId(\"aa_N\"), type(枚举名), targetName(根据自然语言推断提取，无目标填\"\"), " +
-               "targetAgentId(\"\"), radius(float), duration(float), broadcastContent(\"\")。\n" +
-            "3. 禁止使用地图中不存在的地名。\n" +
-            "4. 仅包含步骤所需的动作，不额外添加。\n\n" +
-            "示例输入/输出：\n" +
-            "步骤：\"飞往A楼\"\n" +
+            $"当前位置：{ctx.currentLocationName}\n\n" +
+            "═══ 协同约束 ═══\n" +
+            constraintBlock + "\n\n" +
+            "═══ 周边地图（以本机为中心，半径300m） ═══\n" +
+            relativeMap + "\n\n" +
+            "═══ 环境感知 ═══\n" +
+            perceptionBlock + "\n\n" +
+            "═══ 原子动作类型说明 ═══\n" +
+            "• MoveTo：前往指定地点。\n" +
+            "  targetName=目的地（必须是地图中存在的名称），\n" +
+            "  spatialHint=路径偏好，如\"从东侧接近\"、\"沿主干道飞行\"，\n" +
+            "  actionParams=飞行参数，如\"高度50米\"、\"速度慢速\"\n\n" +
+            "• PatrolAround：在目标地点周围环绕巡逻。\n" +
+            "  targetName=巡逻中心，\n" +
+            "  actionParams=必填，如\"环绕半径40米，方向顺时针\"，\n" +
+            "  duration：-1=完成一圈后结束，正数=持续秒数\n\n" +
+            "• Observe：对目标区域定点观察，激活感知扫描。\n" +
+            "  targetName=观察目标，\n" +
+            "  actionParams=必填，如\"时长15秒\"，\n" +
+            "  duration：-1=条件触发结束\n\n" +
+            "• Evade：规避障碍物，或主动调整飞行高度。\n" +
+            "  actionParams=必填，如\"上升至80米\"、\"向东规避30米\"、\"降至悬停高度\"\n\n" +
+            "• Wait：原地悬停等待。\n" +
+            "  actionParams=必填等待条件，如\"等待20秒\"、\"等待队友drone_2到达集合点\"\n\n" +
+            "• FormationHold：与指定队友保持相对位置协同移动。\n" +
+            "  targetAgentId=队友AgentID，\n" +
+            "  actionParams=必填相对偏移，如\"左翼20米\"、\"后方30米且高度+10米\"\n\n" +
+            "• Broadcast：向组内其他智能体广播信息。\n" +
+            "  broadcastContent=必填，简洁描述当前状态或发现\n\n" +
+            "═══ 规划流程（按顺序思考）═══\n" +
+            "① 分析环境感知：感知到的障碍是否阻挡前进路径？是否需要在 MoveTo 前插入 Evade？\n" +
+            "② 分析协同约束：它要求改变路径、高度、时序还是队形？如何用 spatialHint/actionParams 体现？\n" +
+            "③ 规划路径：从当前位置到目标，考虑无人机可垂直起降——先升高再平飞往往更合理\n" +
+            "④ 输出 3~6 个动作，覆盖从当前位置出发到完成步骤目标的完整过程\n\n" +
+            "═══ 示例（步骤：\"侦察A楼\"，当前位置：操场，协同约束：\"从建筑北侧接近\"）═══\n" +
             "[\n" +
-            "  {\n" +
-            "    \"actionId\": \"aa_1\",\n" +
-            "    \"type\": \"MoveTo\",\n" +
-            "    \"targetName\": \"A楼\",\n" +
-            "    \"targetAgentId\": \"\",\n" +
-            "    \"radius\": 0,\n" +
-            "    \"duration\": 0,\n" +
-            "    \"broadcastContent\": \"\"\n" +
-            "  }\n" +
-            "]";
+            "  {\"actionId\":\"aa_1\",\"type\":\"Evade\",\"targetName\":\"\",\"targetAgentId\":\"\",\"duration\":0," +
+            "\"broadcastContent\":\"\",\"actionParams\":\"上升至60米安全高度\",\"spatialHint\":\"\"},\n" +
+            "  {\"actionId\":\"aa_2\",\"type\":\"MoveTo\",\"targetName\":\"A楼\",\"targetAgentId\":\"\",\"duration\":0," +
+            "\"broadcastContent\":\"\",\"actionParams\":\"保持60米高度\",\"spatialHint\":\"绕行至A楼北侧，遵守协同约束\"},\n" +
+            "  {\"actionId\":\"aa_3\",\"type\":\"PatrolAround\",\"targetName\":\"A楼\",\"targetAgentId\":\"\",\"duration\":-1," +
+            "\"broadcastContent\":\"\",\"actionParams\":\"环绕半径40米，方向顺时针\",\"spatialHint\":\"\"},\n" +
+            "  {\"actionId\":\"aa_4\",\"type\":\"Observe\",\"targetName\":\"A楼\",\"targetAgentId\":\"\",\"duration\":15," +
+            "\"broadcastContent\":\"\",\"actionParams\":\"观察时长15秒，重点关注北侧出入口\",\"spatialHint\":\"\"},\n" +
+            "  {\"actionId\":\"aa_5\",\"type\":\"Broadcast\",\"targetName\":\"\",\"targetAgentId\":\"\",\"duration\":0," +
+            "\"broadcastContent\":\"A楼侦察完成，北侧无异常，等待后续指令\",\"actionParams\":\"\",\"spatialHint\":\"\"}\n" +
+            "]\n\n" +
+            "═══ 输出要求 ═══\n" +
+            "1. 只输出 JSON 数组，不包含任何说明或注释文字\n" +
+            "2. 每个动作包含以下全部字段（不可缺少，无内容填\"\"或0）：\n" +
+            "   actionId(\"aa_N\") / type / targetName / targetAgentId /\n" +
+            "   duration / broadcastContent / actionParams / spatialHint\n" +
+            "3. targetName 必须是周边地图中出现的地点名称，禁止使用地图中不存在的地名\n" +
+            "4. 必须生成至少 2 个动作（除非步骤仅为纯 Wait 或纯 Broadcast）\n" +
+            "5. 感知到 BlocksMovement=true 的障碍时，在对应方向的 MoveTo 前必须插入 Evade\n" +
+            "6. 协同约束非空时，必须有至少一个动作通过 spatialHint 或 actionParams 明确体现约束要求\n";
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -374,7 +422,7 @@ public class ActionDecisionModule : MonoBehaviour
         // 重规划后的目标集合也要重新广播给队友，然后重新打开协商窗口，
         // 让新的计划先经过一次冲突检测，再进入 Running。
         BroadcastContextUpdate();
-        negotiationWindowEnd = Time.time + NegotiationWindowSec;
+        negotiationWindowEnd = Time.time + GetNegotiationWindow();
         SetStatus(ADMStatus.Negotiating);
     }
 
@@ -398,15 +446,17 @@ public class ActionDecisionModule : MonoBehaviour
             $"触发原因：{triggerReason}\n" +
             $"原始步骤：{ctx.stepText}\n" +
             $"当前位置：{ctx.currentLocationName}\n" +
-            $"协调约束：{(string.IsNullOrWhiteSpace(ctx.coordinationConstraint) ? "无" : ctx.coordinationConstraint)}\n" +
+            $"协调约束：{(ctx.coordinationConstraints?.Length > 0 ? string.Join("; ", ctx.coordinationConstraints) : "无")}\n" +
             $"原计划剩余：{remaining}\n\n" +
             "队友黑板状态：\n" +
             (string.IsNullOrWhiteSpace(teammatesInfo) ? "  (无数据)\n" : teammatesInfo) +
             $"\n全局地图：\n{globalMap}\n\n" +
-            "输出要求（与 LLM-A 格式完全相同）：\n" +
+            "输出要求：\n" +
             "1. 只输出 JSON 数组。\n" +
-            "2. 避免与上述队友的计划目标产生地点冲突。\n" +
-            "3. 完成原始步骤的核心目标。";
+            "2. 字段：actionId, type, targetName, targetAgentId, duration, broadcastContent, actionParams, spatialHint（不再有 radius 字段）。\n" +
+            "3. 避免与上述队友的计划目标产生地点冲突。\n" +
+            "4. 完成原始步骤的核心目标。\n" +
+            "5. 必须生成至少 2 个动作，除非步骤极其简单。\n";
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -417,11 +467,12 @@ public class ActionDecisionModule : MonoBehaviour
     {
         if (ctx?.actionQueue == null) { SetStatus(ADMStatus.Running); return; }
 
-        // 防死锁：重规划次数过多，强制 Running
+        // 防死锁：重规划次数过多，上报失败
         if (replanCount >= MaxReplanCount)
         {
-            Debug.LogWarning($"[ADM] {agentProperties?.AgentID} 重规划次数达上限({MaxReplanCount})，强制 Running");
-            SetStatus(ADMStatus.Running);
+            Debug.LogWarning($"[ADM] {agentProperties?.AgentID} 步骤 {ctx?.stepId} 重规划次数耗尽，上报失败");
+            SetStatus(ADMStatus.Failed);
+            planningModule?.OnStepFailed(ctx?.stepId ?? "unknown", "replan_limit_exceeded");
             return;
         }
 
@@ -486,6 +537,11 @@ public class ActionDecisionModule : MonoBehaviour
         return set;
     }
 
+    // TODO [SPATIAL-CONFLICT]: 当前冲突检测基于目标地点名称字符串完全匹配，存在以下已知局限：
+    // 1. 相向飞行（不同目标名但路径交叉）无法检测
+    // 2. 相近地名（"图书馆"与"图书馆北侧"）不识别为冲突
+    // 3. PatrolAround 动作的实际占用半径未计入
+    // 正确做法：集成 MapTopologySerializer 的邻域查询 API，对目标节点做 k-hop 邻域展开后再匹配。
     private static int CountConflicts(string[] theirTargets, HashSet<string> ownTargets)
     {
         if (theirTargets == null) return 0;
@@ -545,12 +601,12 @@ public class ActionDecisionModule : MonoBehaviour
         }
     }
 
+    // TODO [REPLAN-TRIGGER]: 当前由 ADM 内部轮询 ctx.recentEvents 并调用此方法判断是否重规划。
+    // 后续应由 PerceptionModule 在感知到威胁/障碍事件时直接调用 adm.TriggerReplan(eventDesc)，
+    // 将决策权从决策层移至感知层，消除硬编码关键词依赖。
     private static bool EventRequiresReplan(string desc)
     {
-        if (string.IsNullOrWhiteSpace(desc)) return false;
-        string l = desc.ToLowerInvariant();
-        return l.Contains("障碍") || l.Contains("威胁") || l.Contains("敌方") ||
-               l.Contains("blocked") || l.Contains("enemy") || l.Contains("threat");
+        return false;
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -596,8 +652,94 @@ public class ActionDecisionModule : MonoBehaviour
     }
 
     // ─────────────────────────────────────────────────────────────
+    // 感知快照（BuildLLMAPrompt 调用）
+    // ─────────────────────────────────────────────────────────────
+
+    private string BuildPerceptionSnapshot()
+    {
+        if (agentState == null) return string.Empty;
+
+        Vector3 myPos = agentState.Position;
+        const float MaxDist = 50f;
+
+        var sb = new StringBuilder();
+        bool hasData = false;
+
+        // ── 障碍物（DetectedSmallNodes 由 PerceptionModule 每帧更新，只读）──
+        var nodes = agentState.DetectedSmallNodes;
+        if (nodes != null && nodes.Count > 0)
+        {
+            var nearby = nodes.Where(n => Vector3.Distance(myPos, n.WorldPosition) <= MaxDist).ToList();
+            if (nearby.Count > 0)
+            {
+                sb.AppendLine("附近障碍（已感知）：");
+                foreach (var n in nearby)
+                {
+                    string dir   = GetCompassDir8(myPos, n.WorldPosition);
+                    int    dist  = Mathf.RoundToInt(Vector3.Distance(myPos, n.WorldPosition) / 5f) * 5;
+                    string label = !string.IsNullOrWhiteSpace(n.DisplayName)
+                                   ? n.DisplayName : NodeTypeDisplayName(n.NodeType);
+                    string extra = (n.IsDynamic ? "动态" : "静态")
+                                 + (n.BlocksMovement ? "，阻挡移动" : "");
+                    sb.AppendLine($"  - {label}({dir}约{dist}m，{extra})");
+                }
+                hasData = true;
+            }
+        }
+
+        // ── 附近队友（NearbyAgents key 为 agentId，查 blackboard 获取状态）──
+        var nearbyAgents = agentState.NearbyAgents;
+        if (nearbyAgents != null && nearbyAgents.Count > 0)
+        {
+            sb.AppendLine("附近队友（通信已知）：");
+            foreach (var kv in nearbyAgents)
+            {
+                if (blackboard.TryGetValue(kv.Key, out AgentContextUpdate info))
+                {
+                    string act = string.IsNullOrWhiteSpace(info.currentTarget)
+                        ? info.currentAction
+                        : $"{info.currentAction}({info.currentTarget})";
+                    sb.AppendLine($"  - {kv.Key}({info.role}): 在{info.locationName}，执行{act}");
+                }
+                else
+                {
+                    sb.AppendLine($"  - {kv.Key}: 状态未知");
+                }
+                hasData = true;
+            }
+        }
+
+        return hasData ? sb.ToString().TrimEnd() : string.Empty;
+    }
+
+    private static string GetCompassDir8(Vector3 from, Vector3 to)
+    {
+        float angle = Mathf.Atan2(to.x - from.x, to.z - from.z) * Mathf.Rad2Deg;
+        if (angle < 0f) angle += 360f;
+        string[] dirs = { "正北", "东北", "正东", "东南", "正南", "西南", "正西", "西北" };
+        return dirs[Mathf.RoundToInt(angle / 45f) % 8];
+    }
+
+    private static string NodeTypeDisplayName(SmallNodeType t) => t switch
+    {
+        SmallNodeType.Tree              => "树木",
+        SmallNodeType.Pedestrian        => "行人",
+        SmallNodeType.Vehicle           => "车辆",
+        SmallNodeType.ResourcePoint     => "资源点",
+        SmallNodeType.TemporaryObstacle => "临时障碍",
+        SmallNodeType.Agent             => "智能体",
+        _                               => "未知障碍"
+    };
+
+    // ─────────────────────────────────────────────────────────────
     // 工具方法
     // ─────────────────────────────────────────────────────────────
+
+    private float GetNegotiationWindow()
+    {
+        int memberCount = blackboard.Count + 1; // +1 for self
+        return Mathf.Clamp(0.2f + memberCount * 0.1f, 0.3f, 1.5f);
+    }
 
     private void SetStatus(ADMStatus s)
     {
@@ -645,4 +787,21 @@ public class ActionDecisionModule : MonoBehaviour
         }
         return raw.Trim();
     }
+
+    // ─────────────────────────────────────────────────────────────
+    // 仪表板查询接口（供 AgentStateServer 调用）
+    // ─────────────────────────────────────────────────────────────
+
+    public string[] GetPlannedTargets() {
+        if (ctx?.actionQueue == null) return Array.Empty<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var res  = new List<string>();
+        for (int i = ctx.currentActionIdx; i < ctx.actionQueue.Length; i++) {
+            var t = ctx.actionQueue[i].targetName;
+            if (!string.IsNullOrWhiteSpace(t) && seen.Add(t)) res.Add(t);
+        }
+        return res.ToArray();
+    }
+
+    public string[] GetRecentEvents() => ctx?.recentEvents ?? Array.Empty<string>();
 }
