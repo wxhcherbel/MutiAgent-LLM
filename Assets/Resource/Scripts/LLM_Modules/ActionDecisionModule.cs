@@ -55,8 +55,7 @@ public class ActionDecisionModule : MonoBehaviour
 
     private void Update()
     {
-        if (status == ADMStatus.Running && pendingPerceptionEvents.Count > 0)
-            HandlePendingPerceptionEvents();
+        //TODO: 感知事件检测；
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -159,7 +158,7 @@ public class ActionDecisionModule : MonoBehaviour
     private IEnumerator RunLLMA(PlanStep step)
     {
         SetStatus(ADMStatus.Interpreting);
-
+        //TODO：根据 agentState的位置，附近大节点，最终目标相对agent的位置提供地图信息；
         string relativeMap = campusGrid != null
             ? MapTopologySerializer.GetAgentRelativeMap(campusGrid, agentState.Position)
             : "(地图不可用)";
@@ -210,10 +209,11 @@ public class ActionDecisionModule : MonoBehaviour
         string constraintStr = ctx.coordinationConstraints?.Length > 0
             ? string.Join("; ", ctx.coordinationConstraints)
             : null;
+        //TODO：约束要求对于llm不明确，后续可以设计更结构化的输入方式，目前先放在协同约束里当作文本输入
         string constraintBlock = string.IsNullOrWhiteSpace(constraintStr)
             ? "无（本步骤独立执行）"
             : constraintStr + "\n【强制要求】上述约束必须体现在至少一个动作的 spatialHint 或 actionParams 中，不得只当背景信息忽略。";
-
+        //TODO：感知信息对于llm不明确，后续可以设计更结构化的输入方式，目前先放在环境感知里当作文本输入
         string perception = BuildPerceptionSnapshot();
         string perceptionBlock = string.IsNullOrWhiteSpace(perception) ? "无感知数据" : perception;
 
@@ -269,84 +269,6 @@ public class ActionDecisionModule : MonoBehaviour
             "5. 感知到临时障碍时，在对应方向的 MoveTo 前必须插入 Evade。\n" +
             "6. 协同约束非空时，至少有一个动作通过 spatialHint 或 actionParams 明确体现约束要求。\n";
     }
-
-    // ─────────────────────────────────────────────────────────────
-    // LLM-B：重规划
-    // ─────────────────────────────────────────────────────────────
-
-    private IEnumerator RunLLMB(string triggerReason)
-    {
-        if (ctx == null || llmInterface == null) yield break;
-        if (replanCount >= MaxReplanCount)
-        {
-            Debug.LogWarning($"[ADM] {agentProperties?.AgentID} 重规划次数达到上限，保持现有动作队列");
-            yield break;
-        }
-
-        replanCount++;
-        SetStatus(ADMStatus.Replanning);
-
-        string relativeMap = campusGrid != null
-            ? MapTopologySerializer.GetAgentRelativeMap(campusGrid, agentState.Position)
-            : "(地图不可用)";
-        string prompt = BuildLLMBPrompt(triggerReason, relativeMap);
-        string llmResult = null;
-
-        yield return StartCoroutine(llmInterface.SendRequest(prompt, r => llmResult = r, maxTokens: 900));
-
-        if (string.IsNullOrWhiteSpace(llmResult))
-        {
-            Debug.LogWarning($"[ADM] {agentProperties?.AgentID} LLM-B 返回空，继续使用原动作队列");
-            SetStatus(ADMStatus.Running);
-            yield break;
-        }
-
-        try
-        {
-            AtomicAction[] actions = JsonConvert.DeserializeObject<AtomicAction[]>(ExtractJson(llmResult));
-            if (actions != null && actions.Length > 0)
-            {
-                ctx.actionQueue = actions;
-                ctx.currentActionIdx = 0;
-                Debug.Log($"[ADM] {agentProperties?.AgentID} LLM-B 生成 {actions.Length} 个新动作");
-            }
-            else
-            {
-                Debug.LogWarning($"[ADM] {agentProperties?.AgentID} LLM-B 未返回有效动作，沿用原队列");
-            }
-        }
-        catch (Exception e)
-        {
-            Debug.LogWarning($"[ADM] {agentProperties?.AgentID} LLM-B 解析失败，沿用原队列: {e.Message}");
-        }
-
-        SetStatus(ADMStatus.Running);
-    }
-
-    private string BuildLLMBPrompt(string triggerReason, string relativeMap)
-    {
-        string perception = BuildPerceptionSnapshot();
-        string recentEvents = ctx?.recentEvents != null && ctx.recentEvents.Length > 0
-            ? string.Join("；", ctx.recentEvents)
-            : "无";
-
-        return
-            "你是无人机战术重规划器，需要根据新的感知事件调整当前步骤剩余动作。\n" +
-            "只输出新的 JSON 动作数组，不要解释。\n\n" +
-            $"当前步骤：{ctx?.stepText}\n" +
-            $"触发原因：{triggerReason}\n" +
-            $"当前位置：{ctx?.currentLocationName}\n" +
-            $"剩余动作：{BuildRemainingActionSummary()}\n" +
-            $"最近事件：{recentEvents}\n\n" +
-            "地图摘要：\n" + relativeMap + "\n\n" +
-            "感知摘要：\n" + (string.IsNullOrWhiteSpace(perception) ? "无感知数据" : perception) + "\n\n" +
-            "输出要求：\n" +
-            "1. 只输出 JSON 数组。\n" +
-            "2. 字段必须完整：actionId/type/targetName/targetAgentId/duration/actionParams/spatialHint。\n" +
-            "3. 只保留对完成当前步骤仍有必要的动作。\n" +
-            "4. 如果障碍阻挡原路径，优先通过 Evade 或新的 MoveTo 路径绕行。\n";
-    }
-
 
     // ─────────────────────────────────────────────────────────────
     // 感知快照
@@ -453,38 +375,7 @@ public class ActionDecisionModule : MonoBehaviour
     /// </summary>
     private void HandlePendingPerceptionEvents()
     {
-        if (ctx == null || status != ADMStatus.Running) return;
-
-        List<string> mergedEvents = new List<string>();
-        if (ctx.recentEvents != null && ctx.recentEvents.Length > 0)
-            mergedEvents.AddRange(ctx.recentEvents);
-
-        List<string> newEvents = new List<string>();
-        while (pendingPerceptionEvents.Count > 0)
-        {
-            (string desc, string location) evt = pendingPerceptionEvents.Dequeue();
-            string text = string.IsNullOrWhiteSpace(evt.location)
-                ? evt.desc
-                : $"{evt.desc}@{evt.location}";
-            newEvents.Add(text);
-            mergedEvents.Add(text);
-        }
-
-        if (mergedEvents.Count > 3)
-            mergedEvents = mergedEvents.GetRange(mergedEvents.Count - 3, 3);
-        ctx.recentEvents = mergedEvents.ToArray();
-
-        if (newEvents.Count == 0) return;
-
-        if (activeCoroutine != null)
-        {
-            StopCoroutine(activeCoroutine);
-            activeCoroutine = null;
-        }
-
-        string triggerReason = string.Join("；", newEvents);
-        Debug.Log($"[ADM] {agentProperties?.AgentID} 因感知事件触发重规划: {triggerReason}");
-        activeCoroutine = StartCoroutine(RunLLMB(triggerReason));
+        //TODO
     }
 
     private string ResolveCurrentLocationName()
