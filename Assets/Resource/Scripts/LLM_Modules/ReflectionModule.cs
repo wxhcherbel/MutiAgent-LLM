@@ -7,31 +7,6 @@ using System.Text;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 
-[Serializable]
-public enum ReflectionTriggerReason
-{
-    Manual = 0,
-    MissionCompleted = 1,
-    RepeatedFailure = 2,
-    Blocked = 3,
-    ImportantObservation = 4,
-    CoordinationIssue = 5
-}
-
-[Serializable]
-public class ReflectionRequest
-{
-    public ReflectionTriggerReason reason;
-    public string missionId;
-    public string missionText;
-    public string slotId;
-    public string stepText;
-    public string targetRef;
-    public string summary;
-    public int maxSourceMemories = 8;
-    public bool force;
-}
-
 /// <summary>
 /// 反思模块：
 /// 它不是定时写总结，而是在“任务结束、连续失败、被卡住、看到重要异常”这些时刻，

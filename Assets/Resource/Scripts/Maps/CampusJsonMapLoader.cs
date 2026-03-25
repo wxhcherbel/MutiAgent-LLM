@@ -26,66 +26,6 @@ using Newtonsoft.Json.Linq;
 public class CampusJsonMapLoader : MonoBehaviour
 {
     // =========================
-    // Kind（必须和 Python 导出一致）
-    // =========================
-    public enum CampusFeatureKind : byte
-    {
-        Building   = 0,
-        Sports     = 1,
-        Water      = 2,
-        Road       = 3,
-        Expressway = 4,
-        Bridge     = 5,
-        Parking    = 6,
-        Green      = 7,
-        Forest     = 8,
-        Other      = 9,
-    }
-
-    [Serializable]
-    public class CampusRing
-    {
-        // 一个 ring 的点（米，XY），不要求首尾重复
-        public List<Vector2> points = new List<Vector2>();
-    }
-
-    [Serializable]
-    public class CampusFeature
-    {
-        public string uid;
-        public CampusFeatureKind kind = CampusFeatureKind.Other;
-        public string name;
-
-        // tags：字符串字典
-        public Dictionary<string, string> tags = new Dictionary<string, string>();
-
-        // 线要素
-        public List<Vector2> linePoints = new List<Vector2>();
-
-        // 面要素（多外环 + 多孔洞）
-        public List<CampusRing> outerRings = new List<CampusRing>();
-        public List<CampusRing> innerRings = new List<CampusRing>();
-
-        // bounds（米）
-        public Rect bounds;
-        public bool boundsValid;
-
-        public bool HasArea()
-        {
-            for (int i = 0; i < outerRings.Count; i++)
-            {
-                if (outerRings[i].points != null && outerRings[i].points.Count >= 3) return true;
-            }
-            return false;
-        }
-
-        public bool HasLine()
-        {
-            return linePoints != null && linePoints.Count >= 2;
-        }
-    }
-
-    // =========================
     // JSON 输入
     // =========================
     [Header("JSON Input")]

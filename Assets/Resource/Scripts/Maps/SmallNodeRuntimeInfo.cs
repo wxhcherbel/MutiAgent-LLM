@@ -7,11 +7,9 @@ using UnityEngine;
 /// </summary>
 public class SmallNodeRuntimeInfo : MonoBehaviour
 {
+    /// <summary>该节点的语义类型，供感知系统快速判别用途。</summary>
     public SmallNodeType nodeType = SmallNodeType.Unknown;
-    public bool isDynamic = false;
-    public bool blocksMovement = true;
-    public int serialIndex = 0;
-    public string displayName = "";
-    public CampusSmallNodeSpawner sourceSpawner;
-}
 
+    /// <summary>该节点是否属于动态对象，例如行人或车辆。</summary>
+    public bool isDynamic = false;
+}

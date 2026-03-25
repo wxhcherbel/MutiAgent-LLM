@@ -1143,23 +1143,3 @@ public class MapGenerator : MonoBehaviour
         textMesh.GetComponent<RectTransform>().localScale = Vector3.one * 0.1f; 
     }
 }
-
-// 地图数据类（用于序列化）
-[System.Serializable]
-public class MapData
-{
-    public int mapWidth;
-    public int mapLength;
-    public int seed;
-    public List<ObjectData> objects = new List<ObjectData>();
-}
-
-// 对象数据类（用于序列化）
-[System.Serializable]
-public class ObjectData
-{
-    public string prefabName;
-    public Vector3 position;
-    public Quaternion rotation;
-    public Vector3 scale;
-}

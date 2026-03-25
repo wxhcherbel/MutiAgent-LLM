@@ -217,65 +217,6 @@ public class CommunicationModule : MonoBehaviour
     {
         switch (message.Type)
         {
-            // ─── 环境 / 告警类 ────────────────────────────────
-            case MessageType.EnvironmentAlert:
-                HandleEnvironmentAlert(message);
-                break;
-
-            case MessageType.ObstacleWarning:
-                HandleObstacleWarning(message);
-                break;
-
-            case MessageType.SystemAlert:
-                HandleSystemAlert(message);
-                break;
-
-            // ─── 协作 / 求助类 ───────────────────────────────
-            case MessageType.HelpRequest:
-            case MessageType.RequestHelp:
-                HandleHelpRequest(message);
-                break;
-
-            case MessageType.Response:
-                HandleResponse(message);
-                break;
-
-            // ─── 任务进度类 ───────────────────────────────────
-            case MessageType.TaskAnnouncement:
-                HandleTaskAnnouncement(message);
-                break;
-
-            case MessageType.TaskUpdate:
-                HandleTaskUpdate(message);
-                break;
-
-            case MessageType.TaskCompletion:
-                HandleTaskCompletion(message);
-                break;
-
-            case MessageType.TaskAbort:
-                HandleTaskAbort(message);
-                break;
-
-            // ─── 资源类 ──────────────────────────────────────
-            case MessageType.ResourceRequest:
-                HandleResourceRequest(message);
-                break;
-
-            case MessageType.ResourceOffer:
-                HandleResourceOffer(message);
-                break;
-
-            // ─── 同步类 ──────────────────────────────────────
-            case MessageType.Synchronization:
-                HandleSynchronization(message);
-                break;
-
-            // ─── 角色分配（保留枚举值供 IntelligentAgent 引用）──
-            case MessageType.RoleAssignment:
-                HandleRoleAssignment(message);
-                break;
-
             // ─── 新4阶段协商协议 ──────────────────────────────
             case MessageType.GroupBootstrap:
                 ForwardPayload<GroupBootstrapPayload>(message,
@@ -302,11 +243,6 @@ public class CommunicationModule : MonoBehaviour
                     planningModule != null ? (Action<StartExecPayload>)planningModule.OnStartExec : null);
                 break;
 
-            case MessageType.BoardUpdate:
-                ForwardPayload<AgentContextUpdate>(message,
-                    admModule != null ? (Action<AgentContextUpdate>)admModule.OnBoardUpdate : null);
-                break;
-
             default:
                 Debug.Log($"[CommunicationModule] {agent?.Properties?.AgentID} 收到未处理消息: {message.Type}");
                 break;
@@ -317,97 +253,7 @@ public class CommunicationModule : MonoBehaviour
     // 具体消息处理方法
     // ─────────────────────────────────────────────────────────
 
-    /// <summary>处理环境告警（障碍、危险区域等）。</summary>
-    private void HandleEnvironmentAlert(AgentMessage message)
-    {
-        Debug.Log($"[CommunicationModule] {agent?.Properties?.AgentID} 收到环境告警 from {message.SenderID}: {message.Content}");
-        // 可在此更新感知层或触发规避行为
-    }
-
-    /// <summary>处理障碍物警告。</summary>
-    private void HandleObstacleWarning(AgentMessage message)
-    {
-        Debug.Log($"[CommunicationModule] {agent?.Properties?.AgentID} 收到障碍警告 from {message.SenderID}: {message.Content}");
-        // 更新局部地图临时阻塞
-    }
-
-    /// <summary>处理系统级告警（电量告急、模块异常等）。</summary>
-    private void HandleSystemAlert(AgentMessage message)
-    {
-        Debug.LogWarning($"[CommunicationModule] {agent?.Properties?.AgentID} 收到系统告警 from {message.SenderID}: {message.Content}");
-    }
-
-    /// <summary>处理求助请求；若自身空闲则发送响应。</summary>
-    private void HandleHelpRequest(AgentMessage message)
-    {
-        Debug.Log($"[CommunicationModule] {agent?.Properties?.AgentID} 收到求助 from {message.SenderID}: {message.Content}");
-        if (agent?.CurrentState?.Status == AgentStatus.Idle)
-        {
-            SendMessage(message.SenderID, MessageType.Response,
-                "{\"response\":\"acknowledged\",\"action\":\"coming_to_help\"}", 2);
-        }
-    }
-
-    /// <summary>处理响应消息（对 HelpRequest 的回复等）。</summary>
-    private void HandleResponse(AgentMessage message)
-    {
-        Debug.Log($"[CommunicationModule] {agent?.Properties?.AgentID} 收到响应 from {message.SenderID}: {message.Content}");
-    }
-
-    /// <summary>
-    /// 处理任务公告（旧链路兼容）。
-    /// 新4阶段协议中任务由 SubmitMissionRequest → GroupBootstrap 发起，
-    /// 此处仅做日志记录，不再调用 ReceiveMissionAssignment。
-    /// </summary>
-    private void HandleTaskAnnouncement(AgentMessage message)
-    {
-        Debug.Log($"[CommunicationModule] {agent?.Properties?.AgentID} 收到任务公告 from {message.SenderID}");
-        // 新协议下任务入口为 PlanningModule.SubmitMissionRequest，此消息类型保留仅供兼容
-    }
-
-    /// <summary>处理任务进度更新。</summary>
-    private void HandleTaskUpdate(AgentMessage message)
-    {
-        Debug.Log($"[CommunicationModule] {agent?.Properties?.AgentID} 收到任务进度更新 from {message.SenderID}: {message.Content}");
-    }
-
-    /// <summary>处理任务完成消息。</summary>
-    private void HandleTaskCompletion(AgentMessage message)
-    {
-        Debug.Log($"[CommunicationModule] {agent?.Properties?.AgentID} 收到任务完成 from {message.SenderID}: {message.Content}");
-    }
-
-    /// <summary>处理任务中止消息。</summary>
-    private void HandleTaskAbort(AgentMessage message)
-    {
-        Debug.LogWarning($"[CommunicationModule] {agent?.Properties?.AgentID} 收到任务中止 from {message.SenderID}: {message.Content}");
-    }
-
-    /// <summary>处理资源请求（补给点、充电桩等）。</summary>
-    private void HandleResourceRequest(AgentMessage message)
-    {
-        Debug.Log($"[CommunicationModule] {agent?.Properties?.AgentID} 收到资源请求 from {message.SenderID}: {message.Content}");
-    }
-
-    /// <summary>处理资源提供消息。</summary>
-    private void HandleResourceOffer(AgentMessage message)
-    {
-        Debug.Log($"[CommunicationModule] {agent?.Properties?.AgentID} 收到资源提供 from {message.SenderID}: {message.Content}");
-    }
-
-    /// <summary>处理同步信号（集结点、等待所有就绪等）。</summary>
-    private void HandleSynchronization(AgentMessage message)
-    {
-        Debug.Log($"[CommunicationModule] {agent?.Properties?.AgentID} 收到同步信号 from {message.SenderID}: {message.Content}");
-    }
-
-    /// <summary>处理角色分配消息（旧链路兼容，仅记录日志）。</summary>
-    private void HandleRoleAssignment(AgentMessage message)
-    {
-        Debug.Log($"[CommunicationModule] {agent?.Properties?.AgentID} 收到角色分配 from {message.SenderID}: {message.Content}");
-        // 新协议通过 SlotConfirm 完成角色确认，此处保留枚举值兼容性
-    }
-
+    
     // ─────────────────────────────────────────────────────────
     // 辅助工具
     // ─────────────────────────────────────────────────────────

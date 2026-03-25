@@ -9,15 +9,6 @@ using Newtonsoft.Json;
 using System.Diagnostics;
 using Debug = UnityEngine.Debug;
 
-[Serializable]
-public class MissionRole
-{
-    public RoleType roleType;
-    public AgentType agentType;
-    public int requiredCount;
-    public string[] responsibilities;
-}
-
 // ─── PlanningModule ──────────────────────────────────────────────────────────
 
 /// <summary>
@@ -296,12 +287,10 @@ public class PlanningModule : MonoBehaviour
             GetConciseTextPromptText() + "\n" +
             "输出要求:\n" +
             "1. 输出内容仅包含 JSON。\n" +
-            "2. `slotId` 是可选槽中的一个。\n" +
-            "3. `reason` 使用一句短句,根据事实说明依据,不要擅自推断,无法判断请写‘无’。\n\n" +
+            "2. `slotId` 是可选槽中的一个。\n\n" +
             "输出格式示例:\n" +
             "{\n" +
-            "  \"slotId\": \"s0\",\n" +
-            "  \"reason\": \"距离近且电量充足\"\n" +
+            "  \"slotId\": \"s0\"\n" +
             "}";
 
         string llmResult = null;
@@ -313,7 +302,7 @@ public class PlanningModule : MonoBehaviour
         if (string.IsNullOrWhiteSpace(llmResult))
         {
             Debug.LogWarning($"{props?.AgentID ?? "Unknown"}: [PlanningModule] LLM#3 返回空,选第一个槽");
-            llmResult = $"{{\"slotId\":\"{availableSlots[0].slotId}\",\"reason\":\"默认\"}}";
+            llmResult = $"{{\"slotId\":\"{availableSlots[0].slotId}\"}}";
         }
 
         SlotSelectPayload selectPayload = null;
@@ -324,8 +313,7 @@ public class PlanningModule : MonoBehaviour
             {
                 msnId   = parsed.msnId,
                 agentId = props.AgentID,
-                slotId  = jobj.ContainsKey("slotId") ? jobj["slotId"] : availableSlots[0].slotId,
-                reason  = jobj.ContainsKey("reason") ? jobj["reason"] : string.Empty
+                slotId  = jobj.ContainsKey("slotId") ? jobj["slotId"] : availableSlots[0].slotId
             };
         }
         catch (Exception e)
@@ -335,8 +323,7 @@ public class PlanningModule : MonoBehaviour
             {
                 msnId   = parsed.msnId,
                 agentId = props.AgentID,
-                slotId  = availableSlots[0].slotId,
-                reason  = "fallback"
+                slotId  = availableSlots[0].slotId
             };
         }
 
@@ -583,8 +570,7 @@ public class PlanningModule : MonoBehaviour
         if (!string.Equals(p.agentId, props.AgentID, StringComparison.OrdinalIgnoreCase)) return;
 
         confirmedSlot = p.slot;
-        Debug.Log($"[PlanningModule] {props.AgentID} 确认槽 {p.slot.slotId}" +
-                  (p.adjusted ? $"(调整,原因:{p.adjReason})" : string.Empty));
+        Debug.Log($"[PlanningModule] {props.AgentID} 确认槽 {p.slot.slotId}");
 
         if (startExecReceived)
             StartCoroutine(RunLLM4());
@@ -603,10 +589,10 @@ public class PlanningModule : MonoBehaviour
     }
 
     // ─────────────────────────────────────────────────────────
-    // 组长专用:冲突处理
+    // 组长专用:分配确认
     // ─────────────────────────────────────────────────────────
 
-    /// <summary>所有成员选择收齐后解决冲突,按到达时间先到先得,冲突者分配剩余槽。</summary>
+    /// <summary>所有成员选择收齐后做唯一分配,按到达时间先到先得,重复选择者分配剩余槽。</summary>
     private void ResolveAndConfirm()
     {
         // 组长自身排最前,其余按到达时间排序
@@ -624,15 +610,11 @@ public class PlanningModule : MonoBehaviour
             if (!selections.TryGetValue(agentId, out string wantedSlotId)) continue;
 
             PlanSlot wanted   = remaining.Find(s => s.slotId == wantedSlotId);
-            bool adjusted;
-            string adjReason;
             PlanSlot assigned;
 
             if (wanted != null)
             {
                 assigned  = wanted;
-                adjusted  = false;
-                adjReason = string.Empty;
             }
             else
             {
@@ -642,8 +624,7 @@ public class PlanningModule : MonoBehaviour
                     continue;
                 }
                 assigned  = remaining[0];
-                adjusted  = true;
-                adjReason = $"{wantedSlotId}已被占用";
+                Debug.Log($"[PlanningModule] {agentId} 选择的槽 {wantedSlotId} 已被占用，改分配 {assigned.slotId}");
             }
 
             remaining.Remove(assigned);
@@ -663,9 +644,7 @@ public class PlanningModule : MonoBehaviour
                     {
                         msnId     = parsed.msnId,
                         agentId   = agentId,
-                        slot      = assigned,
-                        adjusted  = adjusted,
-                        adjReason = adjReason
+                        slot      = assigned
                     },
                     targetAgentId: agentId,
                     reliable: true);
@@ -743,6 +722,21 @@ public class PlanningModule : MonoBehaviour
         return agentPlan.steps[agentPlan.curIdx];
     }
 
+    /// <summary>返回当前任务 ID，供执行层和监控层读取。</summary>
+    public string GetCurrentMissionId()
+    {
+        return parsed?.msnId ?? agentPlan?.msnId ?? string.Empty;
+    }
+
+    /// <summary>返回当前任务描述，优先使用已确认槽位的描述。</summary>
+    public string GetCurrentMissionDescription()
+    {
+        if (!string.IsNullOrWhiteSpace(agentPlan?.desc)) return agentPlan.desc;
+        if (!string.IsNullOrWhiteSpace(confirmedSlot?.desc)) return confirmedSlot.desc;
+        if (!string.IsNullOrWhiteSpace(myGroup?.mission)) return myGroup.mission;
+        return string.Empty;
+    }
+
     /// <summary>完成当前步骤:curIdx++,若超出数组长度则转 Done。</summary>
     public void CompleteCurrentStep()
     {
@@ -753,21 +747,6 @@ public class PlanningModule : MonoBehaviour
             Debug.Log($"[PlanningModule] {props?.AgentID} 所有步骤完成 → Done");
             SetState(PlanningState.Done);
             busy = false;
-        }
-    }
-
-    /// <summary>由 ADM 在重规划次数耗尽时调用，通知规划层步骤失败。</summary>
-    public void OnStepFailed(string stepId, string reason)
-    {
-        Debug.LogWarning($"[Planning] 步骤 {stepId} 失败：{reason}");
-        if (agentPlan == null) return;
-        // 跳过当前失败步骤，尝试推进到下一步
-        agentPlan.curIdx++;
-        if (agentPlan.curIdx >= agentPlan.steps.Length)
-        {
-            state = PlanningState.Failed;
-            busy = false;
-            Debug.LogError($"[Planning] 任务 {agentPlan.msnId} 所有步骤失败或完成，终止。");
         }
     }
 

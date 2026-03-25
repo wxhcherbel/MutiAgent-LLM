@@ -10,37 +10,6 @@ using UnityEngine;
 /// </summary>
 public class CampusSmallNodeSpawner : MonoBehaviour
 {
-    [Serializable]
-    public class SpawnRule
-    {
-        [Header("节点类型与数量")]
-        public SmallNodeType nodeType = SmallNodeType.Tree;
-        [Min(0)] public int count = 20;
-
-        [Header("区域分布（按地图要素类型）")]
-        [Tooltip("仅在这些 CampusFeatureKind 区域内刷点；为空时在全图范围随机。")]
-        public List<CampusJsonMapLoader.CampusFeatureKind> spawnInFeatureKinds = new List<CampusJsonMapLoader.CampusFeatureKind>();
-        [Range(0f, 1f)] public float cellJitter01 = 0.75f;
-        [Min(0f)] public float minSpacingM = 0.8f;
-        [Min(-20f)] public float yOffset = 0f;
-
-        [Header("生成对象")]
-        public GameObject prefab;
-        public PrimitiveType fallbackPrimitive = PrimitiveType.Sphere;
-        public bool overrideScale = true;
-        public Vector3 localScale = Vector3.one;
-        public Color tintColor = new Color32(200, 230, 200, 255);
-
-        [Header("动态行为")]
-        public bool inferDynamicFromType = true;
-        public bool isDynamic = false;
-        [Min(0f)] public float moveSpeed = 1.6f;
-        [Min(0.1f)] public float retargetInterval = 2f;
-
-        [Header("语义属性")]
-        public bool blocksMovement = true;
-    }
-
     [Header("依赖引用")]
     public CampusJsonMapLoader campusLoader;
     public CampusGrid2D campusGrid;
@@ -74,31 +43,29 @@ public class CampusSmallNodeSpawner : MonoBehaviour
         {
             nodeType = SmallNodeType.Tree,
             count = 300,
-            spawnInFeatureKinds = new List<CampusJsonMapLoader.CampusFeatureKind>
+            spawnInFeatureKinds = new List<CampusFeatureKind>
             {
-                CampusJsonMapLoader.CampusFeatureKind.Forest,
-                CampusJsonMapLoader.CampusFeatureKind.Green
+                CampusFeatureKind.Forest,
+                CampusFeatureKind.Green
             },
             fallbackPrimitive = PrimitiveType.Sphere,
             localScale = new Vector3(1.2f, 3.0f, 1.2f),
             tintColor = new Color32(185, 225, 205, 255),
-            minSpacingM = 1.0f,
-            blocksMovement = true
+            minSpacingM = 1.0f
         },
         new SpawnRule
         {
             nodeType = SmallNodeType.Pedestrian,
             count = 40,
-            spawnInFeatureKinds = new List<CampusJsonMapLoader.CampusFeatureKind>
+            spawnInFeatureKinds = new List<CampusFeatureKind>
             {
-                CampusJsonMapLoader.CampusFeatureKind.Road,
-                CampusJsonMapLoader.CampusFeatureKind.Green
+                CampusFeatureKind.Road,
+                CampusFeatureKind.Green
             },
             fallbackPrimitive = PrimitiveType.Capsule,
             localScale = new Vector3(0.55f, 0.55f, 1.1f),
             tintColor = new Color32(245, 220, 170, 255),
             minSpacingM = 1.0f,
-            blocksMovement = true,
             moveSpeed = 1.6f,
             retargetInterval = 2.0f
         },
@@ -106,17 +73,16 @@ public class CampusSmallNodeSpawner : MonoBehaviour
         {
             nodeType = SmallNodeType.ResourcePoint,
             count = 20,
-            spawnInFeatureKinds = new List<CampusJsonMapLoader.CampusFeatureKind>
+            spawnInFeatureKinds = new List<CampusFeatureKind>
             {
-                CampusJsonMapLoader.CampusFeatureKind.Parking,
-                CampusJsonMapLoader.CampusFeatureKind.Green,
-                CampusJsonMapLoader.CampusFeatureKind.Other
+                CampusFeatureKind.Parking,
+                CampusFeatureKind.Green,
+                CampusFeatureKind.Other
             },
             fallbackPrimitive = PrimitiveType.Cube,
             localScale = new Vector3(0.7f, 0.7f, 0.7f),
             tintColor = new Color32(255, 214, 120, 255),
-            minSpacingM = 1.2f,
-            blocksMovement = false
+            minSpacingM = 1.2f
         }
     };
 
@@ -182,7 +148,7 @@ public class CampusSmallNodeSpawner : MonoBehaviour
 
                 ApplyNodeAppearance(obj, rule.tintColor);
                 ApplyNodeTagAndLayer(obj, rule);
-                AttachRuntimeNodeInfo(obj, rule, isDynamic, index);
+                AttachRuntimeNodeInfo(obj, rule, isDynamic);
                 AttachDynamicMoverIfNeeded(obj, isDynamic, moveBounds, rule, randomSeed + r * 100003 + i * 97);
 
                 placed.Add(new Vector2(obj.transform.position.x, obj.transform.position.z));
@@ -265,7 +231,7 @@ public class CampusSmallNodeSpawner : MonoBehaviour
         {
             for (int z = 0; z < campusGrid.gridLength; z++)
             {
-                CampusJsonMapLoader.CampusFeatureKind kind = GridCellToFeatureKind(campusGrid.GetCellType(x, z));
+                CampusFeatureKind kind = GridCellToFeatureKind(campusGrid.GetCellType(x, z));
                 if (requireKinds && !rule.spawnInFeatureKinds.Contains(kind)) continue;
                 cells.Add(new Vector2Int(x, z));
             }
@@ -397,17 +363,13 @@ public class CampusSmallNodeSpawner : MonoBehaviour
         }
     }
 
-    private void AttachRuntimeNodeInfo(GameObject nodeObj, SpawnRule rule, bool isDynamic, int serialIndex)
+    private void AttachRuntimeNodeInfo(GameObject nodeObj, SpawnRule rule, bool isDynamic)
     {
         SmallNodeRuntimeInfo info = nodeObj.GetComponent<SmallNodeRuntimeInfo>();
         if (info == null) info = nodeObj.AddComponent<SmallNodeRuntimeInfo>();
 
         info.nodeType = rule.nodeType;
         info.isDynamic = isDynamic;
-        info.blocksMovement = rule.nodeType != SmallNodeType.ResourcePoint;
-        info.serialIndex = serialIndex;
-        info.displayName = nodeObj.name;
-        info.sourceSpawner = this;
     }
 
     private void AttachDynamicMoverIfNeeded(GameObject nodeObj, bool isDynamic, Rect moveBounds, SpawnRule rule, int seed)
@@ -462,20 +424,20 @@ public class CampusSmallNodeSpawner : MonoBehaviour
         }
     }
 
-    private static CampusJsonMapLoader.CampusFeatureKind GridCellToFeatureKind(CampusGrid2D.CellType t)
+    private static CampusFeatureKind GridCellToFeatureKind(CampusGridCellType t)
     {
         switch (t)
         {
-            case CampusGrid2D.CellType.Building: return CampusJsonMapLoader.CampusFeatureKind.Building;
-            case CampusGrid2D.CellType.Sports: return CampusJsonMapLoader.CampusFeatureKind.Sports;
-            case CampusGrid2D.CellType.Water: return CampusJsonMapLoader.CampusFeatureKind.Water;
-            case CampusGrid2D.CellType.Road: return CampusJsonMapLoader.CampusFeatureKind.Road;
-            case CampusGrid2D.CellType.Expressway: return CampusJsonMapLoader.CampusFeatureKind.Expressway;
-            case CampusGrid2D.CellType.Bridge: return CampusJsonMapLoader.CampusFeatureKind.Bridge;
-            case CampusGrid2D.CellType.Parking: return CampusJsonMapLoader.CampusFeatureKind.Parking;
-            case CampusGrid2D.CellType.Green: return CampusJsonMapLoader.CampusFeatureKind.Green;
-            case CampusGrid2D.CellType.Forest: return CampusJsonMapLoader.CampusFeatureKind.Forest;
-            default: return CampusJsonMapLoader.CampusFeatureKind.Other;
+            case CampusGridCellType.Building: return CampusFeatureKind.Building;
+            case CampusGridCellType.Sports: return CampusFeatureKind.Sports;
+            case CampusGridCellType.Water: return CampusFeatureKind.Water;
+            case CampusGridCellType.Road: return CampusFeatureKind.Road;
+            case CampusGridCellType.Expressway: return CampusFeatureKind.Expressway;
+            case CampusGridCellType.Bridge: return CampusFeatureKind.Bridge;
+            case CampusGridCellType.Parking: return CampusFeatureKind.Parking;
+            case CampusGridCellType.Green: return CampusFeatureKind.Green;
+            case CampusGridCellType.Forest: return CampusFeatureKind.Forest;
+            default: return CampusFeatureKind.Other;
         }
     }
 

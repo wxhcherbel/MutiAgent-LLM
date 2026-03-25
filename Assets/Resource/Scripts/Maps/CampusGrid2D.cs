@@ -1,213 +1,14 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEngine;
 using Newtonsoft.Json.Linq;
 
-/// <summary>
-/// 鎶?CampusJsonMapLoader 浣跨敤鐨勭湡瀹炴牎鍥?JSON 杞垚浜岀淮閫昏緫缃戞牸锛圶Z 骞抽潰锛夛紝鐢ㄤ簬澶氭櫤鑳戒綋璺緞瑙勫垝瀹為獙銆?/// 閲嶇偣锛?/// 1) 鍙仛 2D 缃戞牸锛屼笉鍋?3D 浣撶礌銆?/// 2) 缃戞牸鍙鍖栧彲寮€鍏炽€?/// 3) 鎻愪緵 A* 瀵昏矾銆佷笘鐣屽潗鏍?->缃戞牸鍧愭爣杞崲銆?/// </summary>
+
 [ExecuteAlways]
 public class CampusGrid2D : MonoBehaviour
 {
-    public enum CellType : byte
-    {
-        Free = 0,
-        Building = 1,
-        Water = 2,
-        Road = 3,
-        Expressway = 4,
-        Bridge = 5,
-        Parking = 6,
-        Green = 7,
-        Forest = 8,
-        Sports = 9,
-        Other = 10,
-    }
-
-    [Serializable]
-    private class Feature2D
-    {
-        public string uid = "";
-        public string name = "";
-        public string kind = "other";
-        public string effectiveName = "";
-        public string runtimeAlias = "";
-        public Rect bounds;
-        public bool boundsValid;
-        public readonly List<List<Vector2>> outerRings = new List<List<Vector2>>();
-        public readonly List<List<Vector2>> innerRings = new List<List<Vector2>>();
-        public readonly List<Vector2> linePoints = new List<Vector2>();
-        public readonly List<RasterAreaPart> rasterAreaParts = new List<RasterAreaPart>();
-        public readonly List<RasterStrokeQuad> rasterStrokeQuads = new List<RasterStrokeQuad>();
-        public Rect rasterBounds;
-        public bool rasterBoundsValid;
-        public FeatureRasterMode rasterMode = FeatureRasterMode.Bounds;
-
-        public bool HasArea => outerRings.Count > 0;
-        public bool HasLine => linePoints.Count >= 2;
-        public bool HasRasterArea => rasterAreaParts.Count > 0;
-        public bool HasRasterLine => rasterStrokeQuads.Count > 0;
-    }
-
-    private enum FeatureRasterMode : byte
-    {
-        Bounds = 0,
-        Area = 1,
-        Line = 2,
-    }
-
-    private class RasterAreaPart
-    {
-        public readonly List<Vector2> outer = new List<Vector2>();
-        public readonly List<List<Vector2>> holes = new List<List<Vector2>>();
-        public Rect bounds;
-        public bool boundsValid;
-    }
-
-    private class RasterStrokeQuad
-    {
-        public readonly List<Vector2> points = new List<Vector2>(4);
-        public Rect bounds;
-        public bool boundsValid;
-    }
-
-    /// <summary>
-    /// 鍦板浘涓栫晫閲屸€滀竴涓ぇ鑺傜偣瀹炰綋鈥濈殑绌洪棿妗ｆ銆?    /// 杩欓噷涓嶅啀鎶?building / forest / road 鍙湅鎴愪竴涓偣锛岃€屾槸鏄庣‘璁板綍锛?    /// 1) 瀹冨崰浜嗗摢浜涙牸瀛愶紱
-    /// 2) 瀹冪殑澶ц嚧涓績鍦ㄥ摢閲岋紱
-    /// 3) 浠庡綋鍓嶅弬鑰冧綅缃嚭鍙戯紝搴旇璐寸潃瀹冪殑鍝竴渚у幓鎺ヨ繎锛?    /// 4) 濡傛灉瑕佺幆缁曞畠锛屽缓璁崐寰勫ぇ姒傛槸澶氬皯銆?    ///
-    /// 杩欐牱 ActionDecisionModule 鍚庨潰鎷垮埌鐨勫氨涓嶅啀鍙槸鈥滀竴涓潗鏍囩偣鈥濓紝
-    /// 鑰屾槸鈥滀竴涓湡姝ｆ湁鑼冨洿鐨勪笘鐣屽疄浣撯€濄€?    /// </summary>
-    [Serializable]
-    public class FeatureSpatialProfile
-    {
-        public string uid = "";
-        public string name = "";
-        public string runtimeAlias = "";
-        public string kind = "other";
-        public string collectionKey = "";
-        public CellType cellType = CellType.Other;
-        public int occupiedCellCount;
-        public int minX;
-        public int maxX;
-        public int minZ;
-        public int maxZ;
-        public Vector2 centroidGrid;
-        public Vector2Int centroidCell = new Vector2Int(-1, -1);
-        public Vector3 centroidWorld;
-        public Vector2Int anchorCell = new Vector2Int(-1, -1);
-        public Vector3 anchorWorld;
-        public float footprintRadius;
-        public string[] memberEntityIds = Array.Empty<string>();
-    }
-
-    /// <summary>
-    /// 缃戞牸鍐呴儴浣跨敤鐨勭┖闂寸储寮曘€?    /// 瀹冧繚鐣欏畬鏁存牸瀛愬垪琛紝渚夸簬鍚庨潰鍔ㄦ€佺畻鈥滄帴杩戠偣鈥濃€滆鐩栧垝鍒嗏€濃€滅幆缁曞崐寰勨€濄€?    /// </summary>
-    private class FeatureSpatialIndex
-    {
-        public string uid = "";
-        public string name = "";
-        public string runtimeAlias = "";
-        public string kind = "other";
-        public string collectionKey = "";
-        public CellType cellType = CellType.Other;
-        public readonly List<Vector2Int> occupiedCells = new List<Vector2Int>();
-        public readonly HashSet<long> occupiedCellKeys = new HashSet<long>();
-        public int minX = int.MaxValue;
-        public int maxX = int.MinValue;
-        public int minZ = int.MaxValue;
-        public int maxZ = int.MinValue;
-    }
-
-    private struct AStarHeapEntry
-    {
-        public Vector2Int Cell;
-        public float FScore;
-        public float HScore;
-    }
-
-    private sealed class AStarMinHeap
-    {
-        private readonly List<AStarHeapEntry> entries = new List<AStarHeapEntry>(256);
-
-        public int Count => entries.Count;
-
-        public void Push(AStarHeapEntry entry)
-        {
-            entries.Add(entry);
-            SiftUp(entries.Count - 1);
-        }
-
-        public AStarHeapEntry Pop()
-        {
-            int lastIndex = entries.Count - 1;
-            AStarHeapEntry root = entries[0];
-            AStarHeapEntry tail = entries[lastIndex];
-            entries.RemoveAt(lastIndex);
-
-            if (entries.Count > 0)
-            {
-                entries[0] = tail;
-                SiftDown(0);
-            }
-
-            return root;
-        }
-
-        private void SiftUp(int index)
-        {
-            while (index > 0)
-            {
-                int parent = (index - 1) / 2;
-                if (Compare(entries[index], entries[parent]) >= 0) break;
-                Swap(index, parent);
-                index = parent;
-            }
-        }
-
-        private void SiftDown(int index)
-        {
-            int count = entries.Count;
-            while (true)
-            {
-                int left = index * 2 + 1;
-                if (left >= count) break;
-
-                int right = left + 1;
-                int smallest = left;
-                if (right < count && Compare(entries[right], entries[left]) < 0)
-                {
-                    smallest = right;
-                }
-
-                if (Compare(entries[smallest], entries[index]) >= 0) break;
-                Swap(index, smallest);
-                index = smallest;
-            }
-        }
-
-        private static int Compare(AStarHeapEntry a, AStarHeapEntry b)
-        {
-            int f = a.FScore.CompareTo(b.FScore);
-            if (f != 0) return f;
-
-            int h = a.HScore.CompareTo(b.HScore);
-            if (h != 0) return h;
-
-            int x = a.Cell.x.CompareTo(b.Cell.x);
-            if (x != 0) return x;
-
-            return a.Cell.y.CompareTo(b.Cell.y);
-        }
-
-        private void Swap(int a, int b)
-        {
-            AStarHeapEntry temp = entries[a];
-            entries[a] = entries[b];
-            entries[b] = temp;
-        }
-    }
-
     [Header("数据源")]
     public CampusJsonMapLoader campusLoader;
 
@@ -258,7 +59,7 @@ public class CampusGrid2D : MonoBehaviour
     [NonSerialized] public int gridWidth;
     [NonSerialized] public int gridLength;
     [NonSerialized] public bool[,] blockedGrid;
-    [NonSerialized] public CellType[,] cellTypeGrid;
+    [NonSerialized] public CampusGridCellType[,] cellTypeGrid;
     [NonSerialized] public string[,] cellFeatureUidGrid;
     [NonSerialized] public string[,] cellFeatureNameGrid;
     [NonSerialized] public Dictionary<string, Vector2Int> featureAliasCellMap;
@@ -412,9 +213,9 @@ public class CampusGrid2D : MonoBehaviour
         return IsInBounds(x, z) && !blockedGrid[x, z];
     }
 
-    public CellType GetCellType(int x, int z)
+    public CampusGridCellType GetCellType(int x, int z)
     {
-        if (!IsInBounds(x, z)) return CellType.Other;
+        if (!IsInBounds(x, z)) return CampusGridCellType.Other;
         return cellTypeGrid[x, z];
     }
 
@@ -430,11 +231,11 @@ public class CampusGrid2D : MonoBehaviour
         return cellFeatureNameGrid[x, z] ?? string.Empty;
     }
 
-    public bool TryGetCellFeatureInfo(int x, int z, out string uid, out string name, out CellType type, out bool blocked)
+    public bool TryGetCellFeatureInfo(int x, int z, out string uid, out string name, out CampusGridCellType type, out bool blocked)
     {
         uid = string.Empty;
         name = string.Empty;
-        type = CellType.Other;
+        type = CampusGridCellType.Other;
         blocked = false;
 
         if (!IsInBounds(x, z) || blockedGrid == null || cellTypeGrid == null) return false;
@@ -447,14 +248,14 @@ public class CampusGrid2D : MonoBehaviour
         return true;
     }
 
-    public bool TryGetCellFeatureInfoByWorld(Vector3 worldPos, out Vector2Int grid, out string uid, out string name, out CellType type, out bool blocked)
+    public bool TryGetCellFeatureInfoByWorld(Vector3 worldPos, out Vector2Int grid, out string uid, out string name, out CampusGridCellType type, out bool blocked)
     {
         grid = WorldToGrid(worldPos);
         if (!IsInBounds(grid.x, grid.y))
         {
             uid = string.Empty;
             name = string.Empty;
-            type = CellType.Other;
+            type = CampusGridCellType.Other;
             blocked = false;
             return false;
         }
@@ -524,8 +325,7 @@ public class CampusGrid2D : MonoBehaviour
         return true;
     }
 
-    /// <summary>
-    /// 缁熶竴瑙ｆ瀽鍦扮偣鏌ヨ锛堜紭鍏堢簿纭紝鍐嶅埌瑙勮寖鍖栧尮閰嶏級锛屽悓鏃舵敮鎸?name 涓?uid銆?    /// </summary>
+
     public bool TryResolveFeatureCell(string query, out Vector2Int cell, out string matchedUid, out string matchedName, bool preferWalkable = true, bool ignoreCase = true)
     {
         cell = new Vector2Int(-1, -1);
@@ -624,15 +424,11 @@ public class CampusGrid2D : MonoBehaviour
         return true;
     }
 
-    /// <summary>
-    /// 缁欑郴缁?璋冭瘯灞傛彁渚涗竴浠解€滃姩鎬佸湴鍥剧洰褰曗€濇憳瑕併€?    ///
-    /// 娉ㄦ剰褰撳墠鐗堟湰閲岋紝杩欎唤鎽樿涓嶅啀鐩存帴鍠傜粰 LLM銆?    /// 瀹冧富瑕佹湁涓や釜鐢ㄩ€旓細
-    /// 1) 鏂逛究璋冭瘯鏌ョ湅褰撳墠鍦板浘閲屽埌搴曟湁鍝簺 collection锛?    /// 2) 璁?grounded 灞傚拰浜哄伐鎺掗敊鏃惰兘鐪嬪埌 collectionKey -> members 鐨勭湡瀹炴槧灏勩€?    /// </summary>
     public string BuildFeatureCatalogSummary(int maxMembersPerCollection = 8)
     {
         if (featureCollectionMembers == null || featureCollectionMembers.Count == 0)
         {
-            return "鍦板浘鐩綍鏆備笉鍙敤";
+            return "[CampusGrid2D] No feature collections available.";
         }
 
         System.Text.StringBuilder sb = new System.Text.StringBuilder();
@@ -659,8 +455,6 @@ public class CampusGrid2D : MonoBehaviour
         return sb.ToString().TrimEnd();
     }
 
-    /// <summary>
-    /// 鎸?collectionKey 鍙栧嚭杩欎竴缁勫湴鍥惧ぇ鑺傜偣鎴愬憳銆?    /// 杩欐槸缁欌€滄墍鏈?building / 鎵€鏈?forest鈥濊繖绫婚泦鍚堢洰鏍囩敤鐨勬寮忓叆鍙ｃ€?    /// </summary>
     public bool TryGetFeatureCollectionMembers(string collectionKey, out FeatureSpatialProfile[] profiles)
     {
         profiles = Array.Empty<FeatureSpatialProfile>();
@@ -699,11 +493,6 @@ public class CampusGrid2D : MonoBehaviour
         return true;
     }
 
-    /// <summary>
-    /// 鎶娾€滄墍鏈?building / 鍏ㄩ儴 parking / 鏁村紶鍦板浘閲岀殑 forest鈥濊繖绫昏嚜鐒惰瑷€閫夋嫨鐭锛?    /// 鏄犲皠鍒板綋鍓嶅湴鍥鹃噷鐪熷疄瀛樺湪鐨?collectionKey銆?    ///
-    /// 杩欓噷鏁呮剰涓嶅啓姝讳换浣?building/forest 璇嶈〃锛?    /// - 鍙尮閰嶉泦鍚堝畬鍏ㄦ潵鑷綋鍓嶅湴鍥鹃噷宸茬粡鏋勫缓濂界殑 featureCollectionMembers锛?    /// - 绯荤粺鍙仛瀛楃涓插綊涓€鍖栧拰鐩镐技搴︽瘮瀵癸紝涓嶆浛 LLM 閲嶆柊鐞嗚В浠诲姟璇箟銆?    ///
-    /// 杩欐牱鑱岃矗灏卞緢娓呮锛?    /// 1) LLM 璐熻矗璇粹€滅敤鎴锋兂瑕嗙洊鍝竴绫荤洰鏍団€濓紱
-    /// 2) CampusGrid2D 璐熻矗鍥炵瓟鈥滃綋鍓嶅湴鍥鹃噷杩欑被鐩爣瀵瑰簲鍝竴涓湡瀹為泦鍚堥敭鈥濄€?    /// </summary>
     public bool TryResolveFeatureCollectionBySelector(string selectorText, out string collectionKey, out FeatureSpatialProfile[] profiles)
     {
         collectionKey = string.Empty;
@@ -760,10 +549,6 @@ public class CampusGrid2D : MonoBehaviour
         return true;
     }
 
-    /// <summary>
-    /// 鎶婁竴涓湴鐐规煡璇㈢洿鎺ヨВ鏋愭垚鈥滅┖闂存。妗堚€濄€?    /// 鍜?TryResolveFeatureCell 鐨勫尯鍒湪浜庯細
-    /// TryResolveFeatureCell 鍙憡璇変綘鏌愪釜鐐癸紱
-    /// TryResolveFeatureSpatialProfile 浼氭妸鏁村潡鍑犱綍鑼冨洿銆佷腑蹇冦€佹帹鑽愭帴杩戠偣涓€璧风粰鍑烘潵銆?    /// </summary>
     public bool TryResolveFeatureSpatialProfile(string query, Vector3 referenceWorld, out FeatureSpatialProfile profile, bool preferWalkableApproach = true, bool ignoreCase = true, Vector2Int? anchorBias = null)
     {
         profile = null;
@@ -778,8 +563,6 @@ public class CampusGrid2D : MonoBehaviour
         return true;
     }
 
-    /// <summary>
-    /// 鑾峰彇鏌愪釜澶у湴鍥惧疄浣撳崰鐢ㄧ殑鍏ㄩ儴缃戞牸銆?    /// 杩欐槸鐪熸鐨勨€滃缓绛戜笉鏄竴涓偣锛岃€屾槸涓€缁勬牸瀛愨€濈殑鍩虹鎺ュ彛銆?    /// </summary>
     public bool TryGetFeatureOccupiedCells(string query, out Vector2Int[] occupiedCells, bool ignoreCase = true)
     {
         occupiedCells = Array.Empty<Vector2Int>();
@@ -792,9 +575,7 @@ public class CampusGrid2D : MonoBehaviour
         return occupiedCells.Length > 0;
     }
 
-    /// <summary>
-    /// 鑾峰彇鏌愪釜澶у湴鍥惧疄浣撶殑杈圭晫鏍笺€?    /// 杩欓噷鐨勮竟鐣屾牸浠嶇劧鏄€滆璇ュ疄浣撳崰鐢ㄧ殑鏍尖€濓紝
-    /// 鍙笉杩囪繖浜涙牸鑷冲皯鏈変竴渚ф帴瑙﹀埌浜嗗疄浣撳閮ㄣ€?    /// </summary>
+
     public bool TryGetFeatureBoundaryCells(string query, out Vector2Int[] boundaryCells, bool ignoreCase = true)
     {
         boundaryCells = Array.Empty<Vector2Int>();
@@ -807,8 +588,7 @@ public class CampusGrid2D : MonoBehaviour
         return boundaryCells.Length > 0;
     }
 
-    /// <summary>
-    /// 鑾峰彇鏌愪釜澶у湴鍥惧疄浣撯€滃渚у彲鎺ヨ繎鏍尖€濄€?    /// 杩斿洖鐨勪笉鏄缓绛戝唴閮ㄦ牸锛岃€屾槸寤虹瓚澶栧洿銆佸彲閫氳銆侀€傚悎褰撲綔鎺ヨ繎閿氱偣鐨勬牸瀛愰泦鍚堛€?    /// anchorBias 鐢ㄧ鏁ｅ钩闈㈠悜閲忚〃杈锯€滄洿鍋忓悜鍝竴杈规帴杩戔€濓紝渚嬪 (1,0) 琛ㄧず鏇村亸鍚戞 X 鏂瑰悜鐨勫渚с€?    /// </summary>
+
     public bool TryGetFeatureApproachCells(string query, Vector3 referenceWorld, out Vector2Int[] approachCells, int maxCount = 16, bool ignoreCase = true, Vector2Int? anchorBias = null)
     {
         approachCells = Array.Empty<Vector2Int>();
@@ -828,8 +608,6 @@ public class CampusGrid2D : MonoBehaviour
         return approachCells.Length > 0;
     }
 
-    /// <summary>
-    /// 鐢熸垚鍥寸粫鏌愪釜澶у湴鍥惧疄浣撶殑闂幆璺緞銆?    /// 璁捐鐩爣涓嶆槸鈥滅敾涓€鏉″嚑浣曞渾鈥濓紝鑰屾槸娌跨潃瀹炰綋澶栧洿鍙€氳鏍煎舰鎴愪竴涓湡姝ｅ彲鎵ц鐨勭綉鏍肩幆璺€?    /// 濡傛灉缁欎簡 anchorBias锛岃捣濮嬪垏鍏ョ偣浼氫紭鍏堥€夋嫨涓庤鍋忕疆涓€鑷寸殑澶栦晶鏍笺€?    /// </summary>
     public bool TryBuildFeatureRingPath(string query, Vector3 referenceWorld, out Vector2Int[] ringPath, int maxApproachCells = 48, bool ignoreCase = true, Vector2Int? anchorBias = null)
     {
         ringPath = Array.Empty<Vector2Int>();
@@ -865,8 +643,7 @@ public class CampusGrid2D : MonoBehaviour
         return ringPath.Length > 0;
     }
 
-    /// <summary>
-    /// 鍦ㄩ€昏緫缃戞牸涓婃嫾鎺ヤ竴鏉♀€滆闂嫢骞茬洰鏍囨牸鈥濈殑绂绘暎璺緞銆?    /// 璇ユ帴鍙ｆ棦鍙粰澶у湴鍥惧疄浣撹鐩栫敤锛屼篃鍙粰灏忚妭鐐归泦鍚堣鐩栫敤銆?    /// </summary>
+
     public bool TryBuildVisitPath(Vector2Int startCell, IReadOnlyList<Vector2Int> visitCells, out Vector2Int[] path, bool closeLoop = false)
     {
         path = Array.Empty<Vector2Int>();
@@ -914,8 +691,7 @@ public class CampusGrid2D : MonoBehaviour
         return path.Length > 0;
     }
 
-    /// <summary>
-    /// 浠呯Щ闄ょ浉閭婚噸澶嶆牸锛屼笉鍋氬叏灞€鍘婚噸銆?    /// 杩欐牱鍙互淇濈暀闂幆璺緞鍜岄噸澶嶇粡杩囧悓涓€鏍肩殑鍚堟硶璺緞缁撴瀯銆?    /// </summary>
+
     private static List<Vector2Int> RemoveConsecutiveDuplicateCells(IReadOnlyList<Vector2Int> path)
     {
         List<Vector2Int> result = new List<Vector2Int>();
@@ -1000,8 +776,6 @@ public class CampusGrid2D : MonoBehaviour
         return false;
     }
 
-    /// <summary>
-    /// 璁＄畻瀹炰綋杈圭晫鏍笺€?    /// 鍒ゅ畾瑙勫垯寰堢畝鍗曪細鏌愪釜鍗犵敤鏍煎彧瑕佸洓閭诲煙涓瓨鍦ㄢ€滆秺鐣屾垨闈炶瀹炰綋鍗犵敤鈥濆嵆鍙畻杈圭晫銆?    /// </summary>
     private Vector2Int[] ComputeFeatureBoundaryCells(FeatureSpatialIndex index)
     {
         if (index == null || index.occupiedCells.Count == 0) return Array.Empty<Vector2Int>();
@@ -1047,8 +821,7 @@ public class CampusGrid2D : MonoBehaviour
         return result.ToArray();
     }
 
-    /// <summary>
-    /// 璁＄畻瀹炰綋澶栧洿鍙帴杩戞牸銆?    /// 瀹冩湰璐ㄤ笂鏄€滆竟鐣屾牸澶栦晶涓€鍦堢殑鍙€氳鏍尖€濓紝骞舵寜鍙傝€冧綅缃帓搴忓悗鎴柇銆?    /// </summary>
+
     private Vector2Int[] ComputeFeatureApproachCells(FeatureSpatialIndex index, Vector2Int referenceCell, int maxCount, Vector2Int? anchorBias = null)
     {
         if (index == null || index.occupiedCells.Count == 0) return Array.Empty<Vector2Int>();
@@ -1088,8 +861,6 @@ public class CampusGrid2D : MonoBehaviour
             .ToArray();
     }
 
-    /// <summary>
-    /// 杩戦偦鎺掑簭璁块棶鐐广€?    /// 杩欓噷鏁呮剰淇濇寔鏈寸礌锛氱敤鏈€杩戦偦璐績鍗冲彲锛岄伩鍏嶅湪鍔ㄤ綔灞傚紩鍏ユ洿閲嶇殑 TSP 澶嶆潅搴︺€?    /// </summary>
     private static List<Vector2Int> OrderVisitCellsByNearest(Vector2Int startCell, IReadOnlyList<Vector2Int> visitCells)
     {
         var seen = new HashSet<Vector2Int>();
@@ -1126,8 +897,7 @@ public class CampusGrid2D : MonoBehaviour
         return ordered;
     }
 
-    /// <summary>
-    /// 杩藉姞涓€娈佃矾寰勶紝骞堕伩鍏嶉噸澶嶅啓鍏ラ灏鹃噸鍚堟牸銆?    /// </summary>
+
     private static void AppendPathSegment(List<Vector2Int> output, IReadOnlyList<Vector2Int> segment, bool includeFirst)
     {
         if (output == null || segment == null || segment.Count == 0) return;
@@ -1150,12 +920,7 @@ public class CampusGrid2D : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// 璁＄畻鈥滀竴涓?selector 鍜屼竴涓湡瀹?collectionKey 鍒板簳鏈夊鍍忊€濄€?    /// 鍒嗘暟瓒婂皬琛ㄧず瓒婂儚锛沬nt.MaxValue 琛ㄧず瀹屽叏涓嶅儚銆?    ///
-    /// 杩欓噷涓嶅幓鏋氫妇涓氬姟鍗曡瘝锛岃€屾槸鐩存帴鎷?selector 鍜屽綋鍓嶅湴鍥剧湡瀹為泦鍚堥敭鍋氭瘮瀵癸細
-    /// - 瀹屽叏鐩哥瓑鏈€濂斤紱
-    /// - selector 鍖呭惈闆嗗悎灏惧悕锛堜緥濡?allbuilding 鍖呭惈 building锛夋涔嬶紱
-    /// - 鍙嶅悜鍖呭惈鏇村急锛屽彧褰撳厹搴曘€?    /// </summary>
+
     private static int ComputeCollectionSelectorScore(string normalizedSelector, string normalizedKey, string normalizedTail)
     {
         if (string.IsNullOrWhiteSpace(normalizedSelector))
@@ -1199,9 +964,7 @@ public class CampusGrid2D : MonoBehaviour
         return best;
     }
 
-    /// <summary>
-    /// 鎶?selector 鏂囨湰褰掍竴鍒扳€滃彧淇濈暀瀛楁瘝銆佹暟瀛楀拰涓枃鈥濈殑绱у噾褰㈠紡锛?    /// 鏂逛究鍜?collectionKey / kind 鍚嶅仛绋冲畾姣旇緝銆?    ///
-    /// 杩欎竴姝ュ彧鍋氬舰寮忓綊涓€鍖栵紝涓嶅仛璇箟纭紪鐮併€?    /// </summary>
+
     private static string NormalizeCollectionSelectorToken(string raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
@@ -1237,8 +1000,7 @@ public class CampusGrid2D : MonoBehaviour
             minX = index.minX == int.MaxValue ? -1 : index.minX,
             maxX = index.maxX == int.MinValue ? -1 : index.maxX,
             minZ = index.minZ == int.MaxValue ? -1 : index.minZ,
-            maxZ = index.maxZ == int.MinValue ? -1 : index.maxZ,
-            memberEntityIds = new[] { SelectFeatureReferenceToken(index.uid, index.name, index.runtimeAlias) }
+            maxZ = index.maxZ == int.MinValue ? -1 : index.maxZ
         };
 
         if (index.occupiedCells.Count == 0)
@@ -1302,13 +1064,10 @@ public class CampusGrid2D : MonoBehaviour
             centroidWorld = src.centroidWorld,
             anchorCell = src.anchorCell,
             anchorWorld = src.anchorWorld,
-            footprintRadius = src.footprintRadius,
-            memberEntityIds = src.memberEntityIds != null ? (string[])src.memberEntityIds.Clone() : Array.Empty<string>()
+            footprintRadius = src.footprintRadius
         };
     }
 
-    /// <summary>
-    /// 璁＄畻鍊欓€夊渚ф牸涓庣洰鏍囧亸缃殑鍑犱綍涓€鑷存€т唬浠枫€?    /// 浠ｄ环瓒婂皬锛岃鏄庤鏍艰秺鎺ヨ繎涓婃父璁″垝甯屾湜鐨勬帴杩戞柟鍚戙€?    /// 杩欓噷瀹屽叏鍩轰簬涓績鐐瑰埌鍊欓€夌偣鐨勫悜閲忓す瑙掞紝涓嶅啀渚濊禆 East/West/North/South 鏋氫妇銆?    /// </summary>
     private static float ComputeAnchorBiasPenalty(Vector2Int candidate, Vector2 centroid, Vector2Int? anchorBias)
     {
         if (!anchorBias.HasValue) return 0f;
@@ -1449,7 +1208,7 @@ public class CampusGrid2D : MonoBehaviour
         Ray ray = cam.ScreenPointToRay(Input.mousePosition);
         if (TryGetQueryWorldPoint(ray, out Vector3 worldPoint, out string hitObjectName))
         {
-            if (TryGetCellFeatureInfoByWorld(worldPoint, out Vector2Int grid, out string uid, out string name, out CellType type, out bool blocked))
+            if (TryGetCellFeatureInfoByWorld(worldPoint, out Vector2Int grid, out string uid, out string name, out CampusGridCellType type, out bool blocked))
             {
                 if (string.IsNullOrEmpty(name)) name = "(无名称)";
                 if (string.IsNullOrEmpty(uid)) uid = "-";
@@ -1560,8 +1319,7 @@ public class CampusGrid2D : MonoBehaviour
         return false;
     }
 
-    /// <summary>
-    /// A* 瀵昏矾锛氳繑鍥炰粠 start 鍒?goal 鐨勭綉鏍艰矾寰勶紙鍖呭惈璧风偣鍜岀粓鐐癸級銆?    /// </summary>
+
     public List<Vector2Int> FindPathAStar(Vector2Int start, Vector2Int goal, bool? useDiagonalOverride = null)
     {
         return FindPathAStar(start, goal, useDiagonalOverride, null);
@@ -1669,7 +1427,7 @@ public class CampusGrid2D : MonoBehaviour
         gridLength = Mathf.Max(1, Mathf.CeilToInt(b.height / cellSize));
 
         blockedGrid = new bool[gridWidth, gridLength];
-        cellTypeGrid = new CellType[gridWidth, gridLength];
+        cellTypeGrid = new CampusGridCellType[gridWidth, gridLength];
         cellFeatureUidGrid = new string[gridWidth, gridLength];
         cellFeatureNameGrid = new string[gridWidth, gridLength];
         _astarGScore   = new float[gridWidth, gridLength];
@@ -1695,7 +1453,7 @@ public class CampusGrid2D : MonoBehaviour
             for (int z = 0; z < gridLength; z++)
             {
                 blockedGrid[x, z] = false;
-                cellTypeGrid[x, z] = CellType.Free;
+                cellTypeGrid[x, z] = CampusGridCellType.Free;
                 cellFeatureUidGrid[x, z] = null;
                 cellFeatureNameGrid[x, z] = null;
                 cellPriorityGrid[x, z] = int.MinValue;
@@ -1707,7 +1465,7 @@ public class CampusGrid2D : MonoBehaviour
             Feature2D f = features[i];
             if (f == null) continue;
 
-            CellType t = KindToCellType(f.kind);
+            CampusGridCellType t = KindToCellType(f.kind);
             bool shouldBlock = IsBlockedKind(t);
             int featurePriority = GetFeatureRasterPriority(t);
 
@@ -1751,8 +1509,7 @@ public class CampusGrid2D : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// 鎶?CampusJsonMapLoader 鐨勫缓妯?footprint 鍏堣浆鎴愰€傚悎 2D 鏍呮牸鍖栫殑绋冲畾鍑犱綍锛?    /// - 闈細澶嶇敤 ring 娓呮礂銆佺粫搴忋€乷uter->hole 褰掑睘鍜?bounds 鐭╁舰鍏滃簳锛?    /// - 绾匡細鐩存帴鎸?ribbon 椤堕潰鐢熸垚 2D quad锛屽拰鐪熷疄閬撹矾甯﹀涓€鑷淬€?    /// </summary>
+
     private void PrepareFeatureRasterization(List<Feature2D> features)
     {
         if (features == null || features.Count == 0) return;
@@ -2158,20 +1915,20 @@ public class CampusGrid2D : MonoBehaviour
                a.yMax >= b.yMin - eps;
     }
 
-    private int GetFeatureRasterPriority(CellType cellType)
+    private int GetFeatureRasterPriority(CampusGridCellType cellType)
     {
         switch (cellType)
         {
-            case CellType.Bridge: return 1000;
-            case CellType.Building: return 900;
-            case CellType.Expressway: return 820;
-            case CellType.Road: return 780;
-            case CellType.Parking: return 730;
-            case CellType.Sports: return 700;
-            case CellType.Water: return 680;
-            case CellType.Green: return 640;
-            case CellType.Forest: return 620;
-            case CellType.Other: return 600;
+            case CampusGridCellType.Bridge: return 1000;
+            case CampusGridCellType.Building: return 900;
+            case CampusGridCellType.Expressway: return 820;
+            case CampusGridCellType.Road: return 780;
+            case CampusGridCellType.Parking: return 730;
+            case CampusGridCellType.Sports: return 700;
+            case CampusGridCellType.Water: return 680;
+            case CampusGridCellType.Green: return 640;
+            case CampusGridCellType.Forest: return 620;
+            case CampusGridCellType.Other: return 600;
             default: return 0;
         }
     }
@@ -2204,14 +1961,14 @@ public class CampusGrid2D : MonoBehaviour
     {
         if (blockedGrid[x, z])
         {
-            CellType t = cellTypeGrid[x, z];
-            if (t == CellType.Building) return buildingColor;
-            if (t == CellType.Water) return waterColor;
+            CampusGridCellType t = cellTypeGrid[x, z];
+            if (t == CampusGridCellType.Building) return buildingColor;
+            if (t == CampusGridCellType.Water) return waterColor;
             return blockedColor;
         }
 
-        CellType type = cellTypeGrid[x, z];
-        if (type == CellType.Road || type == CellType.Expressway || type == CellType.Bridge) return roadColor;
+        CampusGridCellType type = cellTypeGrid[x, z];
+        if (type == CampusGridCellType.Road || type == CampusGridCellType.Expressway || type == CampusGridCellType.Bridge) return roadColor;
         return freeColor;
     }
 
@@ -2579,8 +2336,7 @@ public class CampusGrid2D : MonoBehaviour
         );
     }
 
-    /// <summary>
-    /// 褰掍竴鍖栧湴鐐规爣璇嗭細缁熶竴澶у皬鍐欏苟绉婚櫎绌虹櫧銆佷笅鍒掔嚎銆佽繛瀛楃锛屼究浜庢ā绯婂榻愩€?    /// </summary>
+
     private static string NormalizeFeatureToken(string raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
@@ -2593,11 +2349,7 @@ public class CampusGrid2D : MonoBehaviour
         return s;
     }
 
-    /// <summary>
-    /// 鍙仛涓€绉嶉潪甯稿厠鍒剁殑鈥滄爣绛惧墠缂€鍓ョ鈥濓細
-    /// - 鑻ヨ緭鍏ュ儚 feature:a_3 / campus:forest_2 杩欑鈥滅煭鏍囩:涓讳綋鈥濆舰寮忥紝灏卞彇涓讳綋锛?    /// - 鍚﹀垯淇濇寔鍘熸牱銆?    ///
-    /// 杩欓噷鏁呮剰涓嶆灇涓?building/forest 绛変笟鍔″崟璇嶏紝
-    /// 閬垮厤鍦板浘鍛藉悕瑙勫垯涓€鍙橈紝涓嬫父瑙ｆ瀽灏卞叏閮ㄥけ鏁堛€?    /// </summary>
+
     private static bool TryStripStructuredTargetPrefix(string text, out string prefix, out string stripped)
     {
         prefix = string.Empty;
@@ -2745,8 +2497,7 @@ public class CampusGrid2D : MonoBehaviour
         return string.IsNullOrWhiteSpace(result) ? "feature" : result;
     }
 
-    /// <summary>
-    /// 涓烘瘡涓?feature 鍑嗗绌洪棿绱㈠紩澹冲瓙銆?    /// 鍏堝缓鈥滅┖妗ｆ鈥濓紝鍚庨潰鍦ㄦ爡鏍煎寲鏃朵笉鏂妸鍛戒腑鐨勬牸瀛愬～杩涘幓銆?    /// </summary>
+
     private void InitializeFeatureSpatialIndexes(List<Feature2D> features)
     {
         if (features == null || featureSpatialIndexByUid == null) return;
@@ -2775,7 +2526,7 @@ public class CampusGrid2D : MonoBehaviour
         }
     }
 
-    private void RegisterFeatureSpatialCell(Feature2D feature, CellType cellType, int x, int z)
+    private void RegisterFeatureSpatialCell(Feature2D feature, CampusGridCellType cellType, int x, int z)
     {
         if (feature == null || string.IsNullOrWhiteSpace(feature.uid) || featureSpatialIndexByUid == null) return;
 
@@ -2796,8 +2547,7 @@ public class CampusGrid2D : MonoBehaviour
         if (z > index.maxZ) index.maxZ = z;
     }
 
-    /// <summary>
-    /// 鏍呮牸鍖栧畬鎴愬悗锛屾妸鍐呴儴绱㈠紩鏀舵暃鎴愮ǔ瀹氬彲璇荤殑绌洪棿妗ｆ銆?    /// </summary>
+
     private void FinalizeFeatureSpatialIndexes()
     {
         if (featureSpatialIndexByUid == null || featureSpatialProfileByUid == null || featureCollectionMembers == null) return;
@@ -3173,36 +2923,36 @@ public class CampusGrid2D : MonoBehaviour
         if (cellFeatureNameGrid != null) cellFeatureNameGrid[x, z] = string.IsNullOrWhiteSpace(name) ? null : name.Trim();
     }
 
-    private CellType KindToCellType(string kind)
+    private CampusGridCellType KindToCellType(string kind)
     {
         switch (kind)
         {
-            case "building": return CellType.Building;
-            case "water": return CellType.Water;
-            case "road": return CellType.Road;
-            case "expressway": return CellType.Expressway;
-            case "bridge": return CellType.Bridge;
-            case "parking": return CellType.Parking;
-            case "green": return CellType.Green;
-            case "forest": return CellType.Forest;
-            case "sports": return CellType.Sports;
-            default: return CellType.Other;
+            case "building": return CampusGridCellType.Building;
+            case "water": return CampusGridCellType.Water;
+            case "road": return CampusGridCellType.Road;
+            case "expressway": return CampusGridCellType.Expressway;
+            case "bridge": return CampusGridCellType.Bridge;
+            case "parking": return CampusGridCellType.Parking;
+            case "green": return CampusGridCellType.Green;
+            case "forest": return CampusGridCellType.Forest;
+            case "sports": return CampusGridCellType.Sports;
+            default: return CampusGridCellType.Other;
         }
     }
 
-    private bool IsBlockedKind(CellType t)
+    private bool IsBlockedKind(CampusGridCellType t)
     {
         switch (t)
         {
-            case CellType.Building: return buildingBlocked;
-            case CellType.Water: return waterBlocked;
-            case CellType.Sports: return sportsBlocked;
-            case CellType.Forest: return forestBlocked;
-            case CellType.Road: return roadBlocked;
-            case CellType.Expressway: return expresswayBlocked;
-            case CellType.Bridge: return bridgeBlocked;
-            case CellType.Parking: return parkingBlocked;
-            case CellType.Other: return otherBlocked;
+            case CampusGridCellType.Building: return buildingBlocked;
+            case CampusGridCellType.Water: return waterBlocked;
+            case CampusGridCellType.Sports: return sportsBlocked;
+            case CampusGridCellType.Forest: return forestBlocked;
+            case CampusGridCellType.Road: return roadBlocked;
+            case CampusGridCellType.Expressway: return expresswayBlocked;
+            case CampusGridCellType.Bridge: return bridgeBlocked;
+            case CampusGridCellType.Parking: return parkingBlocked;
+            case CampusGridCellType.Other: return otherBlocked;
             default: return false;
         }
     }
@@ -3375,3 +3125,4 @@ public class CampusGrid2D : MonoBehaviour
         else DestroyImmediate(obj);
     }
 }
+
