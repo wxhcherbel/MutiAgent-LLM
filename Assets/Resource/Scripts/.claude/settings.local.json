@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd:*)",
+      "Bash(/tmp/check_regions.txt:*)",
+      "Read(//tmp/**)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(git:*)",
+      "Bash(python3:*)",
+      "Bash(node:*)"
+    ]
+  }
+}

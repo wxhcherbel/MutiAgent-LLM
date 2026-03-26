@@ -1,0 +1,1210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>多智能体协同约束设计文档</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Noto+Serif+SC:wght@400;600&display=swap');
+
+  :root {
+    --bg:        #0d0f14;
+    --bg2:       #13161e;
+    --bg3:       #1a1e2a;
+    --border:    #252a38;
+    --border2:   #2e3547;
+    --text:      #c8cdd8;
+    --text2:     #7a8299;
+    --text3:     #4a5068;
+    --accent:    #5b8af0;
+    --accent2:   #3d6fd4;
+
+    --c1:        #a78bfa;  /* Assignment  - 紫 */
+    --c1bg:      #1e1830;
+    --c1border:  #3d2f6e;
+    --c2:        #34d399;  /* Completion  - 绿 */
+    --c2bg:      #0d2420;
+    --c2border:  #1a5c44;
+    --c3:        #fbbf24;  /* Coupling    - 琥珀 */
+    --c3bg:      #231a08;
+    --c3border:  #5a4010;
+    --c4:        #f87171;  /* Priority    - 红 */
+    --c4bg:      #230e0e;
+    --c4border:  #5c1f1f;
+    --wb:        #38bdf8;  /* Whiteboard  - 青 */
+    --wbbg:      #081820;
+    --wbborder:  #0e4060;
+    --ref:       #e879f9; /* Referee     - 粉紫 */
+    --refbg:     #1e0822;
+    --refborder: #5a1570;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Noto Serif SC', serif;
+    font-size: 14px;
+    line-height: 1.8;
+  }
+
+  /* ── 顶部标题栏 ── */
+  header {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 32px 48px 28px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    display: flex;
+    align-items: baseline;
+    gap: 20px;
+  }
+  header h1 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  header span {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text3);
+    letter-spacing: 0.05em;
+  }
+
+  /* ── 侧边导航 ── */
+  .layout {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    min-height: 100vh;
+  }
+  nav {
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    padding: 28px 0;
+    position: sticky;
+    top: 73px;
+    height: calc(100vh - 73px);
+    overflow-y: auto;
+  }
+  nav .nav-section {
+    padding: 6px 20px 2px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    color: var(--text3);
+    text-transform: uppercase;
+    margin-top: 16px;
+  }
+  nav a {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text2);
+    text-decoration: none;
+    transition: all 0.15s;
+    border-left: 2px solid transparent;
+  }
+  nav a:hover { color: var(--text); background: var(--bg3); }
+  nav a.active { color: var(--accent); border-left-color: var(--accent); background: rgba(91,138,240,0.07); }
+  nav a .dot {
+    width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  }
+
+  /* ── 主内容区 ── */
+  main { padding: 40px 52px; max-width: 900px; }
+
+  /* ── 区块卡片 ── */
+  .section {
+    margin-bottom: 56px;
+    scroll-margin-top: 100px;
+  }
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 24px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 3px;
+    letter-spacing: 0.05em;
+  }
+  .section-header h2 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #e8eaf0;
+  }
+  .section-desc {
+    font-size: 13px;
+    color: var(--text2);
+    margin-bottom: 20px;
+    padding: 12px 16px;
+    background: var(--bg3);
+    border-left: 3px solid var(--border2);
+    border-radius: 0 4px 4px 0;
+    line-height: 1.9;
+  }
+
+  /* ── 字段卡片 ── */
+  .field-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 12px;
+    overflow: hidden;
+    transition: border-color 0.15s;
+  }
+  .field-card:hover { border-color: var(--border2); }
+  .field-header {
+    display: grid;
+    grid-template-columns: 200px 100px 1fr;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 18px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .field-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 700;
+    color: #e0e4f0;
+  }
+  .field-type {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--accent);
+    background: rgba(91,138,240,0.1);
+    padding: 2px 8px;
+    border-radius: 3px;
+    text-align: center;
+  }
+  .field-brief {
+    font-size: 12px;
+    color: var(--text2);
+  }
+  .field-body {
+    display: none;
+    padding: 0 18px 16px;
+    border-top: 1px solid var(--border);
+  }
+  .field-card.open .field-body { display: block; }
+  .field-card.open .field-header { background: var(--bg3); }
+
+  .field-desc {
+    font-size: 13px;
+    color: var(--text);
+    margin: 12px 0 8px;
+    line-height: 1.85;
+  }
+
+  /* ── 可选值列表 ── */
+  .values-list {
+    margin: 10px 0;
+  }
+  .value-item {
+    display: flex;
+    gap: 10px;
+    padding: 6px 10px;
+    margin-bottom: 4px;
+    background: var(--bg3);
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    align-items: flex-start;
+  }
+  .value-key {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .value-desc {
+    font-size: 12px;
+    color: var(--text2);
+    line-height: 1.7;
+  }
+
+  /* ── 代码块 ── */
+  pre {
+    background: #080a10;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 10px 0;
+  }
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.75;
+  }
+  .cm  { color: var(--text3); }          /* 注释 */
+  .ck  { color: #79b8ff; }               /* 字段名/关键字 */
+  .cs  { color: #9ecbff; }               /* 字符串 */
+  .cn  { color: #f8c555; }               /* 数字 */
+  .ct  { color: var(--text2); }          /* 类型 */
+  .cv  { color: #b392f0; }               /* 枚举值 */
+
+  /* ── 例子标签 ── */
+  .example-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text3);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin: 12px 0 4px;
+  }
+
+  /* ── 条件标签 ── */
+  .cond-tag {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    padding: 1px 7px;
+    border-radius: 2px;
+    margin-right: 6px;
+    margin-bottom: 4px;
+    border: 1px solid;
+  }
+
+  /* ── 分组标题（C1~C4专用字段的分隔） ── */
+  .group-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text3);
+    margin: 20px 0 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px dashed var(--border2);
+  }
+
+  /* ── 信息提示 ── */
+  .tip {
+    font-size: 12px;
+    color: var(--text2);
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    border-radius: 4px;
+    padding: 10px 14px;
+    margin: 10px 0;
+    line-height: 1.8;
+  }
+  .tip strong { color: var(--text); }
+
+  /* ── 表格（三类任务对比） ── */
+  .compare-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 12px;
+  }
+  .compare-table th {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: var(--text2);
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border2);
+    text-align: left;
+  }
+  .compare-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    vertical-align: top;
+    line-height: 1.7;
+  }
+  .compare-table tr:last-child td { border-bottom: none; }
+  .compare-table tr:hover td { background: var(--bg3); }
+
+  /* 颜色主题应用 */
+  .c1-theme .badge { background: var(--c1bg); color: var(--c1); border: 1px solid var(--c1border); }
+  .c1-theme .section-header { border-color: var(--c1border); }
+  .c2-theme .badge { background: var(--c2bg); color: var(--c2); border: 1px solid var(--c2border); }
+  .c2-theme .section-header { border-color: var(--c2border); }
+  .c3-theme .badge { background: var(--c3bg); color: var(--c3); border: 1px solid var(--c3border); }
+  .c3-theme .section-header { border-color: var(--c3border); }
+  .c4-theme .badge { background: var(--c4bg); color: var(--c4); border: 1px solid var(--c4border); }
+  .c4-theme .section-header { border-color: var(--c4border); }
+  .wb-theme .badge { background: var(--wbbg); color: var(--wb); border: 1px solid var(--wbborder); }
+  .wb-theme .section-header { border-color: var(--wbborder); }
+  .ref-theme .badge { background: var(--refbg); color: var(--ref); border: 1px solid var(--refborder); }
+  .ref-theme .section-header { border-color: var(--refborder); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Coordination Constraint Reference</h1>
+  <span>多智能体无人机协同约束 · 设计文档 v1.0</span>
+</header>
+
+<div class="layout">
+
+<!-- ── 侧边导航 ── -->
+<nav>
+  <div class="nav-section">协同约束</div>
+  <a href="#sc-common" class="active">
+    <span class="dot" style="background:#5b8af0"></span>通用字段
+  </a>
+  <a href="#c1">
+    <span class="dot" style="background:var(--c1)"></span>C1 · 分配约束
+  </a>
+  <a href="#c2">
+    <span class="dot" style="background:var(--c2)"></span>C2 · 完成条件
+  </a>
+  <a href="#c3">
+    <span class="dot" style="background:var(--c3)"></span>C3 · 耦合约束
+  </a>
+  <a href="#c4">
+    <span class="dot" style="background:var(--c4)"></span>C4 · 优先级
+  </a>
+  <div class="nav-section">通信机制</div>
+  <a href="#whiteboard">
+    <span class="dot" style="background:var(--wb)"></span>白板条目
+  </a>
+  <a href="#referee">
+    <span class="dot" style="background:var(--ref)"></span>裁判事件
+  </a>
+  <div class="nav-section">参考</div>
+  <a href="#compare">
+    <span class="dot" style="background:var(--text3)"></span>三类任务对比
+  </a>
+</nav>
+
+<!-- ── 主内容 ── -->
+<main>
+
+<!-- ══════════════════════════════════════════════
+     StructuredConstraint 通用字段
+══════════════════════════════════════════════ -->
+<div class="section" id="sc-common">
+  <div class="section-header">
+    <span class="badge" style="background:rgba(91,138,240,0.12);color:var(--accent);border:1px solid rgba(91,138,240,0.3)">StructuredConstraint</span>
+    <h2>协同约束 · 通用字段</h2>
+  </div>
+  <p class="section-desc">
+    每条约束无论类型如何，都必须填写这四个通用字段。<br>
+    约束由 LLM#1 从自然语言中提取，存储在 <code>ParsedMission.constraints[]</code> 中，
+    后续各阶段通过 <code>constraintId</code> 引用，不重复存储内容。
+  </p>
+
+  <!-- constraintId -->
+  <div class="field-card open">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">constraintId</span>
+      <span class="field-type">string</span>
+      <span class="field-brief">约束的全局唯一编号</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">
+        在本次任务内唯一标识一条约束。格式固定为 <code>"c_NNN"</code>，由 LLM#1 生成时按序分配。
+        <br>PlanSlot 和 PlanStep 中的 <code>constraintIds[]</code> 引用此字段，
+        ADM 通过此 ID 查询白板或监听裁判事件，不需要重复复制约束内容。
+      </p>
+      <div class="example-label">举例</div>
+      <pre><code><span class="cm">// 搬家任务中的同步起抬约束</span>
+<span class="ck">constraintId</span> = <span class="cs">"c_003"</span>
+
+<span class="cm">// PlanStep 引用此约束（只存ID，不存内容）</span>
+<span class="ck">step.constraintIds</span> = [<span class="cs">"c_001"</span>, <span class="cs">"c_003"</span>]</code></pre>
+    </div>
+  </div>
+
+  <!-- cType -->
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">cType</span>
+      <span class="field-type">string</span>
+      <span class="field-brief">约束类型，决定使用哪组专用字段</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">四个值之一，对应四类约束。填写后，ADM 只读取该类型对应的专用字段，其余字段忽略。</p>
+      <div class="values-list">
+        <div class="value-item">
+          <span class="value-key" style="color:var(--c1)">"Assignment"</span>
+          <span class="value-desc">C1 分配约束：谁负责什么目标/资源，是否互斥</span>
+        </div>
+        <div class="value-item">
+          <span class="value-key" style="color:var(--c2)">"Completion"</span>
+          <span class="value-desc">C2 完成条件：任务达到什么状态算完成，是否需要多机同步</span>
+        </div>
+        <div class="value-item">
+          <span class="value-key" style="color:var(--c3)">"Coupling"</span>
+          <span class="value-desc">C3 耦合约束：我的行为和其他智能体如何相互影响（合作/竞争/对抗）</span>
+        </div>
+        <div class="value-item">
+          <span class="value-key" style="color:var(--c4)">"Priority"</span>
+          <span class="value-desc">C4 优先级约束：多个约束冲突时如何裁决，触发后执行降级行为</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- channel -->
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">channel</span>
+      <span class="field-type">string</span>
+      <span class="field-brief">约束状态通过什么机制传递</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">
+        决定 ADM 执行此约束时去哪里读取状态更新：组内白板，还是等裁判宣布。
+      </p>
+      <div class="values-list">
+        <div class="value-item">
+          <span class="value-key" style="color:var(--wb)">"whiteboard"</span>
+          <span class="value-desc">组内白板，组员互相可见。适用于合作任务和对抗任务的己方内部协同。ADM 主动轮询白板中对应 constraintId 的条目。</span>
+        </div>
+        <div class="value-item">
+          <span class="value-key" style="color:var(--ref)">"referee"</span>
+          <span class="value-desc">等待裁判宣布物理事实。适用于竞争任务（谁先到达）和对抗任务的跨组信息（敌方状态）。ADM 被动监听裁判广播。</span>
+        </div>
+      </div>
+      <div class="tip">
+        <strong>规律：</strong>
+        C3 sign=+1（合作）→ whiteboard；
+        C3 sign=0（竞争）或 -1（对抗）→ referee；
+        C1/C2 组内 → whiteboard；涉及跨组资源 → referee
+      </div>
+    </div>
+  </div>
+
+  <!-- involvedAgents -->
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">involvedAgents</span>
+      <span class="field-type">string[]</span>
+      <span class="field-brief">此约束涉及哪些智能体</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">
+        填写受此约束影响的 agentId 列表。空数组表示约束适用于本组全体成员。
+        ADM 在响应约束时，只观察此列表中的成员状态，不关心列表外的其他智能体。
+      </p>
+      <div class="example-label">举例</div>
+      <pre><code><span class="cm">// C2同步完成约束：三架都要完成才算任务结束</span>
+<span class="ck">involvedAgents</span> = [<span class="cs">"drone_A"</span>, <span class="cs">"drone_B"</span>, <span class="cs">"drone_C"</span>]
+
+<span class="cm">// C1分配约束：只约束 drone_A 负责某充电桩</span>
+<span class="ck">involvedAgents</span> = [<span class="cs">"drone_A"</span>]
+
+<span class="cm">// 空数组：本组全体都受此约束</span>
+<span class="ck">involvedAgents</span> = []</code></pre>
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════
+     C1 分配约束
+══════════════════════════════════════════════ -->
+<div class="section c1-theme" id="c1">
+  <div class="section-header">
+    <span class="badge">C1 · Assignment</span>
+    <h2>分配约束</h2>
+  </div>
+  <p class="section-desc">
+    规定"谁负责什么"。防止任务被遗漏（没人管）或资源被重复占用（两架挤一个桩）。<br>
+    合作任务中用于分工，竞争任务中用于声明占有，对抗任务中用于分配包抄方向。
+  </p>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">subject</span>
+      <span class="field-type">string</span>
+      <span class="field-brief">谁来负责执行</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">
+        执行此分配任务的智能体 ID 或角色名。填 <code>"all"</code> 表示本组全员共同负责同一目标（如合抬重物）。
+      </p>
+      <div class="example-label">举例</div>
+      <pre><code><span class="cm">// 合作搬家：全员共同负责沙发</span>
+<span class="ck">subject</span> = <span class="cs">"all"</span>
+
+<span class="cm">// 竞争抢桩：drone_A 声明自己去占桩1</span>
+<span class="ck">subject</span> = <span class="cs">"drone_A"</span>
+
+<span class="cm">// 对抗包抄：red_A 负责东侧方向</span>
+<span class="ck">subject</span> = <span class="cs">"red_A"</span></code></pre>
+    </div>
+  </div>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">targetObject</span>
+      <span class="field-type">string</span>
+      <span class="field-brief">被分配的目标对象</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">
+        可以是地点名、资源名、任务名或方向描述。LLM#4 拆解步骤时读取此字段生成具体动作。
+      </p>
+      <div class="example-label">举例</div>
+      <pre><code><span class="cm">// 合作</span>
+<span class="ck">targetObject</span> = <span class="cs">"沙发"</span>
+
+<span class="cm">// 竞争</span>
+<span class="ck">targetObject</span> = <span class="cs">"充电桩_1"</span>
+
+<span class="cm">// 对抗</span>
+<span class="ck">targetObject</span> = <span class="cs">"北侧包抄路线"</span></code></pre>
+    </div>
+  </div>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">exclusive</span>
+      <span class="field-type">bool</span>
+      <span class="field-brief">同一目标是否只能被一个智能体占有</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">
+        <code>true</code>：互斥，同一时刻只有一个智能体可以持有此目标。裁判宣布占有后，其他智能体必须放弃并重新选择。<br>
+        <code>false</code>：共享，多个智能体可以同时作用于同一目标（如合抬同一件重物）。
+      </p>
+      <div class="example-label">举例</div>
+      <pre><code><span class="cm">// 竞争抢桩：一个桩只能一架占</span>
+<span class="ck">exclusive</span> = <span class="cn">true</span>
+
+<span class="cm">// 合作合抬：大家都作用于同一个沙发</span>
+<span class="ck">exclusive</span> = <span class="cn">false</span>
+
+<span class="cm">// 对抗包抄方向：两架不能堵同一方向，否则另一侧空缺</span>
+<span class="ck">exclusive</span> = <span class="cn">true</span></code></pre>
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════
+     C2 完成条件约束
+══════════════════════════════════════════════ -->
+<div class="section c2-theme" id="c2">
+  <div class="section-header">
+    <span class="badge">C2 · Completion</span>
+    <h2>完成条件约束</h2>
+  </div>
+  <p class="section-desc">
+    规定"做到什么程度算完成"。支持单机独立完成和多机同步完成两种模式。<br>
+    channel=whiteboard 时，各成员写 DoneSignal，等所有人写完才触发；channel=referee 时，由裁判直接宣布结果。
+  </p>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">condition</span>
+      <span class="field-type">string</span>
+      <span class="field-brief">完成判定标准（自然语言）</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">
+        描述任务完成的客观状态，供 ADM 判断当前步骤是否可以标记为完成。
+        尽量写成可被感知传感器或裁判观察验证的客观描述，避免主观判断。
+      </p>
+      <div class="example-label">举例</div>
+      <pre><code><span class="cm">// 合作搬家</span>
+<span class="ck">condition</span> = <span class="cs">"所有家具已到达新家指定位置"</span>
+
+<span class="cm">// 竞争抢桩</span>
+<span class="ck">condition</span> = <span class="cs">"充电头已插入充电桩且电量开始上升"</span>
+
+<span class="cm">// 对抗红方</span>
+<span class="ck">condition</span> = <span class="cs">"蓝方进入以集结点为圆心的50米包围圈"</span>
+
+<span class="cm">// 对抗蓝方</span>
+<span class="ck">condition</span> = <span class="cs">"存活时间超过300秒"</span></code></pre>
+    </div>
+  </div>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">syncWith</span>
+      <span class="field-type">string[]</span>
+      <span class="field-brief">需要等哪些成员也完成才算整体结束</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">
+        非空时：ADM 完成自身条件后，还需等 syncWith 中所有成员都在白板写入 DoneSignal，才推进到下一步。<br>
+        空数组时：只需自己完成，不等其他人。<br>
+        <strong>注意：</strong>channel=<code>"referee"</code> 时此字段无效，由裁判直接宣布整体结果。
+      </p>
+      <div class="example-label">举例</div>
+      <pre><code><span class="cm">// 合作：三架都到达新家才算完成</span>
+<span class="ck">syncWith</span> = [<span class="cs">"drone_B"</span>, <span class="cs">"drone_C"</span>]
+<span class="cm">// drone_A 完成后在白板写 DoneSignal，等 B 和 C 也写了再结束</span>
+
+<span class="cm">// 竞争：个人任务，不等其他人</span>
+<span class="ck">syncWith</span> = []
+
+<span class="cm">// 对抗：裁判宣布，syncWith 不填</span>
+<span class="ck">channel</span>   = <span class="cs">"referee"</span>
+<span class="ck">syncWith</span>  = []  <span class="cm">// 无效，裁判负责</span></code></pre>
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════
+     C3 耦合约束
+══════════════════════════════════════════════ -->
+<div class="section c3-theme" id="c3">
+  <div class="section-header">
+    <span class="badge">C3 · Coupling</span>
+    <h2>耦合约束</h2>
+  </div>
+  <p class="section-desc">
+    规定"我的行为和其他智能体如何相互影响"。这是三类任务本质的区别所在：<strong>结构相同，符号不同。</strong><br>
+    合作=+1（等对方就位），竞争=0（对方占了我换目标），对抗=-1（对方逼近我立即响应）。
+  </p>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">sign</span>
+      <span class="field-type">int</span>
+      <span class="field-brief">耦合方向，三类任务的核心区别</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">对方的行为对我的影响性质。只填三个值。</p>
+      <div class="values-list">
+        <div class="value-item">
+          <span class="value-key" style="color:var(--c2)">+1 合作</span>
+          <span class="value-desc">对方行动有利于我。我需要等对方就位才能继续行动。<br>举例：搬沙发时等另两架都到抬起位置才起飞</span>
+        </div>
+        <div class="value-item">
+          <span class="value-key" style="color:var(--c3)">0 竞争</span>
+          <span class="value-desc">对方抢走资源使我的选择减少，但不主动攻击我。我感知到对方占用后重新选择目标。<br>举例：对方先到充电桩1，我转向充电桩2</span>
+        </div>
+        <div class="value-item">
+          <span class="value-key" style="color:var(--c4)">-1 对抗</span>
+          <span class="value-desc">对方主动以我为目标，我需要实时响应对方动作。感知到威胁立即调整行为，不等待。<br>举例：红方无人机逼近，蓝方立即启动规避机动</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">watchAgent</span>
+      <span class="field-type">string</span>
+      <span class="field-brief">我需要观察谁的状态</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">
+        指定 ADM 去哪里读取状态更新。与 channel 字段配合使用：<br>
+        channel=whiteboard 时，填具体的 agentId，ADM 在白板中过滤该 agent 的条目；<br>
+        channel=referee 时，填 <code>"referee"</code>，ADM 监听裁判广播。
+      </p>
+      <div class="example-label">举例</div>
+      <pre><code><span class="cm">// 合作 sign=+1：观察队友白板</span>
+<span class="ck">channel</span>     = <span class="cs">"whiteboard"</span>
+<span class="ck">watchAgent</span>  = <span class="cs">"drone_B"</span>
+
+<span class="cm">// 竞争 sign=0：看不到对方白板，等裁判宣布资源状态</span>
+<span class="ck">channel</span>     = <span class="cs">"referee"</span>
+<span class="ck">watchAgent</span>  = <span class="cs">"referee"</span>
+
+<span class="cm">// 对抗 sign=-1：看不到敌方白板，靠裁判广播敌方位置</span>
+<span class="ck">channel</span>     = <span class="cs">"referee"</span>
+<span class="ck">watchAgent</span>  = <span class="cs">"referee"</span></code></pre>
+    </div>
+  </div>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">reactTo</span>
+      <span class="field-type">string</span>
+      <span class="field-brief">触发我响应的事件描述</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">
+        自然语言描述，ADM 将此字符串与 WhiteboardEntry.status 或 RefereeEvent.payload 做语义匹配，
+        判断是否满足触发条件。匹配成功则执行对应行为（等待/重新选目标/规避）。
+      </p>
+      <div class="example-label">举例</div>
+      <pre><code><span class="cm">// 合作：等另外两架都报告就位</span>
+<span class="ck">reactTo</span> = <span class="cs">"drone_B 已到达抬起位置"</span>
+
+<span class="cm">// 竞争：裁判宣布桩被占，我换目标</span>
+<span class="ck">reactTo</span> = <span class="cs">"充电桩_1 已被占用"</span>
+
+<span class="cm">// 对抗：裁判宣布红方进入我的威胁范围</span>
+<span class="ck">reactTo</span> = <span class="cs">"红方无人机进入我方100米范围内"</span></code></pre>
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════
+     C4 优先级约束
+══════════════════════════════════════════════ -->
+<div class="section c4-theme" id="c4">
+  <div class="section-header">
+    <span class="badge">C4 · Priority</span>
+    <h2>优先级约束</h2>
+  </div>
+  <p class="section-desc">
+    规定"约束冲突时怎么裁决"。当电量不足、禁飞区、任务超时等紧急情况出现时，
+    C4 覆盖其他约束，让 ADM 执行降级行为而不是继续强行推进原计划。<br>
+    ADM 在每个步骤执行前都会检查本步骤绑定的所有 C4 约束的 triggerCondition。
+  </p>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">overrides</span>
+      <span class="field-type">string[]</span>
+      <span class="field-brief">触发时使哪些约束暂时失效</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">
+        填 constraintId 列表。C4 触发后，ADM 忽略列表中所有约束的要求，直接执行 fallback 行为。
+        任务恢复正常后，被覆盖的约束重新生效。
+      </p>
+      <div class="example-label">举例</div>
+      <pre><code><span class="cm">// drone_B 电量不足，覆盖"必须三架同时起抬"的要求</span>
+<span class="ck">overrides</span> = [<span class="cs">"c_003"</span>]
+<span class="cm">// c_003 是 C3 耦合约束（sign=+1，等三架同时就位）</span>
+<span class="cm">// 覆盖后另两架不必再等 drone_B</span>
+
+<span class="cm">// 禁飞区警告，覆盖追捕目标和包抄分工</span>
+<span class="ck">overrides</span> = [<span class="cs">"c_001"</span>, <span class="cs">"c_003"</span>]</code></pre>
+    </div>
+  </div>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">triggerCondition</span>
+      <span class="field-type">string</span>
+      <span class="field-brief">触发此优先级约束的条件</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">
+        自然语言描述，ADM 在每步执行前检查此条件是否成立。
+        可以是传感器读数（电量）、位置判断（禁飞区）、时间（超时）或白板/裁判事件。
+      </p>
+      <div class="example-label">举例</div>
+      <pre><code><span class="cm">// 电量触发</span>
+<span class="ck">triggerCondition</span> = <span class="cs">"任意成员电量低于 10%"</span>
+
+<span class="cm">// 位置触发</span>
+<span class="ck">triggerCondition</span> = <span class="cs">"我方任意无人机飞入禁飞区边界 50 米内"</span>
+
+<span class="cm">// 时间触发</span>
+<span class="ck">triggerCondition</span> = <span class="cs">"任务已超时，剩余时间为 0"</span></code></pre>
+    </div>
+  </div>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">fallback</span>
+      <span class="field-type">string</span>
+      <span class="field-brief">触发后执行的降级行为</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">
+        自然语言描述，C4 触发时 ADM 放弃当前步骤，改为执行此行为。
+        应足够具体，让 LLM#5 能直接生成原子动作，不需要再次调用 LLM#4 重新规划。
+      </p>
+      <div class="example-label">举例</div>
+      <pre><code><span class="cm">// 电量不足降级</span>
+<span class="ck">fallback</span> = <span class="cs">"drone_B 立即返回最近充电站，其余成员继续执行原计划"</span>
+
+<span class="cm">// 禁飞区降级</span>
+<span class="ck">fallback</span> = <span class="cs">"全体立即原地悬停，等待新指令，禁止继续向当前目标移动"</span>
+
+<span class="cm">// 超时降级</span>
+<span class="ck">fallback</span> = <span class="cs">"放弃当前目标，返回出发点待命"</span></code></pre>
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════
+     白板 WhiteboardEntry
+══════════════════════════════════════════════ -->
+<div class="section wb-theme" id="whiteboard">
+  <div class="section-header">
+    <span class="badge">WhiteboardEntry</span>
+    <h2>组内白板条目</h2>
+  </div>
+  <p class="section-desc">
+    白板是组内共享的状态池，每个组员都可以读写。<br>
+    ADM 执行步骤前轮询白板，通过 <code>constraintId</code> 过滤出与本步骤相关的条目，
+    将 <code>status</code> 与 C3 的 <code>reactTo</code> 做匹配，决定是否等待或继续。<br>
+    <strong>注意：</strong>白板只在组内可见，对方组和裁判无法读取。
+  </p>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">agentId</span>
+      <span class="field-type">string</span>
+      <span class="field-brief">谁写了这条记录</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">写入方的智能体 ID。其他成员通过此字段确认"我在等的那个人"是否已经更新状态。</p>
+      <div class="example-label">举例</div>
+      <pre><code><span class="ck">agentId</span> = <span class="cs">"drone_B"</span>
+<span class="cm">// drone_A 在白板查询时过滤 agentId="drone_B" 的条目</span></code></pre>
+    </div>
+  </div>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">timestamp</span>
+      <span class="field-type">float</span>
+      <span class="field-brief">写入时的仿真时间（秒）</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">
+        ADM 可通过此字段判断信息是否过期。超过一定时间未更新的条目应视为失效，触发重新等待或 C4 降级。
+      </p>
+      <div class="example-label">举例</div>
+      <pre><code><span class="ck">timestamp</span> = <span class="cn">42.5</span>
+<span class="cm">// 任务开始后第 42.5 秒写入</span>
+<span class="cm">// 若当前时间为 52.5，超过 10 秒未更新，视为超时</span></code></pre>
+    </div>
+  </div>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">constraintId</span>
+      <span class="field-type">string</span>
+      <span class="field-brief">此条记录属于哪条约束</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">
+        ADM 不读取白板上全部内容，只读取与当前步骤的 <code>constraintIds[]</code> 匹配的条目。
+        这样每个 agent 只关心自己关心的约束，避免信息过载。
+      </p>
+      <div class="example-label">举例</div>
+      <pre><code><span class="cm">// drone_A 当前步骤绑定的约束：["c_002", "c_003"]</span>
+<span class="cm">// ADM 只在白板查询 constraintId = "c_003" 的条目</span>
+<span class="ck">constraintId</span> = <span class="cs">"c_003"</span></code></pre>
+    </div>
+  </div>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">entryType</span>
+      <span class="field-type">string</span>
+      <span class="field-brief">这条记录的语义类型</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">ADM 根据 entryType 决定如何响应此条目。</p>
+      <div class="values-list">
+        <div class="value-item">
+          <span class="value-key" style="color:#a78bfa">"IntentAnnounce"</span>
+          <span class="value-desc">意图宣告：我即将执行某动作，提前告知他人避免冲突。<br>举例：drone_A 宣告"我准备从东侧接近目标，请队友避让"</span>
+        </div>
+        <div class="value-item">
+          <span class="value-key" style="color:var(--c3)">"ReadySignal"</span>
+          <span class="value-desc">就绪信号：我已完成前置动作，等待同步触发。C3 sign=+1 时使用。<br>举例：drone_A 宣告"已到达沙发抬起位置，等待同步"</span>
+        </div>
+        <div class="value-item">
+          <span class="value-key" style="color:var(--c2)">"DoneSignal"</span>
+          <span class="value-desc">完成信号：我已满足本约束要求的条件。C2 syncWith 检查时使用。<br>举例：drone_A 宣告"沙发已放置到新家指定位置"</span>
+        </div>
+        <div class="value-item">
+          <span class="value-key" style="color:var(--text2)">"StatusUpdate"</span>
+          <span class="value-desc">周期性状态汇报，供队友参考。通常用于 C4 触发前的预警。<br>举例：drone_B 汇报"当前电量 8%，即将触发 C4 降级约束"</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">status</span>
+      <span class="field-type">string</span>
+      <span class="field-brief">状态的自然语言描述</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">
+        其他成员的 ADM 将此字段与 C3 的 <code>reactTo</code> 做语义匹配，判断是否满足触发条件。
+        因此措辞应尽量与 reactTo 的描述一致，方便匹配。
+      </p>
+      <div class="example-label">举例（与 reactTo 对应）</div>
+      <pre><code><span class="cm">// C3 reactTo = "drone_B 已到达抬起位置"</span>
+<span class="cm">// drone_B 白板写入：</span>
+<span class="ck">status</span> = <span class="cs">"已到达沙发抬起位置，等待其他成员就位"</span>
+<span class="cm">// ADM 语义匹配成功 → drone_A 解除等待，继续执行</span></code></pre>
+    </div>
+  </div>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">progress</span>
+      <span class="field-type">float</span>
+      <span class="field-brief">完成进度 0~1，不需要时填 -1</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">
+        主要供 C2 同步完成约束使用：组长或协调者可通过轮询所有成员的 progress 判断整体进度，
+        决定是否等待或触发超时 C4。不涉及进度跟踪的约束填 <code>-1</code>。
+      </p>
+      <div class="example-label">举例</div>
+      <pre><code><span class="cm">// drone_A 正在飞往新家途中，完成了 75% 的路程</span>
+<span class="ck">progress</span> = <span class="cn">0.75</span>
+
+<span class="cm">// 到达新家，任务完成</span>
+<span class="ck">progress</span> = <span class="cn">1.0</span>
+
+<span class="cm">// 纯意图宣告，不需要进度</span>
+<span class="ck">progress</span> = <span class="cn">-1</span></code></pre>
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════
+     裁判 RefereeEvent
+══════════════════════════════════════════════ -->
+<div class="section ref-theme" id="referee">
+  <div class="section-header">
+    <span class="badge">RefereeEvent</span>
+    <h2>裁判事件</h2>
+  </div>
+  <p class="section-desc">
+    裁判负责观察物理世界中真实发生的事，宣布客观结果。<br>
+    <strong>裁判不做分配、不发命令、不做决策——只宣布事实。</strong><br>
+    各智能体收到裁判事件后，由自身 ADM 根据 C3 的 reactTo 自行决定如何响应。<br>
+    类比足球裁判：只吹哨宣布越位，不告诉球员该往哪跑。
+  </p>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">eventType</span>
+      <span class="field-type">string</span>
+      <span class="field-brief">裁判宣布的事件类型</span>
+    </div>
+    <div class="field-body">
+      <div class="values-list">
+        <div class="value-item">
+          <span class="value-key" style="color:var(--c3)">"ResourceClaimed"</span>
+          <span class="value-desc">某互斥资源已被某智能体<strong>物理占有</strong>（不是声明，是真实到达）。<br>举例：drone_A 先物理接触充电桩1并开始充电</span>
+        </div>
+        <div class="value-item">
+          <span class="value-key" style="color:var(--c2)">"ResourceReleased"</span>
+          <span class="value-desc">之前被占的资源重新可用。<br>举例：drone_A 充电完成，离开充电桩1</span>
+        </div>
+        <div class="value-item">
+          <span class="value-key" style="color:var(--c4)">"AgentEliminated"</span>
+          <span class="value-desc">某智能体在对抗中被淘汰，退出任务。<br>举例：red_A 被蓝方反制，不再参与任务</span>
+        </div>
+        <div class="value-item">
+          <span class="value-key" style="color:var(--c2)">"ConditionMet"</span>
+          <span class="value-desc">某个 C2 完成条件被裁判判定为满足（跨组任务使用）。<br>举例：红方成功将蓝方逼入50米包围圈</span>
+        </div>
+        <div class="value-item">
+          <span class="value-key" style="color:var(--ref)">"MissionResult"</span>
+          <span class="value-desc">整个任务的最终胜负宣布，所有智能体停止执行。<br>举例：蓝方存活超过300秒，蓝方逃脱成功</span>
+        </div>
+        <div class="value-item">
+          <span class="value-key" style="color:var(--c4)">"PriorityOverride"</span>
+          <span class="value-desc">裁判触发全局 C4 约束（如禁飞区），所有相关智能体必须暂停当前行动。<br>举例：检测到无人机飞入禁飞区边界</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">constraintId</span>
+      <span class="field-type">string</span>
+      <span class="field-brief">触发此事件的约束 ID</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">
+        ADM 通过此字段判断此裁判事件是否与自己当前步骤的约束相关。
+        不相关的事件直接忽略，不影响当前执行流程。
+        无对应约束时（如最终结果宣布）填空字符串。
+      </p>
+      <div class="example-label">举例</div>
+      <pre><code><span class="cm">// 充电桩互斥约束被触发</span>
+<span class="ck">constraintId</span> = <span class="cs">"c_001"</span>
+
+<span class="cm">// 最终任务结果，不对应具体约束</span>
+<span class="ck">constraintId</span> = <span class="cs">""</span></code></pre>
+    </div>
+  </div>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">payload</span>
+      <span class="field-type">string</span>
+      <span class="field-brief">裁判宣布的客观事实描述</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">
+        自然语言描述。ADM 将此字段与 C3 的 <code>reactTo</code> 做语义匹配，
+        决定是否需要调整行为。因此措辞应尽量明确，不含主观判断。
+      </p>
+      <div class="example-label">举例</div>
+      <pre><code><span class="cm">// ResourceClaimed：竞争抢桩</span>
+<span class="ck">payload</span> = <span class="cs">"充电桩_1 已被 drone_A 物理占用，其余智能体不可使用"</span>
+
+<span class="cm">// AgentEliminated：对抗淘汰</span>
+<span class="ck">payload</span> = <span class="cs">"red_A 被蓝方反制，已退出任务"</span>
+
+<span class="cm">// MissionResult：最终结果</span>
+<span class="ck">payload</span> = <span class="cs">"蓝方无人机存活超过 300 秒，蓝方逃脱成功，任务结束"</span>
+
+<span class="cm">// PriorityOverride：禁飞区</span>
+<span class="ck">payload</span> = <span class="cs">"drone_C 进入禁飞区边界 50 米内，全体暂停当前任务原地悬停"</span></code></pre>
+    </div>
+  </div>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">visibleTo</span>
+      <span class="field-type">string[]</span>
+      <span class="field-brief">哪些智能体可以收到此事件</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">
+        裁判控制信息可见性，实现对抗任务中的信息不对称。
+        同一个物理事件，裁判可以选择只告知部分智能体，模拟真实战场的情报差异。
+      </p>
+      <div class="example-label">举例</div>
+      <pre><code><span class="cm">// 竞争：充电桩状态所有人都能看到</span>
+<span class="ck">visibleTo</span> = [<span class="cs">"drone_A"</span>, <span class="cs">"drone_B"</span>, <span class="cs">"drone_C"</span>]
+
+<span class="cm">// 对抗：红方位置只告诉红方自己（蓝方不知道红方在哪）</span>
+<span class="ck">visibleTo</span> = [<span class="cs">"red_A"</span>, <span class="cs">"red_B"</span>]
+
+<span class="cm">// 对抗：蓝方逃脱成功，全体都能知道结果</span>
+<span class="ck">visibleTo</span> = [<span class="cs">"red_A"</span>, <span class="cs">"red_B"</span>, <span class="cs">"blue"</span>]</code></pre>
+    </div>
+  </div>
+
+  <div class="field-card">
+    <div class="field-header" onclick="toggle(this)">
+      <span class="field-name">timestamp</span>
+      <span class="field-type">float</span>
+      <span class="field-brief">裁判宣布时的仿真时间（秒）</span>
+    </div>
+    <div class="field-body">
+      <p class="field-desc">
+        ADM 可用于计算响应延迟、判断事件是否过期，或记录比赛日志。
+      </p>
+      <div class="example-label">举例</div>
+      <pre><code><span class="ck">timestamp</span> = <span class="cn">47.3</span>
+<span class="cm">// 任务开始后第 47.3 秒，drone_A 物理到达充电桩1</span>
+<span class="cm">// 裁判在此刻宣布 ResourceClaimed 事件</span></code></pre>
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════
+     三类任务对比
+══════════════════════════════════════════════ -->
+<div class="section" id="compare">
+  <div class="section-header">
+    <span class="badge" style="background:var(--bg3);color:var(--text2);border:1px solid var(--border2)">参考</span>
+    <h2>三类任务对比</h2>
+  </div>
+  <p class="section-desc">
+    四类约束在三种任务中的字段填法规律。结构完全相同，只有参数和 sign 不同。
+  </p>
+
+  <table class="compare-table">
+    <tr>
+      <th>字段</th>
+      <th style="color:var(--c2)">合作（搬家）</th>
+      <th style="color:var(--c3)">竞争（抢充电桩）</th>
+      <th style="color:var(--c4)">对抗（猫鼠游戏）</th>
+    </tr>
+    <tr>
+      <td><code>channel</code></td>
+      <td>whiteboard</td>
+      <td>referee（桩状态）</td>
+      <td>whiteboard（己方内部）<br>referee（敌方信息）</td>
+    </tr>
+    <tr>
+      <td><code>exclusive</code></td>
+      <td>false（合抬同一物）</td>
+      <td>true（桩不能共享）</td>
+      <td>true（方向不能重叠）</td>
+    </tr>
+    <tr>
+      <td><code>syncWith</code></td>
+      <td>全组成员（三架都到才完成）</td>
+      <td>空（各自完成各自的）</td>
+      <td>空（裁判宣布，此字段无效）</td>
+    </tr>
+    <tr>
+      <td><code>sign</code></td>
+      <td>+1（等队友就位）</td>
+      <td>0（对方占了我换目标）</td>
+      <td>+1（己方内部合作）<br>-1（对敌方响应）</td>
+    </tr>
+    <tr>
+      <td><code>watchAgent</code></td>
+      <td>具体 agentId（看队友白板）</td>
+      <td>"referee"（等裁判宣布）</td>
+      <td>agentId（看队友）<br>"referee"（看敌方）</td>
+    </tr>
+    <tr>
+      <td>白板用途</td>
+      <td>同步就绪信号 + 完成信号</td>
+      <td>几乎不用</td>
+      <td>己方内部同步包抄方向</td>
+    </tr>
+    <tr>
+      <td>裁判介入时机</td>
+      <td>仅 C4 触发时</td>
+      <td>全程（宣布资源占用状态）</td>
+      <td>全程（宣布对抗结果 + 最终胜负）</td>
+    </tr>
+  </table>
+</div>
+
+</main>
+</div>
+
+<script>
+  function toggle(header) {
+    header.parentElement.classList.toggle('open');
+  }
+
+  // 展开所有通用字段卡片，其余默认折叠
+  document.querySelectorAll('.field-card').forEach((card, i) => {
+    if (i > 3) card.classList.remove('open');
+  });
+
+  // 导航高亮
+  const sections = document.querySelectorAll('.section');
+  const navLinks = document.querySelectorAll('nav a');
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const id = entry.target.id;
+        navLinks.forEach(a => {
+          a.classList.toggle('active', a.getAttribute('href') === '#' + id);
+        });
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+
+  sections.forEach(s => observer.observe(s));
+</script>
+</body>
+</html>

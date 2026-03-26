@@ -1,0 +1,1761 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>多智能体仿真仪表板</title>
+<style>
+/* ── Reset & Base ──────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:      #0d1117;
+  --card:    #161b22;
+  --border:  #21262d;
+  --blue:    #58a6ff;
+  --green:   #3fb950;
+  --orange:  #d29922;
+  --red:     #f85149;
+  --purple:  #bc8cff;
+  --cyan:    #39d353;
+  --text:    #c9d1d9;
+  --muted:   #8b949e;
+  --font:    'SF Mono', 'Consolas', 'Liberation Mono', monospace;
+}
+html, body { width: 100%; height: 100%; overflow: hidden; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Header ────────────────────────────────────────────────────────────────── */
+#header {
+  flex-shrink: 0;
+  height: 42px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+}
+#header h1 { font-size: 14px; color: var(--blue); white-space: nowrap; }
+.badge {
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.badge.ok  { border-color: var(--green);  color: var(--green); animation: badgePulse 2s ease-in-out infinite; }
+.badge.err { border-color: var(--red);    color: var(--red); }
+@keyframes badgePulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(63,185,80,0); }
+  50%      { box-shadow: 0 0 0 3px rgba(63,185,80,0.25); }
+}
+#tooltip { transition: border-color 0.15s; }
+.hdr-stat  { color: var(--muted); font-size: 11px; }
+#hdr-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 5px;
+  font-family: var(--font);
+  font-size: 11px;
+}
+
+/* ── Main layout ───────────────────────────────────────────────────────────── */
+#main { flex: 1; display: flex; overflow: hidden; min-height: 0; }
+
+#left-panel {
+  flex: 0 0 60%;
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+#map-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+#mapCanvas {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  cursor: crosshair;
+  display: block;
+}
+#map-overlay {
+  position: absolute;
+  bottom: 8px; left: 8px;
+  font-size: 10px;
+  color: var(--muted);
+  pointer-events: none;
+  background: rgba(13,17,23,0.75);
+  padding: 3px 7px;
+  border-radius: 3px;
+}
+#tooltip {
+  position: absolute;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 9px;
+  font-size: 11px;
+  pointer-events: none;
+  display: none;
+  z-index: 20;
+  max-width: 230px;
+  line-height: 1.7;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+}
+
+/* ── Divider ───────────────────────────────────────────────────────────────── */
+#divider {
+  width: 5px;
+  flex-shrink: 0;
+  background: var(--border);
+  cursor: col-resize;
+  transition: background 0.15s;
+  z-index: 5;
+}
+#divider:hover, #divider.dragging { background: var(--blue); }
+
+/* ── Right panel ───────────────────────────────────────────────────────────── */
+#right-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+}
+
+/* ── Tabs ──────────────────────────────────────────────────────────────────── */
+#tabs-header {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--card);
+}
+.tab-btn {
+  padding: 9px 14px;
+  font-family: var(--font);
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--blue); border-bottom-color: var(--blue); }
+
+#tab-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.tab-pane {
+  display: none;
+  flex: 1;
+  overflow-y: auto;
+  flex-direction: column;
+}
+.tab-pane.active { display: flex; }
+
+/* ── Agent cards ───────────────────────────────────────────────────────────── */
+#tab-agents { padding: 0; gap: 0; }
+.agents-toolbar {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--card);
+}
+.agents-body { flex: 1; overflow-y: auto; padding: 8px; }
+.view-btn {
+  padding: 2px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.view-btn.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+
+.agent-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--muted);
+  border-radius: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  flex-shrink: 0;
+  margin-bottom: 6px;
+}
+.agent-card:hover { border-color: var(--blue); border-left-color: var(--blue); }
+.agent-card.selected {
+  border-color: var(--blue);
+  border-left-color: var(--blue);
+  box-shadow: 0 0 0 1px var(--blue);
+}
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 5px;
+}
+.card-id   { font-size: 12px; font-weight: bold; }
+.card-meta { font-size: 10px; color: var(--muted); }
+.team-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  color: #fff;
+  font-weight: bold;
+  margin-left: 4px;
+}
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 2px 0;
+  font-size: 11px;
+  gap: 4px;
+}
+.lbl { color: var(--muted); flex-shrink: 0; }
+.val { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; max-width: 185px; }
+.battery-bar  { height: 4px; background: var(--border); border-radius: 2px; margin: 3px 0; }
+.battery-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+.expand-btn {
+  font-size: 10px;
+  color: var(--blue);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font);
+  padding: 2px 0;
+  margin-top: 3px;
+}
+.card-details { display: none; margin-top: 5px; border-top: 1px solid var(--border); padding-top: 5px; }
+.card-details.open { display: block; }
+.teammate-chip {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  margin: 1px 2px;
+  border: 1px solid var(--border);
+}
+
+/* ── Team group view ───────────────────────────────────────────────────────── */
+.team-group { margin-bottom: 10px; }
+.team-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: bold;
+}
+.team-color-bar { width: 4px; height: 18px; border-radius: 2px; flex-shrink: 0; }
+.team-group-cards { padding-left: 8px; }
+
+/* ── Status colors ─────────────────────────────────────────────────────────── */
+.s-idle,.s-done     { color: var(--green); }
+.s-running,.s-active { color: var(--blue); }
+.s-thinking,.s-interpreting,.s-negotiating,.s-replanning,.s-parsing,.s-slotgen,.s-slotpick,.s-stepgen,.s-grouping { color: var(--orange); }
+.s-error,.s-failed  { color: var(--red); }
+.s-other            { color: var(--muted); }
+
+/* ── Comms tab ─────────────────────────────────────────────────────────────── */
+#tab-comms { padding: 0; overflow: hidden; }
+#comms-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--card);
+}
+.filter-btn {
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.filter-btn.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+#comms-list { flex: 1; overflow-y: auto; padding: 4px 8px; }
+.msg-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+.msg-time     { color: var(--muted); width: 40px; flex-shrink: 0; padding-top: 1px; }
+.msg-type-tag {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.msg-route  { color: var(--muted); flex-shrink: 0; white-space: nowrap; }
+.msg-content {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  cursor: pointer;
+  min-width: 0;
+}
+.msg-content.expanded { white-space: normal; word-break: break-word; }
+
+/* ── LLM logs tab ──────────────────────────────────────────────────────────── */
+#tab-llm { padding: 0; overflow: hidden; }
+#llm-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--card);
+}
+#llm-toolbar label { font-size: 10px; color: var(--muted); }
+#llm-list { flex: 1; overflow-y: auto; padding: 4px 8px; }
+.llm-entry {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 4px;
+  font-size: 11px;
+  overflow: hidden;
+}
+.llm-entry-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.llm-entry-header:hover { background: rgba(88,166,255,0.05); }
+.llm-type-tag {
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: bold;
+  flex-shrink: 0;
+}
+.llm-agent  { color: var(--blue); flex-shrink: 0; }
+.llm-ts     { color: var(--muted); font-size: 10px; flex-shrink: 0; }
+.llm-model  { color: var(--muted); font-size: 10px; flex-shrink: 0; }
+.llm-preview { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.llm-body {
+  display: none;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  font-size: 10px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--bg);
+}
+.llm-body.open { display: block; }
+
+/* ── Control tab ───────────────────────────────────────────────────────────── */
+#tab-control { padding: 10px; gap: 12px; }
+.ctrl-section {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  flex-shrink: 0;
+}
+.ctrl-title { font-size: 11px; color: var(--blue); margin-bottom: 8px; font-weight: bold; }
+.ctrl-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.ctrl-label { font-size: 10px; color: var(--muted); width: 70px; flex-shrink: 0; }
+.ctrl-input {
+  flex: 1;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 4px 7px;
+  font-family: var(--font);
+  font-size: 11px;
+}
+.ctrl-input:focus { outline: none; border-color: var(--blue); }
+textarea.ctrl-input { resize: vertical; min-height: 60px; }
+.ctrl-btn {
+  padding: 4px 12px;
+  background: var(--blue);
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  font-family: var(--font);
+  font-size: 11px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.ctrl-btn:hover { opacity: 0.85; }
+.ctrl-btn.secondary {
+  background: var(--border);
+  color: var(--text);
+}
+.preset-btns { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.preset-btn {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.preset-btn:hover { border-color: var(--blue); color: var(--blue); }
+.ctrl-status {
+  font-size: 10px;
+  padding: 3px 0;
+  min-height: 18px;
+}
+.ctrl-status.ok  { color: var(--green); }
+.ctrl-status.err { color: var(--red); }
+.num-input {
+  width: 60px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 4px 7px;
+  font-family: var(--font);
+  font-size: 11px;
+}
+
+/* ── Debug tab ─────────────────────────────────────────────────────────────── */
+#tab-debug { padding: 8px; gap: 8px; overflow-y: auto; }
+.debug-section {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  flex-shrink: 0;
+}
+.debug-title { font-size: 11px; color: var(--blue); margin-bottom: 6px; }
+.debug-row { display: flex; justify-content: space-between; font-size: 11px; margin: 2px 0; }
+.debug-lbl { color: var(--muted); }
+.bar-container { margin: 3px 0; }
+.bar-label { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-bottom: 2px; }
+.bar       { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+.bar-fill  { height: 100%; border-radius: 3px; transition: width 0.3s; }
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar       { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+</style>
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────────────────────────── -->
+<div id="header">
+  <h1>多智能体仿真仪表板</h1>
+  <span class="badge" id="conn-badge">连接中…</span>
+  <span class="hdr-stat" id="hdr-agents">0 Agents</span>
+  <span class="hdr-stat" id="hdr-msgs">0 消息</span>
+  <span class="hdr-stat" id="hdr-ping">—</span>
+  <div id="hdr-right">
+    <span style="color:var(--muted);font-size:11px">刷新:</span>
+    <select id="interval-sel" onchange="changeInterval(this.value)">
+      <option value="500">0.5s</option>
+      <option value="1000" selected>1s</option>
+      <option value="2000">2s</option>
+    </select>
+  </div>
+</div>
+
+<!-- ── Main ───────────────────────────────────────────────────────────────── -->
+<div id="main">
+
+  <!-- Left: Map -->
+  <div id="left-panel">
+    <div id="map-container">
+      <canvas id="mapCanvas"></canvas>
+      <div id="map-overlay">点击 Agent 选中 · 再次点击取消</div>
+      <div id="tooltip"></div>
+      <div id="map-legend" style="position:absolute;top:8px;left:8px;background:rgba(13,17,23,0.82);border:1px solid #21262d;border-radius:4px;padding:6px 10px;font-size:10px;pointer-events:none;z-index:10">
+        <div style="color:#8b949e;margin-bottom:4px;font-weight:bold">地图图例</div>
+        <div style="display:flex;flex-direction:column;gap:2px" id="map-legend-body"></div>
+      </div>
+      <button id="map-reset-btn" onclick="zoomLevel=1;panX=0;panY=0" style="position:absolute;bottom:34px;right:8px;background:rgba(13,17,23,0.82);color:#8b949e;border:1px solid #21262d;border-radius:3px;padding:3px 8px;font-family:var(--font);font-size:10px;cursor:pointer;z-index:10">重置视图</button>
+    </div>
+  </div>
+
+  <!-- Divider -->
+  <div id="divider"></div>
+
+  <!-- Right: Tabs -->
+  <div id="right-panel">
+    <div id="tabs-header">
+      <button class="tab-btn active" onclick="switchTab('agents')">Agents</button>
+      <button class="tab-btn" onclick="switchTab('comms')">通信</button>
+      <button class="tab-btn" onclick="switchTab('llm')" id="tab-btn-llm">LLM 日志</button>
+      <button class="tab-btn" onclick="switchTab('control')">控制</button>
+      <button class="tab-btn" onclick="switchTab('debug')">调试</button>
+    </div>
+    <div id="tab-content">
+
+      <!-- Agents tab -->
+      <div class="tab-pane active" id="tab-agents">
+        <div class="agents-toolbar">
+          <button class="view-btn active" id="view-agent-btn" onclick="setAgentView('agent')">按 Agent</button>
+          <button class="view-btn" id="view-team-btn" onclick="setAgentView('team')">按 Team</button>
+        </div>
+        <div class="agents-body" id="agents-body"></div>
+      </div>
+
+      <!-- Comms tab -->
+      <div class="tab-pane" id="tab-comms">
+        <div id="comms-filter">
+          <button class="filter-btn active" onclick="setMsgFilter('',this)">全部</button>
+          <button class="filter-btn" onclick="setMsgFilter('BoardUpdate',this)">BoardUpdate</button>
+          <button class="filter-btn" onclick="setMsgFilter('SlotBroadcast',this)">SlotBroadcast</button>
+          <button class="filter-btn" onclick="setMsgFilter('SlotSelect',this)">SlotSelect</button>
+          <button class="filter-btn" onclick="setMsgFilter('StartExecution',this)">StartExec</button>
+          <button class="filter-btn" onclick="setMsgFilter('GroupBootstrap',this)">GroupBoot</button>
+        </div>
+        <div id="comms-list"></div>
+      </div>
+
+      <!-- LLM Logs tab -->
+      <div class="tab-pane" id="tab-llm">
+        <div id="llm-toolbar">
+          <label>Agent:</label>
+          <select id="llm-agent-filter" onchange="renderLlmLogs()">
+            <option value="">全部</option>
+          </select>
+          <label>类型:</label>
+          <select id="llm-type-filter" onchange="renderLlmLogs()">
+            <option value="">全部</option>
+            <option value="send">send</option>
+            <option value="receive">receive</option>
+            <option value="error">error</option>
+          </select>
+          <button class="ctrl-btn" style="margin-left:auto;padding:2px 10px;font-size:10px" onclick="fetchLlmLogs()">刷新</button>
+        </div>
+        <div id="llm-list"></div>
+      </div>
+
+      <!-- Control tab -->
+      <div class="tab-pane" id="tab-control">
+        <!-- Model Switch -->
+        <div class="ctrl-section">
+          <div class="ctrl-title">LLM 模型切换</div>
+          <div class="preset-btns">
+            <button class="preset-btn" onclick="setModelPreset('deepseek-chat')">deepseek-chat</button>
+            <button class="preset-btn" onclick="setModelPreset('deepseek-reasoner')">deepseek-reasoner</button>
+            <button class="preset-btn" onclick="setModelPreset('qwen-plus')">qwen-plus</button>
+            <button class="preset-btn" onclick="setModelPreset('qwen-turbo')">qwen-turbo</button>
+            <button class="preset-btn" onclick="setModelPreset('qwen-max')">qwen-max</button>
+          </div>
+          <div class="ctrl-row">
+            <label class="ctrl-label">Model:</label>
+            <input class="ctrl-input" id="model-input" type="text" placeholder="deepseek-chat">
+            <button class="ctrl-btn" onclick="submitModel()">切换</button>
+          </div>
+          <div class="ctrl-status" id="model-status"></div>
+        </div>
+
+        <!-- Task Submit -->
+        <div class="ctrl-section">
+          <div class="ctrl-title">任务发布</div>
+          <div class="ctrl-row">
+            <label class="ctrl-label">任务描述:</label>
+          </div>
+          <textarea class="ctrl-input" id="task-input" placeholder="输入任务描述…"></textarea>
+          <div class="ctrl-row" style="margin-top:6px">
+            <label class="ctrl-label">Agent 数量:</label>
+            <input class="num-input" id="agent-count-input" type="number" min="1" value="1">
+            <button class="ctrl-btn" onclick="submitTask()">发布任务</button>
+          </div>
+          <div class="ctrl-status" id="task-status"></div>
+        </div>
+      </div>
+
+      <!-- Debug tab -->
+      <div class="tab-pane" id="tab-debug"></div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Constants
+// ══════════════════════════════════════════════════════════════════════════════
+const TEAM_COLORS = [
+  '#e94560','#4caf50','#2196f3','#ff9800',
+  '#9c27b0','#00bcd4','#ff5722','#607d8b',
+  '#795548','#009688','#cddc39','#e91e63'
+];
+const MSG_COLORS = {
+  BoardUpdate:    '#58a6ff',
+  SlotBroadcast:  '#d29922',
+  SlotSelect:     '#39d353',
+  StartExecution: '#bc8cff',
+  GroupBootstrap: '#f85149',
+};
+const CELL_COLORS = [
+  '#0d1117', // 0 Free
+  '#2d3a4a', // 1 Building
+  '#0e3a5c', // 2 Water
+  '#1c2a1c', // 3 Road
+  '#1f2e10', // 4 Expressway
+  '#1a1a2e', // 5
+  '#1a1a2e', // 6
+  '#1a2e1a', // 7 Green
+];
+
+const FEATURE_STYLES = {
+  building: { fill:'rgba(100,140,180,0.25)', stroke:'#5588bb', strokeW:1.5, minR:4 },
+  road:     { fill:'rgba(180,160,80,0.15)',  stroke:'#aa9944', strokeW:1,   minR:3 },
+  water:    { fill:'rgba(30,100,200,0.30)',  stroke:'#3366cc', strokeW:1.5, minR:4 },
+  forest:   { fill:'rgba(40,140,60,0.25)',   stroke:'#3a8a40', strokeW:1.5, minR:4 },
+  green:    { fill:'rgba(60,160,80,0.20)',   stroke:'#44aa55', strokeW:1,   minR:3 },
+  parking:  { fill:'rgba(120,100,60,0.20)',  stroke:'#887744', strokeW:1,   minR:3 },
+  sports:   { fill:'rgba(200,120,40,0.20)',  stroke:'#cc7722', strokeW:1,   minR:3 },
+  bridge:   { fill:'rgba(200,180,100,0.25)',stroke:'#ccbb66', strokeW:1.5, minR:3 },
+  default:  { fill:'rgba(150,150,150,0.15)', stroke:'#888888', strokeW:1,   minR:3 },
+};
+
+const TAB_NAMES = ['agents','comms','llm','control','debug'];
+
+// ══════════════════════════════════════════════════════════════════════════════
+// State
+// ══════════════════════════════════════════════════════════════════════════════
+let agents     = [];
+let messages   = [];
+let posHistory = {};
+let gridmap    = null;
+let mapMeta    = { cellSize: 1, gridWidth: 200, gridLength: 200, originX: 0, originZ: 0, features: [] };
+let llmLogs    = [];
+
+let selectedId   = null;
+let pollTimer    = null;
+let msgFilter    = '';
+let pingMs       = 0;
+let agentView    = 'agent';   // 'agent' | 'team'
+let currentTab   = 'agents';
+
+// Expand state persists across polls
+const expandedSet = new Set();
+
+// Communication incremental rendering
+let renderedMsgKeys = new Set();
+
+// Communication arcs animation state
+let activeArcs = [];
+
+// Offscreen background canvas
+let bgCanvas = null;
+let bgCtx    = null;
+let bgReady  = false;
+
+// Poll interval
+let pollInterval = 1000;
+
+// Zoom / Pan state
+let zoomLevel = 1.0;
+let panX = 0, panY = 0;
+let isPanning = false, panStartX = 0, panStartY = 0;
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Utilities
+// ══════════════════════════════════════════════════════════════════════════════
+function escHtml(s) {
+  if (!s) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function teamColor(teamId) {
+  return TEAM_COLORS[(teamId || 0) % TEAM_COLORS.length];
+}
+
+function statusClass(s) {
+  if (!s) return 's-other';
+  const l = s.toLowerCase();
+  if (l === 'idle' || l === 'done') return 's-idle';
+  if (l === 'active' || l === 'running') return 's-running';
+  if (['thinking','interpreting','negotiating','replanning',
+       'parsing','slotgen','slotpick','stepgen','grouping'].includes(l)) return 's-thinking';
+  if (l === 'failed' || l === 'error') return 's-error';
+  return 's-other';
+}
+
+function batteryColor(v) {
+  if (v > 0.6) return '#3fb950';
+  if (v > 0.3) return '#d29922';
+  return '#f85149';
+}
+
+function formatTime(ts) {
+  if (!ts) return '—';
+  const d = typeof ts === 'number' ? ts : parseFloat(ts);
+  if (isNaN(d)) return ts;
+  const m = Math.floor(d / 60), s = Math.floor(d % 60);
+  return `${m}:${String(s).padStart(2,'0')}`;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Canvas
+// ══════════════════════════════════════════════════════════════════════════════
+const canvas = document.getElementById('mapCanvas');
+const ctx    = canvas.getContext('2d');
+
+function resizeCanvas() {
+  const cont = document.getElementById('map-container');
+  const W = cont.clientWidth, H = cont.clientHeight;
+  if (canvas.width !== W || canvas.height !== H) {
+    canvas.width  = W;
+    canvas.height = H;
+    bgReady = false;
+    if (gridmap) buildBgCanvas();
+  }
+}
+
+// World → canvas
+function worldToCanvas(wx, wz) {
+  const W = canvas.width, H = canvas.height;
+  const mapW = mapMeta.gridWidth  * mapMeta.cellSize;
+  const mapH = mapMeta.gridLength * mapMeta.cellSize;
+  const scale = Math.min(W / mapW, H / mapH) * 0.92;
+  const offX  = (W - mapW * scale) / 2;
+  const offZ  = (H - mapH * scale) / 2;
+  const cx = offX + (wx - mapMeta.originX) * scale;
+  const cy = offZ + (wz - mapMeta.originZ) * scale;
+  return [cx, cy, scale];
+}
+
+function buildBgCanvas() {
+  if (!gridmap) return;
+  const W = canvas.width, H = canvas.height;
+  if (!bgCanvas) { bgCanvas = document.createElement('canvas'); bgCtx = bgCanvas.getContext('2d'); }
+  bgCanvas.width = W; bgCanvas.height = H;
+
+  const mapW = mapMeta.gridWidth  * mapMeta.cellSize;
+  const mapH = mapMeta.gridLength * mapMeta.cellSize;
+  const scale = Math.min(W / mapW, H / mapH) * 0.92;
+  const offX  = (W - mapW * scale) / 2;
+  const offZ  = (H - mapH * scale) / 2;
+
+  bgCtx.fillStyle = '#0d1117';
+  bgCtx.fillRect(0, 0, W, H);
+
+  const gw = gridmap.w, gh = gridmap.h;
+  const cw = (mapW * scale) / gw;
+  const ch = (mapH * scale) / gh;
+
+  for (let z = 0; z < gh; z++) {
+    for (let x = 0; x < gw; x++) {
+      const t = gridmap.cells[z][x];
+      bgCtx.fillStyle = CELL_COLORS[t] || '#0d1117';
+      bgCtx.fillRect(offX + x * cw, offZ + z * ch, Math.ceil(cw), Math.ceil(ch));
+    }
+  }
+
+  // Features - per-kind fill+stroke using FEATURE_STYLES
+  for (const f of (mapMeta.features || [])) {
+    const [cx, cy, sc] = worldToCanvas(f.x, f.z);
+    const kind = (f.kind || 'default').toLowerCase();
+    const sty  = FEATURE_STYLES[kind] || FEATURE_STYLES.default;
+    const r    = Math.max(sty.minR, f.radius * sc);
+    bgCtx.beginPath();
+    bgCtx.arc(cx, cy, r, 0, Math.PI * 2);
+    bgCtx.fillStyle = sty.fill;
+    bgCtx.fill();
+    bgCtx.strokeStyle = sty.stroke;
+    bgCtx.lineWidth = sty.strokeW;
+    bgCtx.stroke();
+  }
+
+  bgReady = true;
+}
+
+// Screen (canvas element) coords → base (pre-zoom/pan) canvas coords
+function screenToBase(sx, sy) {
+  return [(sx - panX) / zoomLevel, (sy - panY) / zoomLevel];
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Draw loop
+// ══════════════════════════════════════════════════════════════════════════════
+let animFrame = null;
+function startDrawLoop() {
+  if (animFrame) return;
+  function loop() {
+    drawFrame();
+    animFrame = requestAnimationFrame(loop);
+  }
+  animFrame = requestAnimationFrame(loop);
+}
+
+function drawFrame() {
+  resizeCanvas();
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  // Apply zoom/pan transform
+  ctx.save();
+  ctx.setTransform(zoomLevel, 0, 0, zoomLevel, panX, panY);
+
+  if (bgReady) {
+    ctx.drawImage(bgCanvas, 0, 0);
+  } else {
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, W / zoomLevel, H / zoomLevel);
+  }
+
+  const now = performance.now() / 1000;
+
+  // Arcs
+  activeArcs = activeArcs.filter(a => now - a.startTime < a.duration);
+  for (const arc of activeArcs) {
+    const p = Math.min(1, (now - arc.startTime) / arc.duration);
+    const alpha = 1 - p;
+    ctx.globalAlpha = alpha;
+    if (arc.isBroadcast) {
+      ctx.beginPath();
+      ctx.arc(arc.x1, arc.y1, arc.broadcastR * p, 0, Math.PI * 2);
+      ctx.strokeStyle = arc.color;
+      ctx.lineWidth = 1.5 / zoomLevel;
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(arc.x1, arc.y1);
+      ctx.lineTo(arc.x2, arc.y2);
+      ctx.strokeStyle = arc.color;
+      ctx.lineWidth = 1.5 / zoomLevel;
+      ctx.stroke();
+
+      // moving dot
+      const dx = arc.x1 + (arc.x2 - arc.x1) * p;
+      const dy = arc.y1 + (arc.y2 - arc.y1) * p;
+      ctx.beginPath();
+      ctx.arc(dx, dy, 3 / zoomLevel, 0, Math.PI * 2);
+      ctx.fillStyle = arc.color;
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Trails
+  for (const [aid, hist] of Object.entries(posHistory)) {
+    if (!hist || hist.length < 2) continue;
+    const col = teamColor(agents.find(a => a.agentId === aid)?.teamId ?? 0);
+    ctx.beginPath();
+    let first = true;
+    for (const pt of hist) {
+      const [cx, cy] = worldToCanvas(pt[0], pt[2]);
+      if (first) { ctx.moveTo(cx, cy); first = false; }
+      else ctx.lineTo(cx, cy);
+    }
+    ctx.strokeStyle = col + '55';
+    ctx.lineWidth = 1 / zoomLevel;
+    ctx.stroke();
+  }
+
+  // Node labels for large features (building/water/bridge/sports)
+  const labelKinds = new Set(['building','water','bridge','sports']);
+  for (const f of (mapMeta.features || [])) {
+    const kind = (f.kind || '').toLowerCase();
+    if (!labelKinds.has(kind)) continue;
+    const [fcx, fcy, fsc] = worldToCanvas(f.x, f.z);
+    const rPx = f.radius * fsc;
+    if (rPx < 8) continue;
+    const fontSize = Math.max(8, Math.min(14, 9 * fsc / zoomLevel));
+    ctx.font = fontSize + 'px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(0,0,0,0.9)';
+    ctx.shadowBlur = 3 / zoomLevel;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(f.name, fcx, fcy);
+    ctx.shadowBlur = 0;
+  }
+
+  // Agents
+  for (const ag of agents) {
+    const [cx, cy] = worldToCanvas(ag.position[0], ag.position[2]);
+    const col = teamColor(ag.teamId);
+    const isSel = ag.agentId === selectedId;
+    const r = (isSel ? 7 : 5) / zoomLevel;
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, r + 2 / zoomLevel, 0, Math.PI * 2);
+    ctx.fillStyle = col + '33';
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = col;
+    ctx.fill();
+
+    if (isSel) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, r + 4 / zoomLevel, 0, Math.PI * 2);
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2 / zoomLevel;
+      ctx.stroke();
+
+      // Perception range circle (dashed)
+      const percRange = ag.perceptionRange ?? 0;
+      if (percRange > 0) {
+        const [,, sc] = worldToCanvas(ag.position[0], ag.position[2]);
+        const percR = percRange * sc;
+        ctx.beginPath();
+        ctx.arc(cx, cy, percR, 0, Math.PI * 2);
+        ctx.strokeStyle = col + '88';
+        ctx.lineWidth = 1 / zoomLevel;
+        ctx.setLineDash([4 / zoomLevel, 4 / zoomLevel]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.font = Math.max(8, 10 / zoomLevel) + 'px monospace';
+        ctx.fillStyle = col + 'cc';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('r=' + percRange.toFixed(0) + 'm', cx + percR + 4 / zoomLevel, cy);
+      }
+
+      // Planned targets with dashed lines + diamond markers
+      const targets = ag.plannedTargets || [];
+      for (const tname of targets) {
+        const feat = (mapMeta.features || []).find(f => f.name === tname);
+        if (!feat) continue;
+        const [tx, ty] = worldToCanvas(feat.x, feat.z);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(tx, ty);
+        ctx.strokeStyle = col + '99';
+        ctx.lineWidth = 1.5 / zoomLevel;
+        ctx.setLineDash([6 / zoomLevel, 4 / zoomLevel]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        const ds = 5 / zoomLevel;
+        ctx.beginPath();
+        ctx.moveTo(tx, ty - ds);
+        ctx.lineTo(tx + ds, ty);
+        ctx.lineTo(tx, ty + ds);
+        ctx.lineTo(tx - ds, ty);
+        ctx.closePath();
+        ctx.fillStyle = col + 'cc';
+        ctx.fill();
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1 / zoomLevel;
+        ctx.stroke();
+      }
+    }
+
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold ' + Math.max(6, 8 / zoomLevel) + 'px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(ag.agentId.slice(-2), cx, cy);
+  }
+
+  ctx.restore();
+
+  // Overlay: zoom percentage
+  const overlayEl = document.getElementById('map-overlay');
+  if (overlayEl) {
+    overlayEl.textContent = '点击 Agent 选中 · 再次点击取消  |  缩放: ' + Math.round(zoomLevel * 100) + '%';
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Click / hover on canvas
+// ══════════════════════════════════════════════════════════════════════════════
+canvas.addEventListener('click', e => {
+  if (e.button !== 0) return;
+  const rect = canvas.getBoundingClientRect();
+  const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+  const [mx, my] = screenToBase(sx, sy);
+  let hit = null;
+  for (const ag of agents) {
+    const [cx, cy] = worldToCanvas(ag.position[0], ag.position[2]);
+    if (Math.hypot(cx - mx, cy - my) < 10) { hit = ag.agentId; break; }
+  }
+  selectedId = (hit === selectedId) ? null : hit;
+  renderAgents();
+});
+
+canvas.addEventListener('mousemove', e => {
+  if (isPanning) {
+    panX += e.clientX - panStartX;
+    panY += e.clientY - panStartY;
+    panStartX = e.clientX;
+    panStartY = e.clientY;
+    return;
+  }
+  const rect = canvas.getBoundingClientRect();
+  const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+  const [mx, my] = screenToBase(sx, sy);
+  const tip = document.getElementById('tooltip');
+  let hit = null;
+
+  // Agent hit detection (priority)
+  for (const ag of agents) {
+    const [cx, cy] = worldToCanvas(ag.position[0], ag.position[2]);
+    if (Math.hypot(cx - mx, cy - my) < 12) { hit = ag; break; }
+  }
+
+  if (hit) {
+    canvas.style.cursor = 'pointer';
+    tip.style.display = 'block';
+    tip.style.left = (sx + 14) + 'px';
+    tip.style.top  = (sy - 10) + 'px';
+    tip.style.borderLeft = '3px solid ' + teamColor(hit.teamId);
+    tip.innerHTML = `<b style="color:${teamColor(hit.teamId)}">${escHtml(hit.agentId)}</b><br>
+      Team ${hit.teamId} · ${escHtml(hit.role)}<br>
+      ADM: <span style="color:var(--orange)">${escHtml(hit.admStatus)}</span><br>
+      Plan: <span style="color:var(--blue)">${escHtml(hit.planState)}</span><br>
+      Action: ${escHtml(hit.currentAction)} ${hit.currentTarget ? '→ ' + escHtml(hit.currentTarget) : ''}<br>
+      Battery: ${(hit.battery * 100).toFixed(0)}%`;
+    return;
+  }
+
+  // Feature hover detection
+  let featHit = null;
+  for (const f of (mapMeta.features || [])) {
+    const [fcx, fcy, fsc] = worldToCanvas(f.x, f.z);
+    const r = Math.max((FEATURE_STYLES[f.kind] || FEATURE_STYLES.default).minR, f.radius * fsc);
+    if (Math.hypot(fcx - mx, fcy - my) <= r + 3) { featHit = f; break; }
+  }
+
+  if (featHit) {
+    const kind = (featHit.kind || 'default').toLowerCase();
+    const sty = FEATURE_STYLES[kind] || FEATURE_STYLES.default;
+    canvas.style.cursor = 'pointer';
+    tip.style.display = 'block';
+    tip.style.left = (sx + 14) + 'px';
+    tip.style.top  = (sy - 10) + 'px';
+    tip.style.borderLeft = '3px solid ' + sty.stroke;
+    tip.innerHTML = `<b style="color:${sty.stroke}">${escHtml(featHit.name)}</b><br>
+      类型: ${escHtml(featHit.kind)}<br>
+      坐标: (${featHit.x.toFixed(1)}, ${featHit.z.toFixed(1)})<br>
+      半径: ${featHit.radius.toFixed(1)} m`;
+  } else {
+    canvas.style.cursor = 'crosshair';
+    tip.style.display = 'none';
+    tip.style.borderLeft = '';
+  }
+});
+canvas.addEventListener('mouseleave', () => {
+  document.getElementById('tooltip').style.display = 'none';
+  isPanning = false;
+  canvas.style.cursor = 'crosshair';
+});
+
+// Zoom: mouse wheel
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+  const newZoom = Math.max(0.3, Math.min(8.0, zoomLevel * factor));
+  // Zoom centered on mouse position
+  panX = mx - (mx - panX) * (newZoom / zoomLevel);
+  panY = my - (my - panY) * (newZoom / zoomLevel);
+  zoomLevel = newZoom;
+}, { passive: false });
+
+// Pan: right/middle mouse button
+canvas.addEventListener('mousedown', e => {
+  if (e.button === 1 || e.button === 2) {
+    e.preventDefault();
+    isPanning = true;
+    panStartX = e.clientX;
+    panStartY = e.clientY;
+    canvas.style.cursor = 'grabbing';
+  }
+});
+
+document.addEventListener('mouseup', e => {
+  if (e.button === 1 || e.button === 2) {
+    isPanning = false;
+    canvas.style.cursor = 'crosshair';
+  }
+});
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Tab switching
+// ══════════════════════════════════════════════════════════════════════════════
+function switchTab(name) {
+  currentTab = name;
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  const pane = document.getElementById('tab-' + name);
+  if (pane) pane.classList.add('active');
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    if (b.textContent.trim() === {
+      agents: 'Agents', comms: '通信', llm: 'LLM 日志', control: '控制', debug: '调试'
+    }[name]) b.classList.add('active');
+  });
+  if (name === 'llm') fetchLlmLogs();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Agent view toggle
+// ══════════════════════════════════════════════════════════════════════════════
+function setAgentView(v) {
+  agentView = v;
+  document.getElementById('view-agent-btn').classList.toggle('active', v === 'agent');
+  document.getElementById('view-team-btn').classList.toggle('active', v === 'team');
+  renderAgents();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Agent rendering
+// ══════════════════════════════════════════════════════════════════════════════
+function renderAgents() {
+  const body = document.getElementById('agents-body');
+  if (agentView === 'team') {
+    renderAgentsByTeam(body);
+  } else {
+    renderAgentsByAgent(body);
+  }
+}
+
+function renderAgentsByAgent(container) {
+  // Determine existing card IDs
+  const existing = new Set();
+  container.querySelectorAll('.agent-card[data-id]').forEach(c => existing.add(c.dataset.id));
+
+  const incoming = new Set(agents.map(a => a.agentId));
+
+  // Remove cards no longer present
+  existing.forEach(id => {
+    if (!incoming.has(id)) {
+      const el = container.querySelector(`.agent-card[data-id="${CSS.escape(id)}"]`);
+      if (el) el.remove();
+    }
+  });
+
+  // Update or insert cards
+  for (const ag of agents) {
+    const id = ag.agentId;
+    let card = container.querySelector(`.agent-card[data-id="${CSS.escape(id)}"]`);
+    if (!card) {
+      card = document.createElement('div');
+      card.className = 'agent-card';
+      card.dataset.id = id;
+      card.onclick = () => { selectedId = (selectedId === id) ? null : id; renderAgents(); };
+      container.appendChild(card);
+    }
+    updateAgentCard(card, ag);
+  }
+}
+
+function renderAgentsByTeam(container) {
+  // Group agents by team
+  const teams = {};
+  for (const ag of agents) {
+    const tid = ag.teamId ?? 0;
+    if (!teams[tid]) teams[tid] = [];
+    teams[tid].push(ag);
+  }
+
+  // Clear and rebuild (team view is simpler to rebuild)
+  container.innerHTML = '';
+  for (const [tid, teamAgents] of Object.entries(teams)) {
+    const col = teamColor(Number(tid));
+    const roles = [...new Set(teamAgents.map(a => a.role))].join(', ');
+
+    const group = document.createElement('div');
+    group.className = 'team-group';
+
+    const hdr = document.createElement('div');
+    hdr.className = 'team-group-header';
+    hdr.style.background = col + '18';
+    hdr.style.border = `1px solid ${col}44`;
+    hdr.innerHTML = `<div class="team-color-bar" style="background:${col}"></div>
+      <span style="color:${col}">Team ${escHtml(tid)}</span>
+      <span style="color:var(--muted);font-size:10px">${teamAgents.length} 成员 · ${escHtml(roles)}</span>`;
+    group.appendChild(hdr);
+
+    const cards = document.createElement('div');
+    cards.className = 'team-group-cards';
+    for (const ag of teamAgents) {
+      const card = document.createElement('div');
+      card.className = 'agent-card';
+      card.dataset.id = ag.agentId;
+      card.onclick = () => { selectedId = (selectedId === ag.agentId) ? null : ag.agentId; renderAgentsByTeam(container); };
+      updateAgentCard(card, ag);
+      cards.appendChild(card);
+    }
+    group.appendChild(cards);
+    container.appendChild(group);
+  }
+}
+
+function updateAgentCard(card, ag) {
+  const id = ag.agentId;
+  const col = teamColor(ag.teamId);
+  const isSelected = id === selectedId;
+  const isExpanded = expandedSet.has(id);
+
+  card.style.borderLeftColor = col;
+  card.classList.toggle('selected', isSelected);
+
+  const batt = ag.battery ?? 0;
+  const bc   = batteryColor(batt);
+  const sc   = statusClass(ag.admStatus);
+
+  // Teammates
+  const teammates = agents.filter(a => a.agentId !== id && a.teamId === ag.teamId);
+  const teammateChips = teammates.map(a =>
+    `<span class="teammate-chip" style="color:${teamColor(a.teamId)};border-color:${teamColor(a.teamId)}44">${escHtml(a.agentId)}</span>`
+  ).join('');
+
+  card.innerHTML = `
+    <div class="card-header">
+      <span class="card-id" style="color:${col}">${escHtml(id)}</span>
+      <span class="card-meta">
+        ${escHtml(ag.type)} · ${escHtml(ag.role)}
+        <span class="team-badge" style="background:${col}"">T${ag.teamId}</span>
+      </span>
+    </div>
+    <div class="row">
+      <span class="lbl">ADM</span>
+      <span class="val ${sc}">${escHtml(ag.admStatus)}</span>
+    </div>
+    <div class="row">
+      <span class="lbl">Plan</span>
+      <span class="val ${statusClass(ag.planState)}">${escHtml(ag.planState)}</span>
+    </div>
+    <div class="row">
+      <span class="lbl">Action</span>
+      <span class="val">${escHtml(ag.currentAction)}${ag.currentTarget ? ' → ' + escHtml(ag.currentTarget) : ''}</span>
+    </div>
+    <div class="battery-bar" style="position:relative"><div class="battery-fill" style="width:${(batt*100).toFixed(0)}%;background:${bc}"></div><span style="position:absolute;right:4px;top:-1px;font-size:9px;color:${bc};line-height:1">${(batt*100).toFixed(0)}%</span></div>
+    <button class="expand-btn" onclick="toggleDetails(this,'${escHtml(id)}');event.stopPropagation()">
+      ${isExpanded ? '▲ 收起' : '▼ 详情'}
+    </button>
+    <div class="card-details${isExpanded ? ' open' : ''}">
+      <div class="row"><span class="lbl">任务</span><span class="val">${escHtml(ag.missionDesc || '—')}</span></div>
+      <div class="row"><span class="lbl">步骤</span><span class="val">${escHtml(ag.currentStep || '—')}</span></div>
+      <div class="row"><span class="lbl">位置</span><span class="val">${ag.position?.map(v=>v.toFixed(1)).join(', ') ?? '—'}</span></div>
+      <div class="row"><span class="lbl">电量</span><span class="val" style="color:${bc}">${(batt*100).toFixed(1)}%</span></div>
+      <div class="row"><span class="lbl">附近</span><span class="val">${escHtml((ag.nearbyAgentIds||[]).join(', ') || '—')}</span></div>
+      <div class="row"><span class="lbl">敌方</span><span class="val" style="color:var(--red)">${escHtml((ag.enemyAgentIds||[]).join(', ') || '—')}</span></div>
+      ${teammates.length > 0 ? `<div class="row" style="flex-wrap:wrap;gap:2px"><span class="lbl">队友</span>${teammateChips}</div>` : ''}
+    </div>`;
+}
+
+function toggleDetails(btn, agentId) {
+  if (expandedSet.has(agentId)) {
+    expandedSet.delete(agentId);
+  } else {
+    expandedSet.add(agentId);
+  }
+  // Re-render just this card
+  const card = document.querySelector(`.agent-card[data-id="${CSS.escape(agentId)}"]`);
+  const ag = agents.find(a => a.agentId === agentId);
+  if (card && ag) updateAgentCard(card, ag);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Communications
+// ══════════════════════════════════════════════════════════════════════════════
+function setMsgFilter(f, btn) {
+  msgFilter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  // Full rebuild on filter change
+  renderedMsgKeys.clear();
+  document.getElementById('comms-list').innerHTML = '';
+  renderComms();
+}
+
+function renderComms() {
+  const list = document.getElementById('comms-list');
+  const filtered = msgFilter ? messages.filter(m => m.type === msgFilter) : messages;
+
+  let newCount = 0;
+  for (const msg of filtered) {
+    const key = `${msg.timestamp}-${msg.sender}-${msg.type}`;
+    if (renderedMsgKeys.has(key)) continue;
+    renderedMsgKeys.add(key);
+
+    const col = MSG_COLORS[msg.type] || '#8b949e';
+    const el = document.createElement('div');
+    el.className = 'msg-entry';
+    el.innerHTML = `
+      <span class="msg-time">${formatTime(msg.timestamp)}</span>
+      <span class="msg-type-tag" style="background:${col}22;color:${col}">${escHtml(msg.type)}</span>
+      <span class="msg-route">${escHtml(msg.sender)}→${escHtml(msg.receiver)}</span>
+      <span class="msg-content" onclick="this.classList.toggle('expanded')" title="${escHtml(msg.content)}">${escHtml(msg.content)}</span>`;
+    list.insertBefore(el, list.firstChild);
+    newCount++;
+  }
+
+  // Trim to 200 entries
+  while (list.children.length > 200) {
+    list.removeChild(list.lastChild);
+  }
+  // Trim renderedMsgKeys to avoid unbounded growth
+  if (renderedMsgKeys.size > 400) {
+    const arr = [...renderedMsgKeys];
+    renderedMsgKeys = new Set(arr.slice(arr.length - 200));
+  }
+
+  // Spawn arcs for new messages
+  if (newCount > 0) spawnArcs(filtered.slice(-newCount));
+}
+
+function spawnArcs(newMsgs) {
+  const now = performance.now() / 1000;
+  for (const msg of newMsgs) {
+    const sender = agents.find(a => a.agentId === msg.sender);
+    if (!sender) continue;
+    const [x1, y1] = worldToCanvas(sender.position[0], sender.position[2]);
+    const col = MSG_COLORS[msg.type] || '#8b949e';
+
+    if (!msg.receiver || msg.receiver === '—') {
+      activeArcs.push({ x1, y1, x2: x1, y2: y1, color: col, startTime: now, duration: 0.8, isBroadcast: true, broadcastR: 30 });
+    } else {
+      const recv = agents.find(a => a.agentId === msg.receiver);
+      if (recv) {
+        const [x2, y2] = worldToCanvas(recv.position[0], recv.position[2]);
+        activeArcs.push({ x1, y1, x2, y2, color: col, startTime: now, duration: 0.6, isBroadcast: false });
+      }
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LLM Logs
+// ══════════════════════════════════════════════════════════════════════════════
+async function fetchLlmLogs() {
+  try {
+    const res = await fetch('/api/llm-logs');
+    llmLogs = await res.json();
+    updateLlmAgentFilter();
+    renderLlmLogs();
+  } catch(e) {
+    console.warn('fetchLlmLogs failed', e);
+  }
+}
+
+function updateLlmAgentFilter() {
+  const sel = document.getElementById('llm-agent-filter');
+  const cur = sel.value;
+  const ids = [...new Set(llmLogs.map(e => e.agentId))].sort();
+  sel.innerHTML = '<option value="">全部</option>' + ids.map(id => `<option value="${escHtml(id)}">${escHtml(id)}</option>`).join('');
+  if (ids.includes(cur)) sel.value = cur;
+}
+
+function renderLlmLogs() {
+  const agentFilter = document.getElementById('llm-agent-filter').value;
+  const typeFilter  = document.getElementById('llm-type-filter').value;
+
+  let filtered = llmLogs;
+  if (agentFilter) filtered = filtered.filter(e => e.agentId === agentFilter);
+  if (typeFilter)  filtered = filtered.filter(e => e.type === typeFilter);
+
+  const list = document.getElementById('llm-list');
+  list.innerHTML = '';
+
+  const typeColors = { send: '#58a6ff', receive: '#3fb950', error: '#f85149' };
+
+  for (let i = filtered.length - 1; i >= 0; i--) {
+    const e = filtered[i];
+    const col = typeColors[e.type] || '#8b949e';
+    const preview = (e.content || '').replace(/\n/g, ' ').slice(0, 80);
+
+    const entry = document.createElement('div');
+    entry.className = 'llm-entry';
+
+    const hdr = document.createElement('div');
+    hdr.className = 'llm-entry-header';
+    hdr.innerHTML = `
+      <span class="llm-type-tag" style="background:${col}22;color:${col}">${escHtml(e.type)}</span>
+      <span class="llm-agent">${escHtml(e.agentId)}</span>
+      <span class="llm-model">${escHtml(e.model || '')}</span>
+      <span class="llm-ts">${escHtml(e.timestamp || '')}</span>
+      <span class="llm-preview">${escHtml(preview)}</span>`;
+
+    const body = document.createElement('div');
+    body.className = 'llm-body';
+    body.textContent = e.content || '';
+
+    hdr.onclick = () => body.classList.toggle('open');
+    entry.appendChild(hdr);
+    entry.appendChild(body);
+    list.appendChild(entry);
+  }
+
+  if (filtered.length === 0) {
+    list.innerHTML = '<div style="padding:16px;color:var(--muted);text-align:center">暂无日志（切换到此标签时自动刷新）</div>';
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Control panel
+// ══════════════════════════════════════════════════════════════════════════════
+function setModelPreset(model) {
+  document.getElementById('model-input').value = model;
+}
+
+async function submitModel() {
+  const model = document.getElementById('model-input').value.trim();
+  const statusEl = document.getElementById('model-status');
+  if (!model) { setStatus(statusEl, '请输入模型名称', false); return; }
+  try {
+    const res = await fetch('/api/model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model })
+    });
+    const j = await res.json();
+    setStatus(statusEl, j.ok ? `已切换到 ${model}` : '切换失败', j.ok);
+  } catch(e) {
+    setStatus(statusEl, '请求失败: ' + e.message, false);
+  }
+}
+
+async function submitTask() {
+  const mission = document.getElementById('task-input').value.trim();
+  const agentCount = parseInt(document.getElementById('agent-count-input').value) || 1;
+  const statusEl = document.getElementById('task-status');
+  if (!mission) { setStatus(statusEl, '请输入任务描述', false); return; }
+  try {
+    const res = await fetch('/api/task', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mission, agentCount })
+    });
+    const j = await res.json();
+    setStatus(statusEl, j.ok ? '任务已提交' : '提交失败', j.ok);
+  } catch(e) {
+    setStatus(statusEl, '请求失败: ' + e.message, false);
+  }
+}
+
+function setStatus(el, msg, ok) {
+  el.textContent = msg;
+  el.className = 'ctrl-status ' + (ok ? 'ok' : 'err');
+  setTimeout(() => { el.textContent = ''; el.className = 'ctrl-status'; }, 4000);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Debug panel
+// ══════════════════════════════════════════════════════════════════════════════
+function statusColor(s) {
+  if (!s) return 'var(--muted)';
+  const l = s.toLowerCase();
+  if (l === 'idle' || l === 'done') return 'var(--green)';
+  if (l === 'active' || l === 'running') return 'var(--blue)';
+  if (['thinking','interpreting','negotiating','replanning',
+       'parsing','slotgen','slotpick','stepgen','grouping'].includes(l)) return 'var(--orange)';
+  if (l === 'failed' || l === 'error') return 'var(--red)';
+  return 'var(--muted)';
+}
+
+function renderDebug() {
+  const pane = document.getElementById('tab-debug');
+  const teams = {};
+  for (const ag of agents) {
+    const t = ag.teamId ?? 0;
+    if (!teams[t]) teams[t] = 0;
+    teams[t]++;
+  }
+  const teamRows = Object.entries(teams).map(([t, cnt]) =>
+    `<div class="debug-row">
+      <span class="debug-lbl" style="color:${teamColor(Number(t))}">Team ${t}</span>
+      <span>${cnt} 成员</span>
+    </div>`).join('');
+
+  const planStates = {};
+  for (const ag of agents) {
+    const s = ag.planState || 'N/A';
+    planStates[s] = (planStates[s] || 0) + 1;
+  }
+  const totalAgents = agents.length || 1;
+  const planRows = Object.entries(planStates).map(([s, cnt]) => {
+    const pct = (cnt / totalAgents * 100).toFixed(0);
+    return `<div class="bar-container">
+      <div class="bar-label">
+        <span style="color:${statusColor(s)}">${escHtml(s)}</span>
+        <span>${cnt} (${pct}%)</span>
+      </div>
+      <div class="bar"><div class="bar-fill" style="width:${pct}%;background:${statusColor(s)}"></div></div>
+    </div>`;
+  }).join('');
+
+  // ADM state distribution
+  const admStates = {};
+  for (const ag of agents) {
+    const s = ag.admStatus || 'N/A';
+    admStates[s] = (admStates[s] || 0) + 1;
+  }
+  const admRows = Object.entries(admStates).map(([s, cnt]) => {
+    const pct = (cnt / totalAgents * 100).toFixed(0);
+    return `<div class="bar-container">
+      <div class="bar-label">
+        <span style="color:${statusColor(s)}">${escHtml(s)}</span>
+        <span>${cnt} (${pct}%)</span>
+      </div>
+      <div class="bar"><div class="bar-fill" style="width:${pct}%;background:${statusColor(s)}"></div></div>
+    </div>`;
+  }).join('');
+
+  // Current action distribution
+  const actionCounts = {};
+  for (const ag of agents) {
+    const a = ag.currentAction || 'None';
+    actionCounts[a] = (actionCounts[a] || 0) + 1;
+  }
+  const actionRows = Object.entries(actionCounts).map(([a, cnt]) =>
+    `<div class="debug-row"><span class="debug-lbl">${escHtml(a)}</span><span>${cnt}</span></div>`
+  ).join('');
+
+  // Map node statistics by kind
+  const kindCounts = {};
+  for (const f of (mapMeta.features || [])) {
+    const k = f.kind || 'unknown';
+    kindCounts[k] = (kindCounts[k] || 0) + 1;
+  }
+  const kindRows = Object.entries(kindCounts).map(([k, cnt]) => {
+    const sty = FEATURE_STYLES[k.toLowerCase()] || FEATURE_STYLES.default;
+    return `<div class="debug-row">
+      <span class="debug-lbl" style="color:${sty.stroke}">${escHtml(k)}</span>
+      <span>${cnt}</span>
+    </div>`;
+  }).join('');
+
+  const llmSendCount = llmLogs.filter(e => e.type === 'send').length;
+  const llmRecvCount = llmLogs.filter(e => e.type === 'receive').length;
+  const llmErrCount  = llmLogs.filter(e => e.type === 'error').length;
+
+  const pingColor = pingMs < 100 ? 'var(--green)' : pingMs < 300 ? 'var(--orange)' : 'var(--red)';
+
+  // Recent events per agent
+  const recentEventsHtml = agents.filter(ag => ag.recentEvents && ag.recentEvents.length > 0).map(ag => {
+    const col = teamColor(ag.teamId);
+    const evts = ag.recentEvents.slice(-3).map(ev => `<div style="color:var(--muted);font-size:10px;margin:1px 0">${escHtml(ev)}</div>`).join('');
+    return `<div style="margin-bottom:6px"><span style="color:${col};font-size:10px">${escHtml(ag.agentId)}</span>${evts}</div>`;
+  }).join('');
+
+  pane.innerHTML = `
+    <div class="debug-section">
+      <div class="debug-title">连接状态</div>
+      <div class="debug-row"><span class="debug-lbl">延迟</span><span style="color:${pingColor}">${pingMs} ms</span></div>
+      <div class="debug-row"><span class="debug-lbl">Agent 总数</span><span>${agents.length}</span></div>
+      <div class="debug-row"><span class="debug-lbl">消息总数</span><span>${messages.length}</span></div>
+      <div class="debug-row"><span class="debug-lbl">缩放</span><span>${Math.round(zoomLevel*100)}%</span></div>
+    </div>
+    <div class="debug-section">
+      <div class="debug-title">Team 分布</div>
+      ${teamRows || '<div class="debug-row"><span class="debug-lbl">暂无数据</span></div>'}
+    </div>
+    <div class="debug-section">
+      <div class="debug-title">ADM 状态分布</div>
+      ${admRows || '<div class="debug-row"><span class="debug-lbl">暂无数据</span></div>'}
+    </div>
+    <div class="debug-section">
+      <div class="debug-title">Plan 状态分布</div>
+      ${planRows || '<div class="debug-row"><span class="debug-lbl">暂无数据</span></div>'}
+    </div>
+    <div class="debug-section">
+      <div class="debug-title">当前动作分布</div>
+      ${actionRows || '<div class="debug-row"><span class="debug-lbl">暂无数据</span></div>'}
+    </div>
+    <div class="debug-section">
+      <div class="debug-title">LLM 请求统计</div>
+      <div class="debug-row"><span class="debug-lbl">Send</span><span style="color:var(--blue)">${llmSendCount}</span></div>
+      <div class="debug-row"><span class="debug-lbl">Receive</span><span style="color:var(--green)">${llmRecvCount}</span></div>
+      <div class="debug-row"><span class="debug-lbl">Error</span><span style="color:var(--red)">${llmErrCount}</span></div>
+    </div>
+    <div class="debug-section">
+      <div class="debug-title">地图节点统计</div>
+      ${kindRows || '<div class="debug-row"><span class="debug-lbl">暂无地图数据</span></div>'}
+    </div>
+    <div class="debug-section">
+      <div class="debug-title">各 Agent 电量</div>
+      ${agents.map(ag => {
+        const batt = ag.battery ?? 0;
+        const bc = batteryColor(batt);
+        const col = teamColor(ag.teamId);
+        return `<div class="bar-container">
+          <div class="bar-label">
+            <span style="color:${col}">${escHtml(ag.agentId)}</span>
+            <span style="color:${bc}">${(batt*100).toFixed(0)}%</span>
+          </div>
+          <div class="bar"><div class="bar-fill" style="width:${(batt*100).toFixed(0)}%;background:${bc}"></div></div>
+        </div>`;
+      }).join('')}
+    </div>
+    ${recentEventsHtml ? `<div class="debug-section">
+      <div class="debug-title">近期事件</div>
+      ${recentEventsHtml}
+    </div>` : ''}
+  `;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Data polling
+// ══════════════════════════════════════════════════════════════════════════════
+async function poll() {
+  const t0 = performance.now();
+  try {
+    const [stateRes, msgsRes, histRes] = await Promise.all([
+      fetch('/api/state'),
+      fetch('/api/messages'),
+      fetch('/api/history'),
+    ]);
+    agents     = await stateRes.json();
+    messages   = await msgsRes.json();
+    posHistory = await histRes.json();
+    pingMs     = Math.round(performance.now() - t0);
+
+    document.getElementById('conn-badge').textContent = '已连接';
+    document.getElementById('conn-badge').className   = 'badge ok';
+    document.getElementById('hdr-agents').textContent = `${agents.length} Agents`;
+    document.getElementById('hdr-msgs').textContent   = `${messages.length} 消息`;
+    const pingColor = pingMs < 100 ? 'var(--green)' : pingMs < 300 ? 'var(--orange)' : 'var(--red)';
+    const pingEl = document.getElementById('hdr-ping');
+    pingEl.textContent = pingMs + ' ms';
+    pingEl.style.color = pingColor;
+
+    renderAgents();
+    renderComms();
+    if (currentTab === 'debug') renderDebug();
+  } catch(e) {
+    document.getElementById('conn-badge').textContent = '连接失败';
+    document.getElementById('conn-badge').className   = 'badge err';
+    document.getElementById('hdr-ping').textContent   = '—';
+  }
+  pollTimer = setTimeout(poll, pollInterval);
+}
+
+async function fetchMapData() {
+  try {
+    const [mapRes, gridRes] = await Promise.all([
+      fetch('/api/map'),
+      fetch('/api/gridmap'),
+    ]);
+    const m = await mapRes.json();
+    if (m && m.cellSize) { mapMeta = m; }
+    const g = await gridRes.json();
+    if (g && g.cells) { gridmap = g; bgReady = false; buildBgCanvas(); }
+    // Build map legend
+    buildMapLegend();
+  } catch(e) {
+    console.warn('fetchMapData failed', e);
+  }
+}
+
+function buildMapLegend() {
+  const body = document.getElementById('map-legend-body');
+  if (!body) return;
+  const kinds = [...new Set((mapMeta.features || []).map(f => (f.kind||'').toLowerCase()))].filter(Boolean);
+  body.innerHTML = kinds.map(k => {
+    const sty = FEATURE_STYLES[k] || FEATURE_STYLES.default;
+    return `<div style="display:flex;align-items:center;gap:5px">
+      <div style="width:10px;height:10px;border-radius:50%;background:${sty.fill};border:1.5px solid ${sty.stroke};flex-shrink:0"></div>
+      <span style="color:${sty.stroke}">${k}</span>
+    </div>`;
+  }).join('');
+}
+
+function changeInterval(v) {
+  pollInterval = parseInt(v);
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+  poll();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Divider drag
+// ══════════════════════════════════════════════════════════════════════════════
+(function() {
+  const divider = document.getElementById('divider');
+  const left    = document.getElementById('left-panel');
+  let dragging  = false;
+
+  divider.addEventListener('mousedown', e => {
+    dragging = true;
+    divider.classList.add('dragging');
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const main  = document.getElementById('main');
+    const rect  = main.getBoundingClientRect();
+    const frac  = Math.max(0.2, Math.min(0.8, (e.clientX - rect.left) / rect.width));
+    left.style.flex = `0 0 ${(frac * 100).toFixed(1)}%`;
+    bgReady = false;
+  });
+  document.addEventListener('mouseup', () => {
+    dragging = false;
+    divider.classList.remove('dragging');
+  });
+})();
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Init
+// ══════════════════════════════════════════════════════════════════════════════
+window.addEventListener('resize', () => { bgReady = false; if (gridmap) buildBgCanvas(); });
+startDrawLoop();
+fetchMapData();
+poll();
+</script>
+</body>
+</html>
