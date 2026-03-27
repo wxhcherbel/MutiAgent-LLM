@@ -125,4 +125,7 @@ public class StartExecPayload
 
     /// <summary>所属组 ID。</summary>
     public string groupId;
+
+    // Runtime constraints after final slot assignment and per-agent backfill.
+    public StructuredConstraint[] constraints;
 }

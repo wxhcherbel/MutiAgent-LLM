@@ -66,7 +66,12 @@
       linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.34)),
       linear-gradient(180deg, #ece5d7 0%, #f5f0e5 100%);
     backdrop-filter: blur(12px);
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
   }
+  aside::-webkit-scrollbar { width: 5px; }
+  aside::-webkit-scrollbar-track { background: transparent; }
+  aside::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 4px; }
 
   .brand {
     padding: 18px 18px 16px;
@@ -155,10 +160,16 @@
     transition: 0.2s ease;
   }
   .nav-group a:hover,
-  .nav-group a.active {
+  .nav-group a.active,
+  .nav-group a:focus-visible {
     background: rgba(20, 108, 127, 0.08);
     border-left-color: var(--accent);
     text-decoration: none;
+  }
+  summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-md);
   }
   .nav-note {
     margin-top: 8px;
@@ -222,7 +233,7 @@
   }
   .hero-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
     gap: 12px;
     margin-top: 22px;
   }
@@ -233,6 +244,7 @@
     border-radius: var(--radius-md);
     border: 1px solid var(--line);
     background: rgba(255, 255, 255, 0.62);
+    min-width: 0;
   }
   .hero-card { padding: 14px 14px 12px; }
   .hero-card strong {
@@ -305,7 +317,7 @@
 
   .node-grid {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: 12px;
     margin-top: 18px;
   }
@@ -410,10 +422,11 @@
 
   .details-grid {
     display: grid;
-    grid-template-columns: 1.1fr 0.9fr;
+    grid-template-columns: 1fr 1fr;
     gap: 14px;
     margin-top: 18px;
   }
+  .details-grid > * { min-width: 0; }
   details {
     border: 1px solid var(--line);
     border-radius: var(--radius-md);
@@ -452,11 +465,13 @@
   .summary-risk { background: rgba(161, 59, 47, 0.12); color: var(--risk); }
   .summary-paper { background: rgba(20, 108, 127, 0.10); color: var(--accent); }
   .summary-game { background: rgba(125, 74, 163, 0.12); color: var(--todo); }
-  .summary-title { min-width: 0; font-size: 14px; line-height: 1.6; }
+  .summary-title { min-width: 0; font-size: 14px; line-height: 1.6; overflow: hidden; text-overflow: ellipsis; }
   .summary-arrow { flex-shrink: 0; color: var(--muted-2); font-family: var(--mono); }
   .details-body {
     padding: 0 16px 16px;
     border-top: 1px solid var(--line);
+    overflow: hidden;
+    transition: max-height 0.28s ease;
   }
   .meta-note,
   .footnote {
@@ -470,10 +485,74 @@
     border-radius: 10px;
     background: rgba(20, 108, 127, 0.06);
   }
+  .detail-steps {
+    margin: 0;
+    padding-left: 20px;
+    color: var(--ink);
+    font-size: 13px;
+    line-height: 1.8;
+  }
+  .detail-note {
+    margin-top: 10px;
+    color: var(--ink);
+    font-size: 13px;
+    line-height: 1.8;
+  }
+  .callout {
+    margin-top: 10px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border-left: 3px solid transparent;
+    color: var(--ink);
+    font-size: 12px;
+    line-height: 1.7;
+  }
+  .callout-compact {
+    margin-top: 8px;
+    padding: 8px 12px;
+  }
+  .callout-warn {
+    background: rgba(175, 107, 20, 0.07);
+    border-left-color: var(--warn);
+  }
+  .callout-risk {
+    background: rgba(161, 59, 47, 0.07);
+    border-left-color: var(--risk);
+  }
+  .callout-success {
+    background: rgba(47, 125, 91, 0.07);
+    border-left-color: var(--good);
+  }
+  .callout-accent {
+    background: rgba(120, 91, 19, 0.07);
+    border-left-color: var(--accent-4);
+  }
+  .callout-label {
+    color: inherit;
+  }
+  .copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    padding: 4px 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: rgba(255,255,255,0.7);
+    color: var(--muted);
+    font-size: 11px;
+    font-family: var(--mono);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  pre:hover .copy-btn { opacity: 1; }
   pre {
+    position: relative;
     margin: 12px 0 0;
     padding: 14px;
-    overflow: auto;
+    overflow-x: auto;
+    max-width: 100%;
+    white-space: pre;
     border-radius: 12px;
     border: 1px solid rgba(30, 42, 51, 0.14);
     background: #1d2429;
@@ -482,8 +561,10 @@
   pre code {
     font-size: 12px;
     line-height: 1.85;
+    word-break: normal;
     white-space: pre;
   }
+  code { word-break: break-word; overflow-wrap: anywhere; }
   .field-table {
     width: 100%;
     border-collapse: collapse;
@@ -497,6 +578,10 @@
     text-align: left;
     font-size: 13px;
     line-height: 1.75;
+  }
+  .field-table td {
+    word-break: break-all;
+    overflow-wrap: anywhere;
   }
   .field-table th {
     width: 18%;
@@ -556,6 +641,7 @@
   @media (max-width: 1420px) {
     .node-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .details-grid { grid-template-columns: 1fr; }
+    .hero-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   @media (max-width: 1180px) {
     .layout { grid-template-columns: 1fr; }
@@ -581,7 +667,8 @@
     .hero-grid,
     .node-grid,
     .scenario-grid,
-    .source-grid { grid-template-columns: 1fr; }
+    .source-grid,
+    .details-grid { grid-template-columns: 1fr; }
   }
 </style>
 </head>
@@ -623,6 +710,11 @@
         <a href="#stage8">阶段 8 动作执行层</a>
       </div>
       <div class="nav-group">
+        <h2>支撑模块</h2>
+        <a href="#memory-reflection">Memory &amp; Reflection 模块</a>
+        <a href="#robustness">容错与鲁棒性</a>
+      </div>
+      <div class="nav-group">
         <h2>收尾</h2>
         <a href="#review">审阅结论汇总</a>
         <a href="#sources">论文与来源索引</a>
@@ -631,6 +723,10 @@
         注：本页以当前代码为准。凡是与 <code>constraint-reference.html</code> 或
         <code>test.md</code> 不一致的地方，都会在对应主链节点旁直接标注偏差。
       </p>
+      <div style="margin-top: 14px; display: flex; gap: 8px;">
+        <button id="btn-expand-all" style="flex:1; padding: 7px 10px; border: 1px solid rgba(47,66,73,0.14); border-radius: 8px; background: rgba(20,108,127,0.08); color: #146c7f; font-size: 12px; cursor: pointer; font-family: 'Cascadia Mono','Consolas',monospace;">全展开</button>
+        <button id="btn-collapse-all" style="flex:1; padding: 7px 10px; border: 1px solid rgba(47,66,73,0.14); border-radius: 8px; background: rgba(255,255,255,0.6); color: #5c6b72; font-size: 12px; cursor: pointer; font-family: 'Cascadia Mono','Consolas',monospace;">全折叠</button>
+      </div>
     </nav>
   </aside>
 
@@ -654,7 +750,7 @@
         </div>
         <div class="hero-card">
           <strong>规划核心</strong>
-          <span>LLM#1 解析任务，LLM#2 产槽，LLM#3 选槽，LLM#4 拆步骤</span>
+          <span>LLM#1 解析任务，LLM#2 产槽，LLM#3（在代码中即 RunLLM3()）用于成员选槽，LLM#4 拆步骤</span>
         </div>
         <div class="hero-card">
           <strong>执行核心</strong>
@@ -663,6 +759,10 @@
         <div class="hero-card">
           <strong>审阅原则</strong>
           <span>代码事实优先，旧设计稿偏差只做旁注，不把推测写成现状</span>
+        </div>
+        <div class="hero-card">
+          <strong>已知主链缺口</strong>
+          <span>R1 裁判未注册 · R2 ReadySignal 无写入点 · R3 感知重规划为 TODO · LLM#3 回退偏向首槽 · WhiteBoard 10s 超时影响 C3</span>
         </div>
       </div>
     </section>
@@ -819,12 +919,21 @@
               交互格式、可共享中间结果标准化，否则后续链路会出现级联幻觉。
             </p>
             <ul>
-              <li>AutoGen 适合补“多 Agent 会话协议”和消息格式校验。</li>
-              <li>CAMEL 适合补“角色提示词”和角色一致性。</li>
-              <li>MetaGPT 适合补“标准作业流程 SOP”与发布-订阅式共享消息池。</li>
+              <li>AutoGen 适合补”多 Agent 会话协议”和消息格式校验。</li>
+              <li>CAMEL 适合补”角色提示词”和角色一致性。</li>
+              <li>MetaGPT 适合补”标准作业流程 SOP”与发布-订阅式共享消息池。</li>
             </ul>
+            <p><strong>【方法原理】</strong>AutoGen（微软提出）把每个 Agent 的角色、可发消息类型和消息格式定义为结构化 Schema，通过”对话管理器（GroupChatManager）”路由消息并强制校验格式，防止级联幻觉在多轮对话中累积。</p>
+            <p><strong>【为何适合本节点】</strong>SubmitMissionRequest() 是整个规划链的入口，若入口处任务描述结构松散，后续所有 LLM 调用都可能产生无法校验的输出，AutoGen Schema 可在此处建立全局格式契约。</p>
+            <p><strong>【具体实现步骤】</strong></p>
+            <ol class="detail-steps">
+              <li>在 SubmitMissionRequest() 前定义 AgentRoleManifest 结构：声明本轮每类 Agent 的”可输入动词”（如 Scout 只允许产出 Observe/MoveTo）</li>
+              <li>每次 LLM 调用后增加 Schema 校验层，拒绝不合法输出并触发 re-prompt（最多重试2次）</li>
+              <li>把”允许产出的结构、角色边界、失败回退格式”写入统一系统 prompt，而不是分散在各个 LLM 调用里</li>
+              <li>为 ParsedMission 添加后验校验器：验证 groupCnt、groupScope 范围、每个 C2 至少有2个成员</li>
+            </ol>
             <div class="meta-note">
-              推荐插入点：任务刚进入规划前，把“允许产出的结构”“角色边界”“失败回退格式”写成统一系统协议。
+              推荐插入点：任务刚进入规划前，把”允许产出的结构””角色边界””失败回退格式”写成统一系统协议。
             </div>
           </div>
         </details>
@@ -881,7 +990,7 @@
         <article class="node-card">
           <h3>涉及函数</h3>
           <ul>
-            <li><code>PlanningModule.RunLLM1()</code></li>
+            <li><code>PlanningModule.RunLLM1()</code> <span style="font-size:11px; color:#af6b14; font-family:'Cascadia Mono','Consolas',monospace;">maxTokens:1200</span></li>
             <li><code>LLMInterface.SendRequest()</code></li>
             <li><code>PlanningModule.ExtractJson()</code></li>
             <li><code>PlanningModule.AssignGroups()</code></li>
@@ -1056,13 +1165,22 @@
           <div class="details-body">
             <p>
               当前 LLM#1 依靠长提示词硬编码三类约束识别规则，能跑，但对复杂任务容易变脆。
-              MetaGPT 的价值不在“角色名更好看”，而在把 SOP 和中间结构标准化。
+              MetaGPT 的价值不在”角色名更好看”，而在把 SOP 和中间结构标准化。
             </p>
             <ul>
-              <li>可把任务先拆成“目标、参与方、资源、同步条件、互斥条件、时限”六段，再送 LLM。</li>
+              <li>可把任务先拆成”目标、参与方、资源、同步条件、互斥条件、时限”六段，再送 LLM。</li>
               <li>可增加一个解析后校验器，对 <code>groupCnt</code>、<code>groupMsns.length</code>、<code>groupScope</code> 做结构检查。</li>
               <li>可把失败时的最小重试策略写成固定协议，而不是直接 <code>Failed</code>。</li>
             </ul>
+            <p><strong>【方法原理】</strong>MetaGPT 为每个角色定义标准作业流程（SOP），用发布-订阅式共享消息池分发中间结果；每个角色只读特定频道、只产出特定文档类型，整个流程可验证、可重放。</p>
+            <p><strong>【为何适合本节点】</strong>LLM#1 的任务解析输出 ParsedMission 是后续所有步骤的数据源，若输出格式自由，解析失败会导致整链崩溃。MetaGPT SOP 的六段式填空可大幅减少自由发挥。</p>
+            <p><strong>【具体实现步骤】</strong></p>
+            <ol class="detail-steps">
+              <li>把 LLM#1 的 prompt 改为”目标→参与方→资源→同步条件→互斥条件→时限”六段式填空</li>
+              <li>产出 ParsedMission 后增加后验校验：验证 groupCnt == groupMsns.Length、所有 groupScope 在 [0, groupCnt) 范围内</li>
+              <li>失败时不直接进入 Failed 状态，而是把错误描述反馈给 LLM，最多重试2次</li>
+              <li>用共享消息池替代直接字段传递，使 LLM#2 可通过订阅频道而非硬编码字段名读取结果</li>
+            </ol>
           </div>
         </details>
       </div>
@@ -1193,6 +1311,9 @@
               组长选择也只看电量，不看通信范围、机型、负载或地理位置。
               对简单演示够用，但对异构多机或远距离场景会比较粗糙。
             </p>
+            <div class="callout callout-warn callout-compact">
+              <strong class="callout-label">余数分配：</strong>当 agentCount 不能被 groupCnt 整除时，余数 Agent 全部追加到 g0 组（<code>g == 0 ? remainder : 0</code>），而非均匀分散。例：5 Agent 分成 2 组 → g0 得 3 台，g1 得 2 台。
+            </div>
           </div>
         </details>
       </div>
@@ -1241,13 +1362,13 @@
           <summary>
             <span class="summary-left">
               <span class="summary-badge summary-paper">优化建议</span>
-              <span class="summary-title">任务分组可以参考 MRTA 与 CBBA，不必停留在“顺序均分 + 电量最高当组长”</span>
+              <span class="summary-title">任务分组可以参考 MRTA 与 CBBA，不必停留在”顺序均分 + 电量最高当组长”</span>
             </span>
             <span class="summary-arrow">v</span>
           </summary>
           <div class="details-body">
             <p>
-              Gerkey 与 Matarić 的 MRTA taxonomy 给出的是“怎样把任务分配问题形式化”，而 CBBA 给出的是
+              Gerkey 与 Matarić 的 MRTA taxonomy 给出的是”怎样把任务分配问题形式化”，而 CBBA 给出的是
               “分布式任务分配时怎样在局部通信下达成一致”。这两类工作都比当前的顺序切组规则更适合异构无人机系统。
             </p>
             <ul>
@@ -1255,6 +1376,15 @@
               <li>CBBA 视角：把局部出价和共识机制放进组形成或槽位冲突消解阶段。</li>
               <li>最小落地路径：先不改 UI，只给 <code>SelectLeader()</code> 和分组器引入更丰富的评分函数。</li>
             </ul>
+            <p><strong>【方法原理】</strong>MRTA（Gerkey &amp; Matarić 2004）将多机器人任务分配形式化为三个维度（任务分解性 ST/MT、承接多任务能力 SR/MR、时间窗口 IP/TP），本系统是 ST-SR-TP 类型。CBBA（Choi 2009）在局部通信约束下让 Agent 先出价再通过共识阶段解决冲突，收敛到全局次优分配，无需中心节点。</p>
+            <p><strong>【为何适合本节点】</strong>当前 AssignGroups() 按顺序切割 Agent，不考虑能力-任务匹配，导致高价值任务可能分配给不匹配的 Agent。引入 MRTA 框架可系统性改进分配质量。</p>
+            <p><strong>【具体实现步骤】</strong></p>
+            <ol class="detail-steps">
+              <li>给 SelectLeader() 增加多维评分：score = w1×battery + w2×proximity_to_task + w3×comm_range + w4×agent_type_match</li>
+              <li>给 AssignGroups() 增加能力-任务匹配矩阵：统计各 Agent 的 AgentType、MaxSpeed、SensorRange，按任务需求优先分配匹配度高的</li>
+              <li>对对抗场景引入 CBBA 局部共识：组内成员同时出价（报距离+电量+角色匹配度），组长做共识收敛而不是直接按顺序切</li>
+              <li>用 Shapley Value 估算各 Agent 对子组的贡献（基于位置、能力、电量），实现能力匹配分组而非顺序切组</li>
+            </ol>
           </div>
         </details>
 
@@ -1328,7 +1458,7 @@
         <article class="node-card">
           <h3>涉及函数</h3>
           <ul>
-            <li><code>PlanningModule.RunLLM2()</code></li>
+            <li><code>PlanningModule.RunLLM2()</code> <span style="font-size:11px; color:#af6b14; font-family:'Cascadia Mono','Consolas',monospace;">maxTokens:1000</span></li>
             <li><code>CommunicationModule.SendScopedMessage()</code></li>
             <li><code>PlanningModule.OnSlotBroadcast()</code></li>
           </ul>
@@ -1446,14 +1576,23 @@
           </summary>
           <div class="details-body">
             <p>
-              当前流程是“组长先生成槽位，再让成员自己选”，本质上已经很接近 Contract Net 的
+              当前流程是”组长先生成槽位，再让成员自己选”，本质上已经很接近 Contract Net 的
               “招标 - 投标 - 授标”形态，只是投标和授标都还比较弱。
             </p>
             <ul>
               <li>Contract Net 可把当前槽位广播改成标准化招标，成员回报成本、位置、剩余电量等。</li>
               <li>MRTA 可让槽位生成前就考虑平台异构性和资源约束。</li>
-              <li>CBBA 则适合进一步处理多轮冲突与共识收敛，而不只是“先到先得”。</li>
+              <li>CBBA 则适合进一步处理多轮冲突与共识收敛，而不只是”先到先得”。</li>
             </ul>
+            <p><strong>【方法原理】</strong>Contract Net（Smith 1980）是分布式问题求解的招标协议：管理节点发布任务公告，潜在承包商评估并回报投标（含代价、时间、资源），管理节点选标并授权，分为 announcement → bidding → awarding 三阶段。</p>
+            <p><strong>【当前映射】</strong>组长 RunLLM2() → 槽位公告；成员 RunLLM3() → 投标（但目前只回报 slotId）；组长 ResolveAndConfirm() → 授标（目前是先到先得）。</p>
+            <p><strong>【具体实现步骤】</strong></p>
+            <ol class="detail-steps">
+              <li>修改 SlotSelectPayload 增加竞标字段：{ “slotId”: “s1”, “bid”: { “distance”: 45.2, “battery”: 0.78, “estimatedTime”: 12.0, “roleMatch”: 0.9 } }</li>
+              <li>修改 ResolveAndConfirm() 从”先到先得”改为”按加权评分选最优投标者”：score = w1/distance + w2×battery + w3/estimatedTime + w4×roleMatch</li>
+              <li>对冲突槽位，先汇总所有投标方案，再做整体最优分配（贪心或匈牙利算法）</li>
+              <li>增加授标回执机制：组长广播授标结果，未中标成员收到通知后释放占位，避免死锁</li>
+            </ol>
           </div>
         </details>
 
@@ -1528,7 +1667,7 @@
         <article class="node-card">
           <h3>涉及函数</h3>
           <ul>
-            <li><code>PlanningModule.RunLLM3()</code></li>
+            <li><code>PlanningModule.RunLLM3()</code> <span style="font-size:11px; color:#a13b2f; font-family:'Cascadia Mono','Consolas',monospace;">maxTokens:150 ⚠️</span></li>
             <li><code>PlanningModule.OnSlotSelect()</code></li>
             <li><code>PlanningModule.ResolveAndConfirm()</code></li>
             <li><code>PlanningModule.OnSlotConfirm()</code></li>
@@ -1573,22 +1712,26 @@
                 <td>成员本地的同步位：只有确认槽位且收到开始执行信号，才会真正进入 LLM#4。</td>
               </tr>
             </table>
-            <pre><code>// LLM#3 只需要输出“我选哪个槽”
+            <pre><code>// LLM#3 只需要输出”我选哪个槽”
 {
-  "slotId": "s1"
+  “slotId”: “s1”
 }
 
 // 组长本地再把它扩展成最终分配结果
 {
-  "msnId": "msn_20260326_1",
-  "agentId": "drone_B",
-  "slot": {
-    "slotId": "s1",
-    "role": "Scout",
-    "desc": "从出发点飞往西区执行搜索",
-    "doneCond": "西区搜索完成"
+  “msnId”: “msn_20260326_1”,
+  “agentId”: “drone_B”,
+  “slot”: {
+    “slotId”: “s1”,
+    “role”: “Scout”,
+    “desc”: “从出发点飞往西区执行搜索”,
+    “doneCond”: “西区搜索完成”
   }
 }</code></pre>
+            <div class="callout callout-warn">
+              <strong class="callout-label">回退规则：</strong>LLM#3 返回空值或 JSON 解析失败时，不进入 Failed 状态，而是静默选择 <code>availableSlots[0]</code>（第一个可用槽位）。这造成”第一槽位偏好”的隐性偏差；若引入 Contract Net 竞标机制，需显式禁用此回退逻辑。<br>
+              <strong class="callout-label">Token 限制：</strong>LLM#3 当前 <code>maxTokens=150</code>，是所有 LLM 调用中最低的。直接决定了输出只能是 <code>{“slotId”:”s1”}</code> 这样的极简 JSON。若改为携带竞标数据，需提升到 300–400 tokens。
+            </div>
           </div>
         </details>
 
@@ -1673,6 +1816,16 @@
               <li>CBBA：冲突槽位通过局部出价和共识迭代收敛，而不是一次性裁决。</li>
               <li>MRTA：可把槽位价值函数统一成平台能力与任务收益的映射。</li>
             </ul>
+            <p><strong>【方法原理】</strong>Contract Net（Smith 1980）是分布式问题求解的招标协议：announcement → bidding → awarding 三阶段，让每个承包商自主评估并竞标，管理节点依据多维指标选标。</p>
+            <p><strong>【为何适合本节点】</strong>ResolveAndConfirm() 已承担"授标"角色，当前仅缺结构化投标内容与多维评分逻辑，改造成本低，收益高。</p>
+            <p><strong>【具体实现步骤】</strong></p>
+            <ol class="detail-steps">
+              <li>扩展 SlotSelectPayload：增加 bid 字段包含 distance、battery、estimatedTime、roleMatch</li>
+              <li>ResolveAndConfirm() 改为按综合评分（而非时间戳）选标</li>
+              <li>对冲突槽位先汇总所有投标再做整体最优分配（贪心或匈牙利算法）</li>
+              <li>增加未中标通知：组长广播 SlotRejected，释放等待占位</li>
+              <li>CBBA 共识扩展：引入多轮出价迭代，处理分布式通信延迟下的槽位争抢</li>
+            </ol>
           </div>
         </details>
 
@@ -1717,6 +1870,34 @@
             <span><code>AgentPlan</code></span>
             <span><code>PlanningState.Active</code></span>
           </div>
+          <div class="meta-note" style="margin-top: 14px;">
+            注：规划模块内部 PlanningState 枚举共 8 个状态（Idle、ParsingMission、…、Active），HTML 中"阶段 8"对应 ADM（ActionDecisionModule）消费层，并非规划模块内部状态，请勿将 HTML 阶段序号与 PlanningState 枚举值直接对应。
+          </div>
+          <details style="margin-top: 12px;">
+            <summary style="cursor: pointer; padding: 10px 14px; background: rgba(20,108,127,0.07); border-radius: 12px; display: flex; align-items: center; gap: 8px; list-style: none; font-size: 13px; font-weight: 600; color: #146c7f;">
+              <span class="summary-arrow">▶</span> PlanningState 完整枚举（9个状态）
+            </summary>
+            <div style="margin-top: 10px; overflow-x: auto;">
+              <table class="field-table" style="width: 100%;">
+                <thead>
+                  <tr>
+                    <th>枚举值</th><th>含义</th><th>进入条件</th><th>对应 HTML 章节</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td>Idle</td><td>等待任务提交</td><td>初始状态 / 任务完成后重置</td><td>阶段0（入口）</td></tr>
+                  <tr><td>Parsing</td><td>LLM#1 任务解析中</td><td>SubmitMissionRequest() 被调用</td><td>阶段1</td></tr>
+                  <tr><td>Grouping</td><td>本地分组计算</td><td>Parsing 完成，ParsedMission 有效</td><td>阶段2</td></tr>
+                  <tr><td>SlotGen</td><td>组长生成槽位（LLM#2）</td><td>isLeader=true，Grouping 完成</td><td>阶段3</td></tr>
+                  <tr><td>SlotPick</td><td>成员选槽（LLM#3）</td><td>收到 SlotBroadcastPayload</td><td>阶段4</td></tr>
+                  <tr><td>SlotWait</td><td>等待所有成员完成选槽</td><td>组长在 SlotGen 后进入等待</td><td>阶段3→4 过渡</td></tr>
+                  <tr><td>StepGen</td><td>LLM#4 拆解执行步骤</td><td>ResolveAndConfirm() 完成</td><td>阶段5</td></tr>
+                  <tr><td>Active</td><td>ActionDecisionModule 消费执行步骤</td><td>StepGen 完成，PlanStep[] 写入</td><td>阶段6-7（ADM 层）</td></tr>
+                  <tr><td>Failed</td><td>超时或解析失败</td><td>CheckTimeout() / LLM 解析失败</td><td>—（终止态）</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </details>
         </div>
       </div>
 
@@ -1749,7 +1930,7 @@
         <article class="node-card">
           <h3>涉及函数</h3>
           <ul>
-            <li><code>PlanningModule.RunLLM4()</code></li>
+            <li><code>PlanningModule.RunLLM4()</code> <span style="font-size:11px; color:#af6b14; font-family:'Cascadia Mono','Consolas',monospace;">maxTokens:800</span></li>
             <li><code>PlanningModule.GetConstraint()</code></li>
             <li><code>PlanningModule.HasActiveMission()</code></li>
             <li><code>PlanningModule.GetCurrentStep()</code></li>
@@ -1844,13 +2025,52 @@
           <h3>对抗步骤示例</h3>
           <dl>
             <dt>槽位描述</dt>
-            <dd>“绕到教学楼南侧，等待队友封口后发起追击。”</dd>
+            <dd>”绕到教学楼南侧，等待队友封口后发起追击。”</dd>
             <dt>步骤结果</dt>
             <dd>等待封口是队内耦合步骤，发起追击是对敌动作意图，但是否追上仍不由这一步决定。</dd>
             <dt>主链意义</dt>
             <dd>队内协同在这里已被明确挂到步骤上，对敌博弈要留给后面的滚动规划。</dd>
           </dl>
         </article>
+      </div>
+
+      <div class="details-grid">
+        <details>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-paper">优化建议</span>
+              <span class="summary-title">步骤拆解可以参考 HTN Planning，为 LLM#4 输出引入结构约束而非纯自然语言</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p><strong>【方法原理】</strong>HTN（Hierarchical Task Network）将复合任务递归分解为有序原语任务，每一级分解由方法（method）控制，支持前提条件检查和分解树剪枝。相比纯自然语言拆解，HTN 可保证分解结构的合法性。</p>
+            <p><strong>【为何适合本节点】</strong>LLM#4 的步骤拆解当前是纯自然语言提示，无法验证”C2 约束是否绑定到最后一步”、”C3 sign=+1 是否在第一步设置了前置等待”。HTN 伪格式可在拆解阶段引入结构约束。</p>
+            <p><strong>【具体实现步骤】</strong></p>
+            <ol class="detail-steps">
+              <li>为 LLM#4 的 prompt 引入伪 HTN 格式：先输出分解树结构（task → [subtask1, subtask2]），再映射到 PlanStep[]</li>
+              <li>对 C2 约束添加后验规则：确认”最后一个实质步骤必须绑定 C2”，否则触发重试</li>
+              <li>对 C3 sign=+1 约束添加后验规则：确认”第一步必须是 Wait 类型或有明确前提条件”</li>
+              <li>引入分解树可视化日志：把分解树结构写入 SharedWhiteboard 供调试查看</li>
+            </ol>
+          </div>
+        </details>
+        <details>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-warn">审阅观察</span>
+              <span class="summary-title">步骤拆解后，约束-步骤绑定缺少自动验证，LLM 随机性会让绑定结果不稳定</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              当前没有后验检查器确认约束被正确绑定到步骤，特别是 C2 同步约束是否真的在”最后一步”，
+              以及 C3 正向等待是否在”第一步”。建议在 RunLLM4() 结束后增加约束绑定校验层，
+              对不合法结果触发最多2次 re-prompt。
+            </p>
+          </div>
+        </details>
       </div>
     </section>
     <section class="chapter" id="stage6">
@@ -1954,16 +2174,19 @@
           <summary>
             <span class="summary-left">
               <span class="summary-badge summary-warn">审阅观察</span>
-              <span class="summary-title">从这里开始，系统已经不再“按任务模块思考”，而是完全按当前步骤上下文思考</span>
+              <span class="summary-title">从这里开始，系统已经不再”按任务模块思考”，而是完全按当前步骤上下文思考</span>
             </span>
             <span class="summary-arrow">v</span>
           </summary>
           <div class="details-body">
             <p>
-              这一点对理解白板和裁判非常重要：它们不是“全局解释器”，而是被 ADM 在当前步骤上下文里读取的局部信号源。
+              这一点对理解白板和裁判非常重要：它们不是”全局解释器”，而是被 ADM 在当前步骤上下文里读取的局部信号源。
               所以你在主流程里看到白板、裁判、感知，并不是并列模块，而是都被折进了
               <code>ActionExecutionContext</code> 服务当前步骤。
             </p>
+            <div class="callout callout-accent callout-compact">
+              <strong class="callout-label">隐性依赖：</strong><code>DecideNextAction()</code> 每次调用时先执行 <code>commModule.ProcessMessages()</code>，意味着白板和裁判事件的消息处理依赖 Agent 的周期性决策节拍——若 Agent 停止决策，消息也将停止被处理。
+            </div>
           </div>
         </details>
       </div>
@@ -2062,7 +2285,7 @@
         <article class="node-card">
           <h3>涉及函数</h3>
           <ul>
-            <li><code>ActionDecisionModule.RunRollingLoop()</code></li>
+            <li><code>ActionDecisionModule.RunRollingLoop()</code> <span style="font-size:11px; color:#af6b14; font-family:'Cascadia Mono','Consolas',monospace;">maxTokens:900</span></li>
             <li><code>BuildRollingPrompt()</code></li>
             <li><code>WriteC3MutexClaims()</code></li>
             <li><code>WriteWhiteboardIntentSignals()</code></li>
@@ -2156,8 +2379,12 @@
             <ul>
               <li>C2：通过 <code>DoneSignal</code> + <code>WaitForC2Sync()</code> 实现组内同步。</li>
               <li>C3 sign=-1：通过白板占位 + 提示词注入，让 LLM 主动避开已被占的目标。</li>
-              <li>白板不是替 LLM 决策，而是给 LLM 提供“别人已经在做什么”的上下文。</li>
+              <li>白板不是替 LLM 决策，而是给 LLM 提供”别人已经在做什么”的上下文。</li>
             </ul>
+            <div class="callout callout-risk">
+              <strong class="callout-label">⚠️ 超时过滤：</strong>SharedWhiteboard 有 <code>defaultStaleSeconds=10f</code>（Inspector 可调）的自动过滤机制。超时条目在 <code>QueryEntries()</code>/<code>HasSignal()</code> 时被自动过滤，相当于信号自动失效。<br>
+              这直接影响 C3 sign=+1 的等待可靠性：若发出 ReadySignal 的 Agent 在 10 秒内未刷新，等待方会误判”信号不存在”，导致 C3 等待逻辑静默失效。建议写入 ReadySignal 时启动定时刷新协程（每 5 秒写一次）。
+            </div>
           </div>
         </details>
       </div>
@@ -2215,12 +2442,17 @@
               当前代码确实有 <code>RefereeManager</code>、<code>RefereeEvent</code> 和
               <code>ReadRefereeContext()</code>，但在整个项目搜索里，没有看到
               <code>RefereeManager.RegisterAgent()</code> 或 <code>BroadcastEvent()</code> 的真实调用落地。
-              这意味着 ADM 的“读取裁判事件”入口已经写好，但真正把事件送进来的人还没接上。
+              这意味着 ADM 的”读取裁判事件”入口已经写好，但真正把事件送进来的人还没接上。
             </p>
             <ul>
               <li>结论：裁判不是不存在，而是处于半接入状态。</li>
-              <li>文档表达：只能写“预留读取点 + 主链未闭环”，不能写成“裁判已参与所有竞争/对抗决策”。</li>
+              <li>文档表达：只能写”预留读取点 + 主链未闭环”，不能写成”裁判已参与所有竞争/对抗决策”。</li>
             </ul>
+            <p class="detail-note">
+              除被动推送（RegisterAgent + BroadcastEvent → callback）外，RefereeManager 还提供
+              <code>PollEvents(agentId, ackPolicy)</code> 主动轮询接口。ADM 可在每次 rolling loop 迭代前主动拉取未读事件，
+              两种接线方式可并用。此外，任务结束时应调用 <code>UnregisterAgent(agentId)</code> 清理注册。
+            </p>
           </div>
         </details>
 
@@ -2279,17 +2511,27 @@
           </summary>
           <div class="details-body">
             <p>
-              如果要把“博弈论相关”做成真正影响动作输出的功能，阶段 7 是最关键的第二个插入点。
+              如果要把”博弈论相关”做成真正影响动作输出的功能，阶段 7 是最关键的第二个插入点。
               因为这里才第一次同时看到：当前步骤、环境事实、队友状态、对手事实和候选动作。
             </p>
             <ul>
               <li>竞争任务：可用局部 Nash / 潜在博弈思想，让多个成员围绕共享资源做稳定目标选择。</li>
               <li>对抗任务：可用 Markov Games 建模多轮追逃；可用 Nash Q-learning 处理一般和局博弈。</li>
-              <li>有明确先手方的追捕/防逃：可用 Stackelberg 视角建模“先布防，后响应”。</li>
+              <li>有明确先手方的追捕/防逃：可用 Stackelberg 视角建模”先布防，后响应”。</li>
             </ul>
+            <p><strong>【方法原理】</strong>Markov Games（Littman 1994）是多智能体 MDP 推广：状态由所有 Agent 的联合状态组成，每个 Agent 有独立奖励函数，动作组合决定状态转移。Nash Q-Learning（Hu &amp; Wellman 2003）在每步计算 Nash 均衡来更新 Q 值，能处理非零和博弈，适合竞争场景中多方争抢资源时的稳定策略学习。</p>
+            <p><strong>【为何适合本节点】</strong>滚动决策循环（RunRollingLoop）是实时响应对手的关键环节，当前 LLM 每轮独立决策，没有对手模型。引入 Markov Games 框架可让 Agent 在决策时考虑对手的理性响应。</p>
+            <p><strong>【具体实现步骤】</strong></p>
+            <ol class="detail-steps">
+              <li>在 ReadRefereeContext() 后增加”对手状态建模”：根据裁判事件和感知事件估算对手位置概率分布</li>
+              <li>在 BuildRollingPrompt() 中注入对手模型描述：”对手估计在 X 区，置信度 0.7，上一轮动作为 MoveTo(南门)”</li>
+              <li>定义简化状态空间：(自身位置区域, 目标占用状态, 对手位置区域)，枚举有限</li>
+              <li>在每次竞争任务仿真后用 Nash Q-Learning 更新 Q-table，后续仿真中 BuildRollingPrompt() 查表得到”Nash 建议动作”作为 LLM 决策的软约束</li>
+              <li>对竞争资源选择，定义潜在函数 = 总体任务完成收益 - 冲突惩罚，每个成员在 WriteC3MutexClaims() 时选择能最大化潜在函数增量的目标</li>
+            </ol>
             <div class="meta-note">
-              这也是为什么博弈论不该被单独讲成“另一个模块”：它最自然的落点就是
-              <code>RunRollingLoop()</code> 里“读上下文 -> 生成 nextActions”这一跳。
+              这也是为什么博弈论不该被单独讲成”另一个模块”：它最自然的落点就是
+              <code>RunRollingLoop()</code> 里”读上下文 -> 生成 nextActions”这一跳。
             </div>
           </div>
         </details>
@@ -2447,6 +2689,100 @@ adm.CompleteCurrentAction();</code></pre>
       </div>
     </section>
 
+    <!-- Memory & Reflection 章节 -->
+    <section class="chapter" id="memory-reflection">
+      <div class="chapter-header">
+        <div class="chapter-title-wrap">
+          <div class="chapter-tag">支撑模块</div>
+          <h2>Memory &amp; Reflection 模块</h2>
+          <p>MemoryModule 和 ReflectionModule 在主链中的位置与调用时机</p>
+        </div>
+      </div>
+
+      <div class="node-grid">
+        <div class="node-card" style="padding: 16px; min-width: 0;">
+          <div style="font-size: 11px; color: #146c7f; font-family: 'Cascadia Mono','Consolas',monospace; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px;">MemoryModule</div>
+          <div style="font-size: 13px; line-height: 1.7; color: #1f2a33;">
+            <strong>Remember() / StoreMemory(Memory m)</strong>：统一入库入口，自动补齐默认值、去空字段、做容量裁剪（maxMemoryCount=512，LRU 淘汰）<br>
+            <strong>RememberPlanSnapshot(missionId, slotId, stepLabel, planSummary, targetRef)</strong>：专用于 PlanningModule 在 Active 阶段写入计划快照（此方法此前未在 HTML 中记录）<br>
+            <strong>检索接口</strong>：通过 ReflectionModule.GetActionGuidance() 间接查询，返回可注入 BuildRollingPrompt() 的规则文本<br>
+            <strong>时效管理</strong>：freshnessWindowHours=72f（默认72小时），超期记忆在检索时被过滤
+          </div>
+        </div>
+        <div class="node-card" style="padding: 16px; min-width: 0;">
+          <div style="font-size: 11px; color: #a84d2f; font-family: 'Cascadia Mono','Consolas',monospace; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px;">ReflectionModule</div>
+          <div style="font-size: 13px; line-height: 1.7; color: #1f2a33;">
+            <strong>触发条件（三个入口）：</strong><br>
+            <code>NotifyActionOutcome()</code>：相同动作连续失败 ≥ repeatedFailureThreshold（默认2次），原因 = RepeatedFailure<br>
+            <code>NotifyBlocked()</code>：Agent 进入 Blocked 状态，原因 = Blocked<br>
+            <code>NotifyImportantObservation()</code>：感知到重要异常事件，原因 = ImportantObservation（此入口此前未在 HTML 中记录）<br>
+            <strong>冷却机制</strong>：reflectionCooldownSeconds = 90f，防止高频反思<br>
+            <strong>查询接口</strong>：GetActionGuidance(missionText, missionId, slotId, stepText, targetRef, maxInsights=2)<br>
+            <strong>当前接线状态</strong>：三个触发入口接口完整，但主链（ADM/PlanningModule）中显式调用这三个 Notify 方法的位置尚未确认
+          </div>
+        </div>
+        <div class="node-card" style="padding: 16px; min-width: 0;">
+          <div style="font-size: 11px; color: #245d52; font-family: 'Cascadia Mono','Consolas',monospace; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px;">接入建议</div>
+          <div style="font-size: 13px; line-height: 1.7; color: #1f2a33;">
+            在 ActionDecisionModule.RunRollingLoop() 每轮结束时调用 MemoryModule.StoreMemory(stepResult)<br>
+            在 BuildRollingPrompt() 开头调用 GetRelevantInsights() 并拼接到 prompt 头部<br>
+            在 Agent 进入 Blocked 状态时触发 ReflectionModule.Reflect()
+          </div>
+        </div>
+      </div>
+
+      <div style="padding: 16px; background: rgba(125, 74, 163, 0.07); border-radius: 12px; border: 1px solid rgba(125, 74, 163, 0.18); font-size: 13px; line-height: 1.8; color: #1f2a33;">
+        <strong style="color: #7d4aa3;">当前接线状态：</strong>MemoryModule 已在 PlanningModule.Start() 通过 GetComponent&lt;MemoryModule&gt;() 取到引用，但该 memory 字段在后续状态机方法中尚无实际调用点。ReflectionModule.GetActionGuidance() 的返回结果未被注入到 BuildRollingPrompt()。<br>
+        <strong style="color: #7d4aa3;">建议补入点：</strong><br>
+        1. PlanningModule 进入 Active 状态时调用 <code>memory.RememberPlanSnapshot(missionId, slotId, stepLabel, ...)</code><br>
+        2. RunRollingLoop() 每轮结束后调用 <code>memory.Remember(AgentMemoryKind.Action, stepDescription, ...)</code><br>
+        3. ADM 的 CompleteCurrentStep() 调用 <code>reflection.NotifyActionOutcome(success, actionDescription)</code><br>
+        4. Agent 进入阻塞时调用 <code>reflection.NotifyBlocked(reason)</code>
+      </div>
+    </section>
+
+    <!-- 容错与鲁棒性章节 -->
+    <section class="chapter" id="robustness">
+      <div class="chapter-header">
+        <div class="chapter-title-wrap">
+          <div class="chapter-tag">容错机制</div>
+          <h2>容错与鲁棒性</h2>
+          <p>LLM 调用失败、超时、重规划上限等边界情况的处理建议</p>
+        </div>
+      </div>
+      <table class="field-table">
+        <thead>
+          <tr>
+            <th>场景</th>
+            <th>当前代码</th>
+            <th>建议补全</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>RunLLM1/2/4 超时或返回非法 JSON</td>
+            <td>WaitSec=25f 超时存在，但失败回退不完整</td>
+            <td>最多重试2次，重试时在 prompt 附加"上次输出不合法，原因：{error}"；超限后写入 Failed 状态并记录原因</td>
+          </tr>
+          <tr>
+            <td>ActionDecisionModule MaxIterations=10 超限</td>
+            <td>死锁防护已有，但超限后退出路径未文档化</td>
+            <td>超限后触发 PlanningModule 重规划（而非直接失败），把"已执行步骤摘要"作为上下文传入新一轮 RunLLM4</td>
+          </tr>
+          <tr>
+            <td>MaxReplanCount=5 重规划上限</td>
+            <td>上限字段存在，但触发条件和处理流程未文档化</td>
+            <td>明确触发条件（步骤失败次数、感知中断、裁判事件）和超限后的优雅退出路径（任务标记为 Abandoned，汇报给上层调度）</td>
+          </tr>
+          <tr>
+            <td>CheckTimeout() 超时进入 Failed 无广播</td>
+            <td>WaitSec=25f 每帧轮询，超时直接进入 Failed，busy 重置</td>
+            <td>超时后未广播 GroupBroadcast 失败通知，也未为超时成员补充分配新槽位，导致整组任务可能陷入等待死锁。建议：超时时广播一条含退出原因的通信消息，并调用 memory.Remember() 记录超时事件</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
     <section class="review-summary" id="review">
       <h2>代码审阅结论汇总</h2>
       <div class="review-list">
@@ -2458,6 +2794,16 @@ adm.CompleteCurrentAction();</code></pre>
             <code>RefereeManager.RegisterAgent()</code> 与 <code>BroadcastEvent()</code> 的实际接线，
             因此不能把裁判写成当前已闭环主链。
           </p>
+          <p class="detail-note">
+            最小接线方案（三步闭环）：<br>
+            1. 在 AgentLLMControl.Start() 或 IntelligentAgent.InitializeAgent() 中调用 RefereeManager.Instance.RegisterAgent(agentId, callback)，完成 Agent 注册<br>
+            2. 在 AgentMotionExecutor.DoMoveTo() 到达目标后，若目标是资源点，调用 RefereeManager.Instance.BroadcastEvent(ResourceClaimed, agentId, resourceId)<br>
+            3. 在 IntelligentAgent.OnEliminated() 中调用 BroadcastEvent(AgentEliminated, agentId)<br>
+            以上三步构成裁判完整闭环的最小可验证路径。
+          </p>
+          <div class="callout callout-success">
+            <strong class="callout-label">验收标准：</strong>创建单 Agent 场景，手动调用 <code>RefereeManager.Instance.BroadcastEvent(ResourceClaimed, agentId, resourceId)</code>，确认 ADM 的 <code>ReadRefereeContext()</code> 返回非空字符串，且该轮 rolling loop 的 LLM prompt 包含该事件描述。
+          </div>
         </div>
         <div class="review-item">
           <strong>R2 · C3 正向等待只做了读，没有做写</strong>
@@ -2465,13 +2811,32 @@ adm.CompleteCurrentAction();</code></pre>
             <code>CheckC3WaitConditions()</code> 会等 <code>ReadySignal</code>，
             但项目中未搜到 <code>ReadySignal</code> 的实际写入点，所以 sign=+1 的完整语义没有真正闭环。
           </p>
+          <p class="detail-note">
+            补写 ReadySignal 写入点方案：<br>
+            1. 在 RunRollingLoop() 中，当 ADM 判断当前步骤进入"就绪等待"状态时（如抵达集合点后），写入 WhiteboardEntryType.ReadySignal<br>
+            2. 在 WriteWhiteboardIntentSignals() 里，当 C3 sign=+1 且当前步骤是等待类步骤时，自动生成 ReadySignal<br>
+            3. 测试方法：创建 C3 sign=+1 的两 Agent 场景，Agent A 等待 Agent B 的 ReadySignal，验证 B 在抵达指定位置后正确写入
+          </p>
+          <div class="callout callout-success">
+            <strong class="callout-label">验收标准：</strong>两 Agent 场景（C3 sign=+1），Agent B 抵达集合点后写入 <code>WhiteboardEntryType.ReadySignal</code>，确认 Agent A 的 C3 等待条件从"返回 Wait 动作"变为"返回 null（可继续执行下一步）"。
+          </div>
         </div>
         <div class="review-item">
           <strong>R3 · 感知驱动重规划仍是 TODO</strong>
           <p>
             <code>pendingPerceptionEvents</code> 队列和 <code>OnPerceptionEvent()</code> 已接入，
-            但 <code>HandlePendingPerceptionEvents()</code> 仍未实现，导致“看到敌人后重规划”还停在预埋状态。
+            但 <code>HandlePendingPerceptionEvents()</code> 仍未实现，导致”看到敌人后重规划”还停在预埋状态。
           </p>
+          <p class="detail-note">
+            感知驱动重规划实现建议：<br>
+            1. 在 RunRollingLoop() 每轮开始检查 pendingPerceptionEvents 队列<br>
+            2. 若发现高优先级事件（如发现敌方/障碍），立即终止当前动作批次，重构 ActionExecutionContext<br>
+            3. 把感知事件摘要注入 executedActionsSummary，让 LLM 在下一轮感知更新后的上下文中重新规划<br>
+            4. 引入”响应等级”：轻微更新（仅注入上下文，继续当前步骤）vs 完整重规划（清空 actionQueue，回到 RunLLM4 重新拆解步骤）
+          </p>
+          <div class="callout callout-success">
+            <strong class="callout-label">验收标准：</strong>向 ADM 注入一个高优先级感知事件（敌方发现），确认 <code>pendingPerceptionEvents</code> 队列被消费、<code>actionQueue</code> 被清空，下一轮 <code>RunRollingLoop()</code> 的 LLM prompt 包含该感知事件描述。
+          </div>
         </div>
         <div class="review-item">
           <strong>R4 · 旧约束文档与当前代码不一致</strong>
@@ -2551,6 +2916,11 @@ adm.CompleteCurrentAction();</code></pre>
           <p>用于支撑白板在协同系统中的时间一致性、并发读写与多访问协议建议。</p>
           <a href="https://doi.org/10.1016/0169-023X(95)00007-F" target="_blank" rel="noopener">https://doi.org/10.1016/0169-023X(95)00007-F</a>
         </article>
+        <article class="source-card" style="padding: 16px;">
+          <strong style="display: block; margin-bottom: 6px; font-size: 12px; color: #245d52; font-family: 'Cascadia Mono','Consolas',monospace;">HTN Planning</strong>
+          <p style="margin: 0 0 8px; font-size: 13px; line-height: 1.6; color: #5c6b72;">SHOP2: An HTN Planning System — Nau et al. (2003). 支撑阶段5（步骤拆解）引入伪 HTN 格式约束 LLM#4 输出结构，保证 C2/C3 约束绑定到正确步骤。</p>
+          <a href="https://doi.org/10.1613/jair.1141" style="font-size: 11px; font-family: 'Cascadia Mono','Consolas',monospace; word-break: break-all;">JAIR 2003 · doi:10.1613/jair.1141</a>
+        </article>
       </div>
       <p class="footnote">
         这些来源在本页里只用于支持“为什么这个节点适合这样优化”，没有把论文中的完整方案硬套到现有代码上。
@@ -2574,11 +2944,77 @@ adm.CompleteCurrentAction();</code></pre>
       });
     });
   }, {
-    rootMargin: "-20% 0px -70% 0px",
+    rootMargin: "-10% 0px -85% 0px",
     threshold: 0
   });
 
   sections.forEach((section) => observer.observe(section));
+
+  // Fix: dynamic arrows for details/summary + max-height animation (A4)
+  (function() {
+    function initArrows() {
+      document.querySelectorAll('details').forEach(function(details) {
+        var summary = details.querySelector('summary');
+        var arrow = summary ? summary.querySelector('.summary-arrow') : null;
+        var body = details.querySelector('.details-body');
+        if (arrow) {
+          arrow.textContent = details.open ? '▼' : '▶';
+        }
+        // Set initial max-height based on open state
+        if (body) {
+          body.style.maxHeight = details.open ? body.scrollHeight + 'px' : '0';
+        }
+        details.addEventListener('toggle', function() {
+          var a = details.querySelector('summary .summary-arrow');
+          if (a) a.textContent = details.open ? '▼' : '▶';
+          var b = details.querySelector('.details-body');
+          if (b) {
+            b.style.maxHeight = details.open ? b.scrollHeight + 'px' : '0';
+          }
+        });
+      });
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initArrows);
+    } else {
+      initArrows();
+    }
+  })();
+
+  // Expand-all / collapse-all (B3)
+  document.getElementById('btn-expand-all')?.addEventListener('click', () => {
+    document.querySelectorAll('details').forEach(d => { d.open = true; });
+  });
+  document.getElementById('btn-collapse-all')?.addEventListener('click', () => {
+    document.querySelectorAll('details').forEach(d => { d.open = false; });
+  });
+
+  // Back-to-top (B4)
+  const backToTop = document.getElementById('back-to-top');
+  if (backToTop) {
+    window.addEventListener('scroll', () => {
+      backToTop.style.display = window.scrollY > 600 ? 'flex' : 'none';
+      backToTop.style.alignItems = 'center';
+      backToTop.style.justifyContent = 'center';
+    });
+    backToTop.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+  }
+
+  // Copy buttons for code blocks (B5)
+  document.querySelectorAll('pre').forEach(pre => {
+    const btn = document.createElement('button');
+    btn.className = 'copy-btn';
+    btn.textContent = '复制';
+    btn.addEventListener('click', () => {
+      const code = pre.querySelector('code');
+      navigator.clipboard.writeText(code ? code.textContent : pre.textContent).then(() => {
+        btn.textContent = '已复制';
+        setTimeout(() => { btn.textContent = '复制'; }, 1500);
+      });
+    });
+    pre.appendChild(btn);
+  });
 </script>
+<button id="back-to-top" title="回到顶部" style="display:none; position:fixed; bottom:28px; right:28px; width:44px; height:44px; border-radius:50%; border:1px solid rgba(47,66,73,0.14); background:rgba(255,252,245,0.92); color:#146c7f; font-size:18px; cursor:pointer; box-shadow:0 4px 16px rgba(34,44,52,0.12); backdrop-filter:blur(8px); transition:opacity 0.2s;">↑</button>
 </body>
 </html>

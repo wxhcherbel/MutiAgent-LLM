@@ -41,7 +41,7 @@ public class PlanningModule : MonoBehaviour
     // ─── 步骤执行 ─────────────────────────────────────────────
     private AgentPlan agentPlan;
 
-    // ─── 结构化约束字典（由 OnGroupBootstrap 填充）────────────
+    // ─── 结构化约束字典(由 OnGroupBootstrap 填充)────────────
     private Dictionary<string, StructuredConstraint> _constraintDict
         = new Dictionary<string, StructuredConstraint>();
 
@@ -118,49 +118,50 @@ public class PlanningModule : MonoBehaviour
             "你是多智能体任务规划器。请将任务解析为合法 JSON 对象。\n\n" +
             $"任务:{desc}\n" +
             $"智能体数量:{cnt}\n\n" +
-            "─── 第一步：判断 relType ───\n" +
+            "─── 第一步:判断 relType ───\n" +
             "  Cooperation=同队协作  Competition=多队竞争同目标\n" +
             "  Adversarial=多队目标对立  Mixed=多队各有目标\n" +
-            "  Cooperation 时 groupCnt=1；Competition/Adversarial/Mixed 时 groupCnt≥2。\n\n" +
+            "  Cooperation 时 groupCnt=1;Competition/Adversarial/Mixed 时 groupCnt≥2。\n\n" +
 
-            "─── 第二步：提取协同约束 constraints[] ───\n" +
-            "按以下三种类型逐一检查任务描述，凡是任务中出现对应语义均须生成一条约束。\n" +
-            "同一任务可能同时包含多种类型，数组可有多条，不得遗漏。\n\n" +
-            "每条约束必须包含 groupScope 字段，规则：\n" +
-            "  C1/C2/C3（组内协同）→ groupScope = 所属组的序号（单组任务填 0；多组时填 0/1/2...）\n\n" +
-            "【C1 资源分配】识别标志：任务中明确指定"谁负责什么目标/区域/资源"，或暗含分工避免重复。\n" +
-            "  subject=执行者角色描述（此时不知道 agentId，填角色名如'侦察机'或留空''）\n" +
-            "  targetObject=被分配的目标/区域名称  exclusive=是否独占（通常为 true）\n" +
+            "─── 第二步:提取协同约束 constraints[] ───\n" +
+            "按以下三种类型逐一检查任务描述,凡是任务中出现对应语义均须生成一条约束。\n" +
+            "同一任务可能同时包含多种类型,数组可有多条,不得遗漏。\n\n" +
+            "每条约束必须包含 groupScope 字段,规则:\n" +
+            "  C1/C2/C3(组内协同)→ groupScope = 所属组的序号(单组任务填 0;多组时填 0/1/2...)\n\n" +
+            "【C1 资源分配】识别标志:任务中明确指定\" 谁负责什么目标/区域/资源\",或暗含分工避免重复。\n" +
+            "  subject=执行者角色描述(此时不知道 agentId,填角色名如'侦察机'或留空'')\n" +
+            "  targetObject=被分配的目标/区域名称  exclusive=是否独占(通常为 true)\n" +
             "  channel=direct\n\n" +
-            "【C2 完成同步】识别标志：任务要求多机"都完成后一起…""同步…""统一…"等，强调集体完成再进行下一步。\n" +
+            "【C2 完成同步】识别标志:任务要求多机\"都完成后一起…\"\"同步…\"\"统一…\"等,强调集体完成再进行下一步。\n" +
             "  condition=同步完成的条件描述\n" +
-            "  syncWith=需要等待其写入完成信号的其他 agentId 列表（此阶段不知道 agentId，填 []）\n" +
+            "  syncWith=需要等待其写入完成信号的其他 agentId 列表(此阶段不知道 agentId,填 [])\n" +
             "  channel=whiteboard\n\n" +
-            "【C3 行为耦合】两种子类型，只在存在明确的等待/互斥关系时才生成，纯并行不需要 C3：\n" +
-            "  sign=+1（单向前置等待）：一机必须等另一机到位/就绪后才允许开始行动（非对称依赖）。\n" +
-            "    watchAgent=被等待的 agentId（不知道时填 ''）  reactTo='ReadySignal'\n" +
-            "  sign=-1（动态互斥）：多 agent 运行时动态争夺同一目标，先到先得，后到者等待。\n" +
-            "    不需要提前指定目标名，由 ADM 在决策时从白板读取已占目标。\n" +
-            "    与 C1 区别：C1 是静态分配（规划时决定谁用什么），C3-1 是运行时动态抢占（任何一方可先到）。\n" +
-            "    watchAgent=竞争方 agentId（不知道时填 ''）  reactTo='IntentAnnounce'\n" +
+            "【C3 行为耦合】两种子类型,只在存在明确的等待/互斥关系时才生成,纯并行不需要 C3:\n" +
+            "  sign=+1(单向前置等待):一机必须等另一机到位/就绪后才允许开始行动(非对称依赖)。\n" +
+            "    watchAgent=被等待的 agentId(不知道时填 '')  reactTo='ReadySignal'\n" +
+            "  sign=-1(动态互斥):多 agent 运行时动态争夺同一目标,先到先得,后到者等待。\n" +
+            "    不需要提前指定目标名,由 ADM 在决策时从白板读取已占目标。\n" +
+            "    与 C1 区别:C1 是静态分配(规划时决定谁用什么),C3-1 是运行时动态抢占(任何一方可先到)。\n" +
+            "    参与互斥的成员由后续绑定到同一 constraintId 的槽位/步骤共同决定。\n" +
+            "    watchAgent 保持空字符串 ''  reactTo='IntentAnnounce'\n" +
             "  channel=whiteboard\n\n" +
             GetConciseTextPromptText() + "\n" +
 
             "─── 输出要求 ───\n" +
-            "1. 输出内容仅包含 JSON，所有字符串字段不得为 null（不知道时填空字符串 ''）。\n" +
-            "2. 每条约束必须包含字段：constraintId / cType / channel，以及对应类型的专用字段。\n" +
-            "3. 不相关类型的专用字段可省略或填默认值（bool=false, int=0, string='', array=[]）。\n" +
-            "4. timeLimit 为秒数，无限制时填 0。\n\n" +
+            "1. 输出内容仅包含 JSON,所有字符串字段不得为 null(不知道时填空字符串 '')。\n" +
+            "2. 每条约束必须包含字段:constraintId / cType / channel,以及对应类型的专用字段。\n" +
+            "3. 不相关类型的专用字段可省略或填默认值(bool=false, int=0, string='', array=[])。\n" +
+            "4. timeLimit 为秒数,无限制时填 0。\n\n" +
             
-            "─── 示例（含全部三类约束 + C3 两种子类型）───\n" +
-            "输入任务：三架无人机协作侦察。A机负责东区，B机负责西区（两机区域独占不重叠）；" +
-            "B机须等A机完成起飞检查发出就绪信号后才允许起飞；" +
-            "A和B均完成侦察后同步向指挥部回传坐标；" +
-            "A与B侦察途中如需使用同一充电桩，只能一架先用，另一架等待。\n" +
+            "─── 示例(含全部三类约束 + C3 两种子类型)───\n" +
+            "输入任务:三架无人机协作侦察。A机负责东区,B机负责西区(两机区域独占不重叠);" +
+            "B机须等A机完成起飞检查发出就绪信号后才允许起飞;" +
+            "A和B均完成侦察后同步向指挥部回传坐标;" +
+            "A与B侦察途中如需使用同一充电桩,只能一架先用,另一架等待。\n" +
             "{\n" +
             "  \"relType\": \"Cooperation\",\n" +
             "  \"groupCnt\": 1,\n" +
-            "  \"groupMsns\": [\"A侦察东区，B侦察西区，完成后同步回传坐标\"],\n" +
+            "  \"groupMsns\": [\"A侦察东区,B侦察西区,完成后同步回传坐标\"],\n" +
             "  \"timeLimit\": 0,\n" +
             "  \"constraints\": [\n" +
             "    {\"constraintId\":\"c1_area_east\",\"cType\":\"C1\",\"channel\":\"direct\",\"groupScope\":0,\"subject\":\"侦察机A\",\"targetObject\":\"东区\",\"exclusive\":true},\n" +
@@ -170,10 +171,10 @@ public class PlanningModule : MonoBehaviour
             "    {\"constraintId\":\"c2_sync_report\",\"cType\":\"C2\",\"channel\":\"whiteboard\",\"groupScope\":0,\"condition\":\"A和B均完成侦察后同步回传坐标\",\"syncWith\":[]}\n" +
             "  ]\n" +
             "}\n\n" +
-            "注意：\n" +
-            "· c3_b_wait_a_ready (sign=+1)：B单向等待A就绪，watchAgent 填 '' 因运行时才知道 agentId。\n" +
-            "· c3_charger_mutex (sign=-1)：动态互斥，无需填 mutexTarget，被占目标由白板运行时记录（ADM 写 IntentAnnounce.progress）。\n" +
-            "· c2_sync_report 中 syncWith 填 []，由运行时确定等待对象。";
+            "注意:\n" +
+            "· c3_b_wait_a_ready (sign=+1):B单向等待A就绪,watchAgent 填 '' 因运行时才知道 agentId。\n" +
+            "· c3_charger_mutex (sign=-1):动态互斥,被占目标由白板运行时记录(ADM 写 IntentAnnounce.progress)。\n" +
+            "· c2_sync_report 中 syncWith 填 [],由运行时确定等待对象。";
 
         string llmResult = null;
         yield return StartCoroutine(llm.SendRequest(prompt, r => llmResult = r, maxTokens: 1200));
@@ -217,66 +218,98 @@ public class PlanningModule : MonoBehaviour
         int memberCount = myGroup.memberIds.Length;
         string roleTypes = string.Join("、", Enum.GetNames(typeof(RoleType)));
 
-        // 分类整理约束：C1（分配类）单独提取，其余约束以 ID 列表提供
-        var c1Constraints = new List<StructuredConstraint>();
-        var otherConstraintIds = new List<string>();
-        foreach (var kv in _constraintDict)
-        {
-            if (kv.Value.cType == "C1" || kv.Value.cType == "Assignment")
-                c1Constraints.Add(kv.Value);
-            else
-                otherConstraintIds.Add(kv.Key);
-        }
-        string c1Json = c1Constraints.Count > 0
-            ? JsonConvert.SerializeObject(c1Constraints)
+        StructuredConstraint[] visibleConstraints = ExportConstraints();
+        string constraintsJson = visibleConstraints.Length > 0
+            ? JsonConvert.SerializeObject(visibleConstraints)
             : "[]";
-        string otherIds = otherConstraintIds.Count > 0
-            ? string.Join("、", otherConstraintIds)
-            : "（无）";
 
         string prompt =
-            "你是多智能体任务组长。为本组生成计划槽 JSON 数组。\n\n" +
+            "你是多智能体任务组长。\n" +
+            "请做两件事:\n" +
+            "1. 为本组生成计划槽 slots。\n" +
+            "2. 回写约束 constraints 中的槽位引用。\n\n" +
             $"组任务:{myGroup.mission}\n" +
-            $"成员数:{memberCount}\n\n" +
-            "─── C1 资源分配约束（生成 desc 时必须遵守）───\n" +
-            $"{c1Json}\n" +
-            "说明：若某条 C1 约束的 subject 非空，对应槽的 desc 必须承担该 subject 指定的 targetObject 任务。\n" +
-            "      若 subject 为空（任务中未指定具体执行者），则由你自行合理分配，但每个 targetObject 只能分配给一个槽。\n\n" +
-            "─── 其他约束 ID（constraintIds 字段引用用）───\n" +
-            $"{otherIds}\n\n" +
+            $"成员数:{memberCount}\n" +
+            $"可选角色:{roleTypes}\n\n" +
+            "输入约束(StructuredConstraint JSON):\n" +
+            $"{constraintsJson}\n\n" +
+            "规则:\n" +
+            "1. 输出一个 JSON 对象,包含 slots 和 constraints。\n" +
+            $"2. slots 数量必须等于 {memberCount}。\n" +
+            "3. slotId 用 s0、s1、s2 ...\n" +
+            "4. desc 只写该成员自己的行动。\n" +
+            "5. desc 要覆盖完整任务,不要漏动作。\n" +
+            "6. 相同 role 的多个槽,desc 也要体现不同分工。\n" +
+            "7. doneCond 没有时填 \" \"。\n" +
+            "8. constraintIds 填适用于该槽的 constraintId。没有就填 []。\n" +
+            "9. constraints 必须保留输入中的每一条 constraintId。不要新增,不要删除。\n" +
+            "10. C1:把对应 constraintId 绑定到正确槽位。\n" +
+            "11. C3 sign=+1:同一 constraintId 要同时绑定到等待方槽位和 watchAgent 槽位。\n" +
+            "12. C3 sign=+1:watchAgent 写成被等待槽位的 slotId。\n" +
+            "13. C3 sign=-1:把同一 constraintId 绑定到所有会竞争同一共享资源/目标的槽位。\n" +
+            "14. C3 sign=-1:watchAgent 保持空字符串,参与者由绑定范围决定。\n" +
+            "15. C2:把 syncWith 写成参与同步的 slotId 数组。可以包含自己。\n" +
+            "16. 除 watchAgent 和 syncWith 外,其他字段尽量保持原语义。\n" +
+            "17. 如果无法判断等待/同步对象,才允许留空。\n\n" +
             GetConciseTextPromptText() + "\n" +
-            "─── 输出要求 ───\n" +
-            $"1. 只输出 JSON 数组，长度严格等于 {memberCount}。\n" +
-            "2. slotId 唯一，格式 s0、s1 ...\n" +
-            $"3. role 从以下枚举选择:{roleTypes}\n" +
-            "4. desc 覆盖该成员的完整任务序列（含途径点 + 全部动作），不得遗漏。\n" +
-            "5. 若多个成员 role 相同，每个 desc 必须体现各自的具体分工（不同区域/路径/目标），不得完全一致。\n" +
-            "6. doneCond：完成条件，没有时填 \" \"。\n" +
-            "7. desc 只描述本成员自己的行动，不描述与队友的协同关系。\n" +
-            "8. constraintIds：字符串数组，从 C1 约束的 constraintId 和其他约束ID中，选择适用于本槽的填入；若无则填 []。\n\n" +
-            "─── 示例（C1 约束指定了分区，C2 约束要求同步）───\n" +
-            "C1约束:[{\"constraintId\":\"c1_area_a\",\"subject\":\"侦察机A\",\"targetObject\":\"南区\"},{\"constraintId\":\"c1_area_b\",\"subject\":\"侦察机B\",\"targetObject\":\"北区\"}]\n" +
-            "其他约束ID:c2_sync_report\n" +
-            "[\n" +
-            "  {\"slotId\":\"s0\",\"role\":\"Scout\",\"desc\":\"从出发点飞往南区执行搜索\",\"doneCond\":\"南区搜索完成\",\"constraintIds\":[\"c1_area_a\",\"c2_sync_report\"]},\n" +
-            "  {\"slotId\":\"s1\",\"role\":\"Scout\",\"desc\":\"从出发点飞往北区执行搜索\",\"doneCond\":\"北区搜索完成\",\"constraintIds\":[\"c1_area_b\",\"c2_sync_report\"]}\n" +
+            "输出格式:\n" +
+            "{\n" +
+            "  \"slots\": [PlanSlot, ...],\n" +
+            "  \"constraints\": [StructuredConstraint, ...]\n" +
+            "}\n\n" +
+            "示例:\n" +
+            "任务描述:两架无人机协作执行任务。侦察机A前往南区搜索并发出就绪信号,侦察机B收到A的就绪信号后前往北区搜索;若两机都需要使用共享充电点,谁先到谁先使用;两者完成后同步回传。\n" +
+            "输入 constraints:\n" +
+            "[" +
+            "{\"constraintId\":\"c1_area_a\",\"cType\":\"C1\",\"subject\":\"侦察机A\",\"targetObject\":\"南区\"}," +
+            "{\"constraintId\":\"c2_sync_report\",\"cType\":\"C2\",\"channel\":\"whiteboard\",\"condition\":\"南北区都完成后同步回传\",\"syncWith\":[]}," +
+            "{\"constraintId\":\"c3_wait_cover\",\"cType\":\"C3\",\"channel\":\"whiteboard\",\"sign\":1,\"watchAgent\":\"\",\"reactTo\":\"ReadySignal\"}," +
+            "{\"constraintId\":\"c3_charge_mutex\",\"cType\":\"C3\",\"channel\":\"whiteboard\",\"sign\":-1,\"watchAgent\":\"\",\"reactTo\":\"IntentAnnounce\"}" +
             "]\n" +
-            "注意：s0 的 desc 体现了 c1_area_a 规定的南区分配；s1 的 desc 体现了 c1_area_b 规定的北区分配。";
+            "输出:\n" +
+            "{\n" +
+            "  \"slots\": [\n" +
+            "    {\"slotId\":\"s0\",\"role\":\"Scout\",\"desc\":\"飞往南区执行搜索,需要时前往共享充电点补能\",\"doneCond\":\"南区搜索完成\",\"constraintIds\":[\"c1_area_a\",\"c2_sync_report\",\"c3_wait_cover\",\"c3_charge_mutex\"]},\n" +
+            "    {\"slotId\":\"s1\",\"role\":\"Scout\",\"desc\":\"飞往北区执行搜索,需要时前往共享充电点补能\",\"doneCond\":\"北区搜索完成\",\"constraintIds\":[\"c2_sync_report\",\"c3_wait_cover\",\"c3_charge_mutex\"]}\n" +
+            "  ],\n" +
+            "  \"constraints\": [\n" +
+            "    {\"constraintId\":\"c1_area_a\",\"cType\":\"C1\",\"subject\":\"侦察机A\",\"targetObject\":\"南区\"},\n" +
+            "    {\"constraintId\":\"c2_sync_report\",\"cType\":\"C2\",\"channel\":\"whiteboard\",\"condition\":\"南北区都完成后同步回传\",\"syncWith\":[\"s0\",\"s1\"]},\n" +
+            "    {\"constraintId\":\"c3_wait_cover\",\"cType\":\"C3\",\"channel\":\"whiteboard\",\"sign\":1,\"watchAgent\":\"s0\",\"reactTo\":\"ReadySignal\"},\n" +
+            "    {\"constraintId\":\"c3_charge_mutex\",\"cType\":\"C3\",\"channel\":\"whiteboard\",\"sign\":-1,\"watchAgent\":\"\",\"reactTo\":\"IntentAnnounce\"}\n" +
+            "  ]\n" +
+            "}\n" +
+            "注意:sign=+1 时 watchAgent 先写 slotId;sign=-1 时 watchAgent 保持空字符串,参与者由绑定了同一 constraintId 的槽位共同决定。";
         string llmResult = null;
-        yield return StartCoroutine(llm.SendRequest(prompt, r => llmResult = r, maxTokens: 1000));
+        yield return StartCoroutine(llm.SendRequest(prompt, r => llmResult = r, maxTokens: 1400));
 
         if (string.IsNullOrWhiteSpace(llmResult))
         {
             Debug.LogError("[PlanningModule] LLM#2 返回空");
-            busy = false; // BUG-03 修复：失败路径必须重置 busy，否则后续任务无法提交
+            busy = false; // BUG-03 修复:失败路径必须重置 busy,否则后续任务无法提交
             SetState(PlanningState.Failed);
             yield break;
         }
         Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] LLM#2 生成槽原始回复: {llmResult}");
         PlanSlot[] generatedSlots = null;
+        StructuredConstraint[] updatedConstraints = null;
         try
         {
-            generatedSlots = JsonConvert.DeserializeObject<PlanSlot[]>(ExtractJson(llmResult));
+            string json = ExtractJson(llmResult);
+            if (!string.IsNullOrWhiteSpace(json) && json.TrimStart().StartsWith("["))
+            {
+                generatedSlots = JsonConvert.DeserializeObject<PlanSlot[]>(json);
+            }
+            else
+            {
+                LLM2SlotPlanResult result = JsonConvert.DeserializeObject<LLM2SlotPlanResult>(json);
+                generatedSlots = result?.slots;
+                updatedConstraints = result?.constraints;
+            }
+
+            if (generatedSlots == null || generatedSlots.Length == 0)
+                throw new Exception("LLM#2 未返回有效 slots");
+
             Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] LLM#2 生成槽位: {string.Join(", ", generatedSlots.Select(s => s.slotId + ":" + s.role + ":" + s.desc + ":constraintIds=[" + string.Join(",", s.constraintIds ?? new string[0]) + "]"))}");
         }
         catch (Exception e)
@@ -287,6 +320,11 @@ public class PlanningModule : MonoBehaviour
             yield break;
         }
 
+        if (updatedConstraints != null && updatedConstraints.Length > 0)
+            MergeConstraintUpdates(updatedConstraints, "LLM#2 abstract constraint updates");
+        else
+            Debug.LogWarning($"[PlanningModule] {props.AgentID} LLM#2 未返回更新后的 constraints,后续将继续使用 LLM#1 原始约束");
+
         slots = generatedSlots;
 
         // 若组内只有自己,直接跳过广播+选槽,本地分配唯一槽
@@ -294,7 +332,16 @@ public class PlanningModule : MonoBehaviour
         {
             confirmedSlot = slots[0];
             occupiedSlots.Add(slots[0].slotId);
-            OnStartExec(new StartExecPayload { msnId = parsed.msnId, groupId = myGroup.groupId });
+            var singleAssignment = new Dictionary<string, PlanSlot>(StringComparer.OrdinalIgnoreCase)
+            {
+                [props.AgentID] = slots[0]
+            };
+            OnStartExec(new StartExecPayload
+            {
+                msnId = parsed.msnId,
+                groupId = myGroup.groupId,
+                constraints = BuildRuntimeConstraintsForAgent(props.AgentID, singleAssignment)
+            });
             yield break;
         }
 
@@ -403,7 +450,7 @@ public class PlanningModule : MonoBehaviour
         Vector3 pos   = dynState != null ? dynState.Position : transform.position;
         float battery = dynState != null ? dynState.BatteryLevel : 100f;
 
-        // 收集槽位关联的约束对象，供 LLM#4 知晓可引用的约束 ID
+        // 收集槽位关联的约束对象,供 LLM#4 知晓可引用的约束 ID
         var slotConstraints = new List<StructuredConstraint>();
         if (confirmedSlot.constraintIds != null)
         {
@@ -418,30 +465,34 @@ public class PlanningModule : MonoBehaviour
         string prompt =
             "你是无人机任务拆解器。将计划拆成 JSON 步骤数组。\n\n" +
             $"计划:{confirmedSlot.desc}\n" +
+            $"当前AgentID:{props?.AgentID}\n" +
             $"角色:{confirmedSlot.role}\n" +
-            $"可用约束列表（StructuredConstraint JSON）:{constraintsJson}\n" +
+            $"可用约束列表(StructuredConstraint JSON):{constraintsJson}\n" +
             $"完成条件:{confirmedSlot.doneCond}\n" +
             $"当前位置:{pos},电量:{battery:F0}%\n\n" +
             "要求:\n" +
             "1. 只输出 JSON 数组。\n" +
-            "2. 只拆解 desc 中明确出现的动作，禁止补充推断步骤。\n" +
-            "3. text 只能是意图动作（移动/巡逻/侦察/等待等）。\n" +
-            "4. desc 只含一个动作时，输出 1 步。\n" +
-            "5. doneCond：完成条件，没有时填 \" \"。\n" +
-            "6. stepId 格式：step_1、step_2 ...\n" +
-            "7. constraintIds：按以下规则将约束分配到对应步骤：\n" +
-            "   C1（资源分配）→ 分配给第一个进入/使用 targetObject 的步骤\n" +
-            "   C2（完成同步）→ 分配给最后一个实质性动作步骤（即触发同步的步骤）\n" +
-            "   C3 sign=+1（单向等待）→ 分配给第一步（出发前等待前置条件就绪）\n" +
-            "   C3 sign=-1（动态互斥）→ 分配给可能发生目标竞争的动作步骤（进入共享区域/资源的步骤）\n" +
-            "8. 同一条约束只分配给一个步骤，不重复绑定。\n\n" +
-            "示例(移动→巡逻，含 C3+C2 约束):\n" +
-            "desc:\"等A就绪后从出发点飞往b，到达后顺时针巡逻一周再回传\"\n" +
-            "可用约束: c3_wait_a(C3), c2_sync_report(C2)\n" +
+            "2. 只拆解 desc 中明确出现的动作,禁止补充推断步骤。\n" +
+            "3. text 只能是意图动作(移动/巡逻/侦察/等待等)。\n" +
+            "4. desc 只含一个动作时,输出 1 步。\n" +
+            "5. doneCond:完成条件,没有时填 \" \"。\n" +
+            "6. stepId 格式:step_1、step_2 ...\n" +
+            "7. 重点理解 C2 和 C3 的意义,再把 constraintIds 绑定到正确动作步骤:\n" +
+            "   C1(资源分配)→ 一般不用重点考虑,分槽阶段已处理;若需要,绑定到进入 targetObject 的动作步骤\n" +
+            "   C2(完成同步)→ 绑定到该成员完成后需要参与同步的那个实质动作步骤\n" +
+            "   C3 sign=+1(单向等待)→\n" +
+            "      若当前AgentID != watchAgent,绑定到“执行前需要等待队友就绪”的动作步骤\n" +
+            "      若当前AgentID == watchAgent,绑定到“该步骤完成后要发出 ReadySignal”的动作步骤\n" +
+            "   C3 sign=-1(动态互斥)→ 绑定到可能发生目标竞争的动作步骤(进入共享区域/资源的步骤)\n" +
+            "      参与竞争的是所有绑定了同一 constraintId 的成员,不是看 watchAgent\n" +
+            "8. 同一条约束只分配给一个步骤,不重复绑定。\n\n" +
+            "示例(生产侧步骤,含 C3+C2 约束):\n" +
+            "当前AgentID:\"agent_A\"\n" +
+            "desc:\"飞往掩护位执行搜索,完成后回传坐标\"\n" +
+            "可用约束: c3_wait_cover(C3, watchAgent=agent_A), c2_sync_report(C2)\n" +
             "[\n" +
-            "  {\"stepId\":\"step_1\",\"text\":\"等A就绪后飞往b\",\"doneCond\":\" \",\"constraintIds\":[\"c3_wait_a\"]},\n" +
-            "  {\"stepId\":\"step_2\",\"text\":\"顺时针巡逻一周\",\"doneCond\":\"巡逻完成\",\"constraintIds\":[]},\n" +
-            "  {\"stepId\":\"step_3\",\"text\":\"回传坐标\",\"doneCond\":\"回传完成\",\"constraintIds\":[\"c2_sync_report\"]}\n" +
+            "  {\"stepId\":\"step_1\",\"text\":\"飞往掩护位执行搜索\",\"doneCond\":\"掩护位搜索完成\",\"constraintIds\":[\"c3_wait_cover\"]},\n" +
+            "  {\"stepId\":\"step_2\",\"text\":\"回传坐标\",\"doneCond\":\"回传完成\",\"constraintIds\":[\"c2_sync_report\"]}\n" +
             "]\n\n";
 
         string llmResult = null;
@@ -450,7 +501,7 @@ public class PlanningModule : MonoBehaviour
         if (string.IsNullOrWhiteSpace(llmResult))
         {
             Debug.LogError("[PlanningModule] LLM#4 返回空");
-            busy = false; // BUG-03 修复：失败路径必须重置 busy
+            busy = false; // BUG-03 修复:失败路径必须重置 busy
             SetState(PlanningState.Failed);
             yield break;
         }
@@ -523,7 +574,7 @@ public class PlanningModule : MonoBehaviour
 
         StructuredConstraint[] allConstraints = p.constraints ?? new StructuredConstraint[0];
 
-        // 每组只收到：全局约束（groupScope==-1）+ 本组约束（groupScope==groupIndex）
+        // 每组只收到:全局约束(groupScope==-1)+ 本组约束(groupScope==groupIndex)
         // 避免在对抗/竞争场景下各组互相看到对方的内部协同约束
         for (int g = 0; g < groupCnt; g++)
         {
@@ -579,7 +630,7 @@ public class PlanningModule : MonoBehaviour
     /// <summary>收到分组通知,提取本组信息,分支进入组长或成员路径。</summary>
     public void OnGroupBootstrap(GroupBootstrapPayload p)
     {
-        // 非协调者(parsed==null)直接接受并采用消息中的 msnId；
+        // 非协调者(parsed==null)直接接受并采用消息中的 msnId;
         // 协调者则验证 msnId 是否匹配,防止跨任务消息干扰。
         if (parsed == null)
             parsed = new ParsedMission { msnId = p.msnId };
@@ -608,16 +659,8 @@ public class PlanningModule : MonoBehaviour
             return;
         }
 
-        // 将全量约束存入本地字典，供 GetConstraint 查询
-        _constraintDict.Clear();
-        if (p.constraints != null)
-        {
-            foreach (var c in p.constraints)
-            {
-                if (c != null && !string.IsNullOrWhiteSpace(c.constraintId))
-                    _constraintDict[c.constraintId] = c;
-            }
-        }
+        // 将全量约束存入本地字典,供 GetConstraint 查询
+        ReplaceConstraintDict(p.constraints, "GroupBootstrap");
 
         Debug.Log($"[PlanningModule] {props.AgentID} 加入组 {myGroup.groupId},isLeader={isLeader}," +
                   $"已加载 {_constraintDict.Count} 条结构化约束");
@@ -668,6 +711,11 @@ public class PlanningModule : MonoBehaviour
     {
         if (parsed == null || p.msnId != parsed.msnId) return;
 
+        if (p.constraints != null)
+            ReplaceConstraintDict(p.constraints, "StartExec runtime constraints");
+        else
+            Debug.LogWarning($"[PlanningModule] {props.AgentID} 收到 StartExec 但未携带运行态约束,继续沿用当前约束字典");
+
         startExecReceived = true;
 
         if (confirmedSlot != null)
@@ -691,6 +739,7 @@ public class PlanningModule : MonoBehaviour
         ordered.Insert(0, props.AgentID);
 
         List<PlanSlot> remaining = new List<PlanSlot>(slots);
+        var assignedSlotsByAgent = new Dictionary<string, PlanSlot>(StringComparer.OrdinalIgnoreCase);
 
         foreach (string agentId in ordered)
         {
@@ -711,11 +760,12 @@ public class PlanningModule : MonoBehaviour
                     continue;
                 }
                 assigned  = remaining[0];
-                Debug.Log($"[PlanningModule] {agentId} 选择的槽 {wantedSlotId} 已被占用，改分配 {assigned.slotId}");
+                Debug.Log($"[PlanningModule] {agentId} 选择的槽 {wantedSlotId} 已被占用,改分配 {assigned.slotId}");
             }
 
             remaining.Remove(assigned);
             occupiedSlots.Add(assigned.slotId);
+            assignedSlotsByAgent[agentId] = assigned;
 
             if (string.Equals(agentId, props.AgentID, StringComparison.OrdinalIgnoreCase))
             {
@@ -738,26 +788,50 @@ public class PlanningModule : MonoBehaviour
             }
         }
 
-        // 广播 StartExecution 给组内成员(不含自身)
-        StartExecPayload startExec = new StartExecPayload
-        {
-            msnId   = parsed.msnId,
-            groupId = myGroup.groupId
-        };
+        Debug.Log($"[PlanningModule] {props.AgentID} 最终分槽结果: " +
+                  string.Join(", ", assignedSlotsByAgent.Select(kv => $"{kv.Key}->{kv.Value.slotId}")));
 
+        // StartExecution 不是简单广播同一份约束,而是“按成员逐个发送”。
+        // 原因:
+        // 1. 最终分槽后,watchAgent / syncWith 要从抽象引用(slotId / role / desc)回填成真实 agentId。
+        // 2. 这个回填结果对不同接收者可能不完全一样。
+        //    尤其是 C2.syncWith,需要从“参与同步的全部成员”里去掉当前接收者自己,
+        //    否则会出现 A 的约束里还包含 A 自己,导致自己等自己。
+        // 3. 所以这里不能直接复用一份全组公共 constraints,而是要对每个 memberId
+        //    单独调用 BuildRuntimeConstraintsForAgent(memberId, assignedSlotsByAgent),
+        //    生成“这个成员视角下可直接执行的运行态约束”。
         foreach (string memberId in myGroup.memberIds)
         {
             if (string.Equals(memberId, props.AgentID, StringComparison.OrdinalIgnoreCase)) continue;
+
+            // 为当前接收者生成一份专属的运行态约束:
+            // - C3 sign=+1: watchAgent 会被回填成真实的被等待 agentId
+            // - C2: syncWith 会被回填成真实 agentId 数组,并移除当前接收者自己
+            StructuredConstraint[] runtimeConstraints = BuildRuntimeConstraintsForAgent(memberId, assignedSlotsByAgent);
+
+            // 将“最终分槽结果 + 当前成员专属约束”一起发给该成员。
+            // 成员侧收到 StartExecution 后,会先用这份 constraints 覆盖本地约束字典,
+            // 然后再进入 LLM#4 / ADM。这样后续执行阶段读取到的就是已经回填完成的约束。
             comm.SendScopedMessage(
                 CommunicationScope.DirectAgent,
                 MessageType.StartExecution,
-                startExec,
+                new StartExecPayload
+                {
+                    msnId = parsed.msnId,
+                    groupId = myGroup.groupId,
+                    constraints = runtimeConstraints
+                },
                 targetAgentId: memberId,
                 reliable: true);
         }
 
         // 组长自身触发 LLM#4
-        OnStartExec(startExec);
+        OnStartExec(new StartExecPayload
+        {
+            msnId = parsed.msnId,
+            groupId = myGroup.groupId,
+            constraints = BuildRuntimeConstraintsForAgent(props.AgentID, assignedSlotsByAgent)
+        });
     }
 
     // ─────────────────────────────────────────────────────────
@@ -768,7 +842,7 @@ public class PlanningModule : MonoBehaviour
     {
         state     = s;
         waitStart = Time.time;
-        // BUG-M4: Failed/Done 时自动释放 busy 锁，防止 PlanningModule 卡死
+        // BUG-M4: Failed/Done 时自动释放 busy 锁,防止 PlanningModule 卡死
         if (s == PlanningState.Failed || s == PlanningState.Done) busy = false;
         Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] {props?.AgentID} → {s}");
     }
@@ -809,13 +883,13 @@ public class PlanningModule : MonoBehaviour
         return agentPlan.steps[agentPlan.curIdx];
     }
 
-    /// <summary>返回当前任务 ID，供执行层和监控层读取。</summary>
+    /// <summary>返回当前任务 ID,供执行层和监控层读取。</summary>
     public string GetCurrentMissionId()
     {
         return parsed?.msnId ?? agentPlan?.msnId ?? string.Empty;
     }
 
-    /// <summary>返回当前任务描述，优先使用已确认槽位的描述。</summary>
+    /// <summary>返回当前任务描述,优先使用已确认槽位的描述。</summary>
     public string GetCurrentMissionDescription()
     {
         if (!string.IsNullOrWhiteSpace(agentPlan?.desc)) return agentPlan.desc;
@@ -825,7 +899,7 @@ public class PlanningModule : MonoBehaviour
     }
 
     /// <summary>
-    /// 通过约束 ID 查询完整的结构化约束对象（由 OnGroupBootstrap 填充）。
+    /// 通过约束 ID 查询完整的结构化约束对象(由 OnGroupBootstrap 填充)。
     /// 若未找到则返回 null。
     /// </summary>
     public StructuredConstraint GetConstraint(string constraintId)
@@ -835,8 +909,288 @@ public class PlanningModule : MonoBehaviour
         return c;
     }
 
-    /// <summary>返回本 Agent 所属组的组 ID（供白板读写使用）。</summary>
+    /// <summary>返回本 Agent 所属组的组 ID(供白板读写使用)。</summary>
     public string GetGroupId() => myGroup?.groupId ?? string.Empty;
+
+    private void ReplaceConstraintDict(StructuredConstraint[] constraints, string sourceTag)
+    {
+        _constraintDict.Clear();
+        MergeConstraintUpdates(constraints, sourceTag);
+    }
+
+    private void MergeConstraintUpdates(StructuredConstraint[] constraints, string sourceTag)
+    {
+        int loadedCount = 0;
+        if (constraints != null)
+        {
+            foreach (StructuredConstraint constraint in constraints)
+            {
+                if (constraint == null || string.IsNullOrWhiteSpace(constraint.constraintId)) continue;
+                _constraintDict.TryGetValue(constraint.constraintId, out StructuredConstraint existingConstraint);
+                _constraintDict[constraint.constraintId] = MergeConstraint(existingConstraint, constraint);
+                loadedCount++;
+            }
+        }
+
+        Debug.Log($"[PlanningModule] {props?.AgentID} {sourceTag} 已加载 {loadedCount} 条约束,当前字典={_constraintDict.Count}");
+    }
+
+    /// <summary>
+    /// 导出当前组可见的约束快照。
+    /// 这里会按 constraintId 排序,并克隆一份,避免后续修改影响字典里的原对象。
+    /// </summary>
+    private StructuredConstraint[] ExportConstraints()
+    {
+        return _constraintDict.Values
+            .Where(c => c != null && !string.IsNullOrWhiteSpace(c.constraintId))
+            .OrderBy(c => c.constraintId, StringComparer.OrdinalIgnoreCase)
+            .Select(CloneConstraint)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// 为某个具体成员生成“运行态约束”。
+    /// 输入的约束里,watchAgent / syncWith 还可能是抽象引用,例如 slotId、role、desc。
+    /// 这个函数会根据最终分槽结果,把这些抽象引用回填成真实 agentId。
+    /// 对 C2 还会额外去掉自己,并做去重。
+    /// </summary>
+    private StructuredConstraint[] BuildRuntimeConstraintsForAgent(
+        string runtimeAgentId,
+        Dictionary<string, PlanSlot> assignedSlotsByAgent)
+    {
+        StructuredConstraint[] sourceConstraints = ExportConstraints();
+        if (sourceConstraints.Length == 0) return sourceConstraints;
+
+        if (assignedSlotsByAgent == null || assignedSlotsByAgent.Count == 0)
+        {
+            Debug.LogWarning($"[PlanningModule] {props?.AgentID} 无法为 {runtimeAgentId} 回填约束:最终分槽为空");
+            return sourceConstraints;
+        }
+
+        // 下面几张表都是“抽象引用 -> 真实 agentId”的查找表。
+        // slotId 最稳定,role 和 desc 只是兜底匹配。
+        var slotIdToAgentId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var groupAgentLookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var uniqueRoleToAgentId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var repeatedRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var uniqueDescToAgentId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var repeatedDescs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (myGroup?.memberIds != null)
+        {
+            foreach (string memberId in myGroup.memberIds)
+            {
+                if (!string.IsNullOrWhiteSpace(memberId))
+                    groupAgentLookup[memberId] = memberId;
+            }
+        }
+
+        // 根据最终分槽结果建立映射:
+        // s0 -> agent_A, Scout -> agent_A(仅当 role 唯一时), 某段 desc -> agent_A(仅当 desc 唯一时)
+        foreach (KeyValuePair<string, PlanSlot> kv in assignedSlotsByAgent)
+        {
+            string agentId = kv.Key;
+            PlanSlot slot = kv.Value;
+            if (string.IsNullOrWhiteSpace(agentId) || slot == null) continue;
+
+            groupAgentLookup[agentId] = agentId;
+            if (!string.IsNullOrWhiteSpace(slot.slotId))
+                slotIdToAgentId[slot.slotId] = agentId;
+
+            RegisterUniqueAgentRef(uniqueRoleToAgentId, repeatedRoles, slot.role, agentId);
+            RegisterUniqueAgentRef(uniqueDescToAgentId, repeatedDescs, slot.desc, agentId);
+        }
+
+        var runtimeConstraints = new List<StructuredConstraint>(sourceConstraints.Length);
+        foreach (StructuredConstraint constraint in sourceConstraints)
+        {
+            // C3 sign=+1: 把 watchAgent 从抽象引用回填为真实 agentId。
+            if ((constraint.cType == "C3" || constraint.cType == "Coupling") && constraint.sign == 1)
+            {
+                string originalWatch = constraint.watchAgent;
+                string resolvedWatch = ResolveRuntimeAgentRef(
+                    originalWatch,
+                    groupAgentLookup,
+                    slotIdToAgentId,
+                    uniqueRoleToAgentId,
+                    uniqueDescToAgentId);
+
+                if (!string.IsNullOrWhiteSpace(originalWatch) && string.IsNullOrWhiteSpace(resolvedWatch))
+                    Debug.LogWarning($"[PlanningModule] 约束 {constraint.constraintId} 的 watchAgent 无法回填: {originalWatch}");
+
+                constraint.watchAgent = resolvedWatch;
+            }
+
+            // C2: 把 syncWith 中的抽象引用回填为真实 agentId。
+            // 这里按“当前接收约束的成员”去掉自己,避免自己等自己。
+            if (constraint.cType == "C2" || constraint.cType == "Completion")
+            {
+                constraint.syncWith = ResolveRuntimeAgentRefs(
+                    constraint.syncWith,
+                    runtimeAgentId,
+                    constraint.constraintId,
+                    groupAgentLookup,
+                    slotIdToAgentId,
+                    uniqueRoleToAgentId,
+                    uniqueDescToAgentId);
+            }
+
+            runtimeConstraints.Add(constraint);
+        }
+
+        Debug.Log($"[PlanningModule] {props?.AgentID} 为 {runtimeAgentId} 生成运行态约束 {runtimeConstraints.Count} 条");
+        return runtimeConstraints.ToArray();
+    }
+
+    private static void RegisterUniqueAgentRef(
+        Dictionary<string, string> uniqueMap,
+        HashSet<string> duplicateKeys,
+        string rawKey,
+        string agentId)
+    {
+        if (string.IsNullOrWhiteSpace(rawKey) || string.IsNullOrWhiteSpace(agentId)) return;
+        string key = rawKey.Trim();
+        if (duplicateKeys.Contains(key)) return;
+
+        if (uniqueMap.ContainsKey(key))
+        {
+            uniqueMap.Remove(key);
+            duplicateKeys.Add(key);
+            return;
+        }
+
+        uniqueMap[key] = agentId;
+    }
+
+    private string[] ResolveRuntimeAgentRefs(
+        string[] rawRefs,
+        string runtimeAgentId,
+        string constraintId,
+        Dictionary<string, string> groupAgentLookup,
+        Dictionary<string, string> slotIdToAgentId,
+        Dictionary<string, string> uniqueRoleToAgentId,
+        Dictionary<string, string> uniqueDescToAgentId)
+    {
+        if (rawRefs == null || rawRefs.Length == 0) return Array.Empty<string>();
+
+        var resolved = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (string rawRef in ExpandAgentRefs(rawRefs))
+        {
+            string resolvedAgentId = ResolveRuntimeAgentRef(
+                rawRef,
+                groupAgentLookup,
+                slotIdToAgentId,
+                uniqueRoleToAgentId,
+                uniqueDescToAgentId);
+
+            if (string.IsNullOrWhiteSpace(resolvedAgentId))
+            {
+                Debug.LogWarning($"[PlanningModule] 约束 {constraintId} 的 syncWith 项无法回填: {rawRef}");
+                continue;
+            }
+
+            if (string.Equals(resolvedAgentId, runtimeAgentId, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (seen.Add(resolvedAgentId))
+                resolved.Add(resolvedAgentId);
+        }
+
+        return resolved.ToArray();
+    }
+
+    private string ResolveRuntimeAgentRef(
+        string rawRef,
+        Dictionary<string, string> groupAgentLookup,
+        Dictionary<string, string> slotIdToAgentId,
+        Dictionary<string, string> uniqueRoleToAgentId,
+        Dictionary<string, string> uniqueDescToAgentId)
+    {
+        foreach (string token in ExpandAgentRefs(rawRef))
+        {
+            if (groupAgentLookup.TryGetValue(token, out string agentId))
+                return agentId;
+
+            if (slotIdToAgentId.TryGetValue(token, out agentId))
+                return agentId;
+
+            if (uniqueRoleToAgentId.TryGetValue(token, out agentId))
+                return agentId;
+
+            if (uniqueDescToAgentId.TryGetValue(token, out agentId))
+                return agentId;
+        }
+
+        return string.Empty;
+    }
+
+    private static IEnumerable<string> ExpandAgentRefs(string rawRef)
+    {
+        if (string.IsNullOrWhiteSpace(rawRef)) yield break;
+
+        string[] parts = Regex.Split(rawRef, @"[,，、;；|/]");
+        foreach (string part in parts)
+        {
+            string token = part?.Trim();
+            if (!string.IsNullOrWhiteSpace(token))
+                yield return token;
+        }
+    }
+
+    private static IEnumerable<string> ExpandAgentRefs(string[] rawRefs)
+    {
+        if (rawRefs == null) yield break;
+
+        foreach (string rawRef in rawRefs)
+        {
+            foreach (string token in ExpandAgentRefs(rawRef))
+                yield return token;
+        }
+    }
+
+    private static StructuredConstraint CloneConstraint(StructuredConstraint source)
+    {
+        if (source == null) return null;
+
+        return new StructuredConstraint
+        {
+            constraintId = source.constraintId,
+            cType = source.cType,
+            channel = source.channel,
+            groupScope = source.groupScope,
+            subject = source.subject,
+            targetObject = source.targetObject,
+            exclusive = source.exclusive,
+            condition = source.condition,
+            syncWith = source.syncWith != null ? source.syncWith.ToArray() : null,
+            sign = source.sign,
+            watchAgent = source.watchAgent,
+            reactTo = source.reactTo
+        };
+    }
+
+    private static StructuredConstraint MergeConstraint(StructuredConstraint existing, StructuredConstraint incoming)
+    {
+        if (incoming == null) return CloneConstraint(existing);
+        if (existing == null) return CloneConstraint(incoming);
+
+        StructuredConstraint merged = CloneConstraint(existing);
+        merged.constraintId = !string.IsNullOrWhiteSpace(incoming.constraintId) ? incoming.constraintId : merged.constraintId;
+
+        if (incoming.cType != null) merged.cType = incoming.cType;
+        if (incoming.channel != null) merged.channel = incoming.channel;
+        if (incoming.subject != null) merged.subject = incoming.subject;
+        if (incoming.targetObject != null) merged.targetObject = incoming.targetObject;
+        if (incoming.condition != null) merged.condition = incoming.condition;
+        if (incoming.syncWith != null) merged.syncWith = incoming.syncWith.ToArray();
+        if (incoming.sign != 0 || merged.sign == 0) merged.sign = incoming.sign;
+        if (incoming.watchAgent != null) merged.watchAgent = incoming.watchAgent;
+        if (incoming.reactTo != null) merged.reactTo = incoming.reactTo;
+
+        return merged;
+    }
 
     /// <summary>完成当前步骤:curIdx++,若超出数组长度则转 Done。</summary>
     public void CompleteCurrentStep()
@@ -856,7 +1210,7 @@ public class PlanningModule : MonoBehaviour
         yield return new WaitForSeconds(seconds);
         if (state == PlanningState.Active)
         {
-            Debug.LogWarning($"[Planning] 任务 {parsed?.msnId} 时间限制 {seconds}s 到达，强制终止。");
+            Debug.LogWarning($"[Planning] 任务 {parsed?.msnId} 时间限制 {seconds}s 到达,强制终止。");
             state = PlanningState.Failed;
             busy = false;
         }

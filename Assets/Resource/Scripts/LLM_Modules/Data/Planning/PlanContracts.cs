@@ -42,6 +42,7 @@ public class StructuredConstraint
     /// 例如 ["drone_B","drone_C"] 表示等这两个 Agent 也完成后才继续。
     /// LLM#1 阶段不知道具体 agentId 时填 []，表示不等待（仅自身完成即可）。
     /// </summary>
+    // Phase 1: abstract slot/role refs from LLM2. Phase 2: rewritten to runtime agentIds.
     public string[] syncWith;
 
     // ── C3 Coupling ───────────────────────────────────────────────
@@ -57,6 +58,7 @@ public class StructuredConstraint
     public int sign;
 
     /// <summary>[C3] 被监视的智能体 ID（等待其 ReadySignal / 互斥的对端 agentId；不知道时填 ''）。</summary>
+    // Phase 1: abstract slot/role ref from LLM2. Phase 2: rewritten to runtime agentId.
     public string watchAgent;
 
     /// <summary>
@@ -87,6 +89,13 @@ public class PlanSlot
 
     /// <summary>该槽位关联的结构化约束 ID 列表（引用 ParsedMission.constraints）。</summary>
     public string[] constraintIds;
+}
+
+[Serializable]
+public class LLM2SlotPlanResult
+{
+    public PlanSlot[] slots;
+    public StructuredConstraint[] constraints;
 }
 
 /// <summary>

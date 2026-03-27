@@ -3,6 +3,7 @@ using UnityEngine;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json;
@@ -402,7 +403,14 @@ public class ActionDecisionModule : MonoBehaviour
                 case "C3":
                 case "Coupling":
                     if (c.sign == 1)
-                        sb.AppendLine($"\n  耦合(单向等待): 我等 watchAgent={c.watchAgent} 写 ReadySignal 后才行动");
+                    {
+                        string selfId = agentProperties?.AgentID ?? string.Empty;
+                        if (!string.IsNullOrWhiteSpace(c.watchAgent) &&
+                            string.Equals(selfId, c.watchAgent, StringComparison.OrdinalIgnoreCase))
+                            sb.AppendLine($"\n  耦合(C3+1 生产侧): 本步骤完成后由我写 ReadySignal,释放其他成员");
+                        else
+                            sb.AppendLine($"\n  耦合(C3+1 等待侧): 本步骤执行前需等待 watchAgent={c.watchAgent} 写 ReadySignal");
+                    }
                     else if (c.sign == -1)
                         sb.AppendLine($"\n  耦合(动态互斥): 与其他 Agent 动态争夺目标，先到先得，" +
                                       $"白板中已占目标见上方白板状态区");
@@ -438,8 +446,18 @@ public class ActionDecisionModule : MonoBehaviour
 
             if (c.sign == 1)
             {
-                // 单向前置等待：我等 watchAgent 写 ReadySignal
-                if (string.IsNullOrWhiteSpace(c.watchAgent)) continue;
+                // C3 sign=+1 采用双边绑定:
+                // - 若 self != watchAgent,当前是等待侧,执行该步骤前等待对方写 ReadySignal
+                // - 若 self == watchAgent,当前是生产侧,该步骤完成后由本 Agent 写 ReadySignal
+                if (string.IsNullOrWhiteSpace(c.watchAgent))
+                {
+                    Debug.LogWarning($"[ADM] {myId} C3+1 constraint {c.constraintId} missing runtime watchAgent, skip wait");
+                    continue;
+                }
+
+                if (string.Equals(myId, c.watchAgent, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
                 bool watchReady = SharedWhiteboard.Instance.HasSignal(
                     groupId, c.constraintId, c.watchAgent, WhiteboardEntryType.ReadySignal);
                 if (!watchReady)
@@ -517,11 +535,7 @@ public class ActionDecisionModule : MonoBehaviour
         return sb.ToString().TrimEnd();
     }
 
-    /// <summary>
-    /// 步骤完成后处理白板信号：
-    ///   C2：写 DoneSignal（触发完成同步等待）
-    ///   C3 sign=-1：清除 IntentAnnounce（释放动态互斥锁，让等待的 agent 可以进入）
-    /// </summary>
+    /// <summary>Handle whiteboard writes after the current step completes.</summary>
     private void WriteWhiteboardDoneSignals()
     {
         if (SharedWhiteboard.Instance == null || ctx.stepConstraints == null) return;
@@ -543,6 +557,22 @@ public class ActionDecisionModule : MonoBehaviour
                     progress     = "步骤完成",
                 });
                 Debug.Log($"[ADM] {agentId} 写入 DoneSignal: constraintId={c.constraintId}");
+            }
+            else if ((c.cType == "C3" || c.cType == "Coupling") &&
+                     c.sign == 1 &&
+                     !string.IsNullOrWhiteSpace(c.watchAgent) &&
+                     string.Equals(agentId, c.watchAgent, StringComparison.OrdinalIgnoreCase))
+            {
+                // C3 sign=+1 producer side: write ReadySignal when this step completes.
+                SharedWhiteboard.Instance.WriteEntry(groupId, new WhiteboardEntry
+                {
+                    agentId      = agentId,
+                    constraintId = c.constraintId,
+                    entryType    = WhiteboardEntryType.ReadySignal,
+                    status       = 1,
+                    progress     = "step_complete_ready",
+                });
+                Debug.Log($"[ADM] {agentId} 写入 ReadySignal: constraintId={c.constraintId}");
             }
             else if ((c.cType == "C3" || c.cType == "Coupling") && c.sign == -1)
             {
@@ -629,11 +659,15 @@ public class ActionDecisionModule : MonoBehaviour
             string[] waitTargets;
             if (c.syncWith != null && c.syncWith.Length > 0)
             {
-                waitTargets = c.syncWith;
+                waitTargets = Array.FindAll(
+                    c.syncWith.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                    id => !string.IsNullOrWhiteSpace(id) &&
+                          !string.Equals(id, selfId, StringComparison.OrdinalIgnoreCase));
             }
             else
             {
                 // syncWith 为空（LLM#1 不知道 agentId）→ 等组内所有其他成员
+                Debug.LogWarning($"[ADM] {selfId} C2 constraint {c.constraintId} missing syncWith, fallback to group peers");
                 var groupMembers = GetGroupMemberIds();
                 waitTargets = System.Array.FindAll(groupMembers,
                     id => !string.Equals(id, selfId, StringComparison.OrdinalIgnoreCase));

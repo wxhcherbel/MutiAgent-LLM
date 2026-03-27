@@ -1,283 +1,538 @@
- 滚动规划 + 白板/裁判 + 结构化约束 实现计划                                                     
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Plan to implement                                                                                                                                      │
+│                                                                                                                                                        │
+│ Plan: 修复与大幅改进 system-flow-reference.html                                                                                                        │
+│                                                                                                                                                        │
+│ Context                                                                                                                                                │
+│                                                                                                                                                        │
+│ 用户希望对 system-flow-reference.html 进行全面改进：                                                                                                   │
+│ 1. 修复与实际代码的不一致（bug/inaccuracy）                                                                                                            │
+│ 2. 修复折叠/展开功能（目前箭头永远显示"v"，没有动画，体验差）                                                                                          │
+│ 3. 修复排版溢出问题（文字超出背景框）                                                                                                                  │
+│ 4. 大幅扩充优化建议（目前只提了方法名，没有说明方法原理和具体做法）                                                                                    │
+│ 5. 增加新的优化/补充内容                                                                                                                               │
+│                                                                                                                                                        │
+│ ---                                                                                                                                                    │
+│ Phase 1: 代码准确性问题（已通过阅读代码核实）                                                                                                          │
+│                                                                                                                                                        │
+│ ┌──────────────────────────────────────────────────────────────────────────────┬────────────────────────┬──────────────────────────────────────────┐   │
+│ │                                     问题                                     │          来源          │                 修复方向                 │   │
+│ ├──────────────────────────────────────────────────────────────────────────────┼────────────────────────┼──────────────────────────────────────────┤   │
+│ │                                                                              │                        │ 在 HTML                                  │   │
+│ │ HTML 将阶段编号为 0-8（9个），代码注释显示状态为 Idle/Parsing/...Active（8个 │ PlanningModule.cs 注释 │ 中加一段说明："状态机内部阶段0-7，HTML   │   │
+│ │ 真实状态），导致"阶段"计数与PlanningState枚举对不上                          │                        │ 里阶段8是ADM消费层，并非规划模块内部状态 │   │
+│ │                                                                              │                        │ "                                        │   │
+│ ├──────────────────────────────────────────────────────────────────────────────┼────────────────────────┼──────────────────────────────────────────┤   │
+│ │ LLM#3 标签：HTML 写明用于"选槽"，但代码中 RunLLM3() 是否存在需明确           │ PlanningModule.cs      │ 保留说法，但补充"LLM#3 在代码中即        │   │
+│ │                                                                              │                        │ RunLLM3()"                               │   │
+│ ├──────────────────────────────────────────────────────────────────────────────┼────────────────────────┼──────────────────────────────────────────┤   │
+│ │ ReadySignal 无写入点：HTML 已标注，但优化建议部分没给出如何补写              │ SharedWhiteboard.cs    │ 在 R2 条目下增加"如何补写 ReadySignal    │   │
+│ │                                                                              │                        │ 写入点"的具体建议                        │   │
+│ ├──────────────────────────────────────────────────────────────────────────────┼────────────────────────┼──────────────────────────────────────────┤   │
+│ │ HandlePendingPerceptionEvents() 仍是                                         │ ActionDecisionModule.c │ 在 R3 条目增加具体实现路径               │   │
+│ │ TODO：已标注但优化建议部分没有说明实现思路                                   │ s Update() TODO        │                                          │   │
+│ ├──────────────────────────────────────────────────────────────────────────────┼────────────────────────┼──────────────────────────────────────────┤   │
+│ │ 裁判 RegisterAgent/BroadcastEvent 未接线：已标注                             │ RefereeManager.cs      │ 在 R1 条目增加"最小接线方案"             │   │
+│ ├──────────────────────────────────────────────────────────────────────────────┼────────────────────────┼──────────────────────────────────────────┤   │
+│ │ FormationHold 偏移硬编码为 (3,0,0)                                           │ AgentMotionExecutor.cs │ 已在 HTML                                │   │
+│ │                                                                              │                        │ 提到，增加"如何把偏移参数化"的建议       │   │
+│ ├──────────────────────────────────────────────────────────────────────────────┼────────────────────────┼──────────────────────────────────────────┤   │
+│ │ MemoryModule 和 ReflectionModule 完全没有出现在 HTML 中                      │ MemoryModule.cs,       │ 增加新章节或在审阅结论里补充             │   │
+│ │                                                                              │ ReflectionModule.cs    │                                          │   │
+│ └──────────────────────────────────────────────────────────────────────────────┴────────────────────────┴──────────────────────────────────────────┘   │
+│                                                                                                                                                        │
+│ ---                                                                                                                                                    │
+│ Phase 2: 折叠/展开功能修复                                                                                                                             │
+│                                                                                                                                                        │
+│ 当前问题                                                                                                                                               │
+│                                                                                                                                                        │
+│ - <details> 原生展开/收起是瞬间切换，没有过渡动画                                                                                                      │
+│ - summary-arrow 永远显示静态字符 "v"，不会随展开/收起变化                                                                                              │
+│ - 没有视觉反馈（缺少旋转或变化）                                                                                                                       │
+│                                                                                                                                                        │
+│ 解决方案                                                                                                                                               │
+│                                                                                                                                                        │
+│ 1. 箭头动画：用 CSS transition + JavaScript 在 <details> 开关时切换箭头符号（▶ ↔ ▼）或旋转                                                             │
+│ 2. 内容滑动展开：用 max-height 过渡实现平滑动画（纯 CSS 在 details 上难做，改用 JS 控制 height）                                                       │
+│ 3. 具体实现：                                                                                                                                          │
+│   - 在 <style> 添加 .details-body { overflow: hidden; transition: height 0.25s ease; }                                                                 │
+│   - 在 <script> 中监听 <details> 的 toggle 事件，动态设置 height，更新箭头符号                                                                         │
+│                                                                                                                                                        │
+│ ---                                                                                                                                                    │
+│ Phase 3: 排版/溢出问题修复                                                                                                                             │
+│                                                                                                                                                        │
+│ ┌──────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────────────────────────────────────┐  │
+│ │                         问题                         │                                          CSS 修复                                          │  │
+│ ├──────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────┤  │
+│ │ pre code 在窄列中横向溢出背景框                      │ pre { overflow-x: auto; max-width: 100%; } 已有但需确认有效；word-break: break-all 用于    │  │
+│ │                                                      │ code 行内片段                                                                              │  │
+│ ├──────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────┤  │
+│ │ field-table td 中长代码字符串溢出                    │ word-break: break-all; overflow-wrap: anywhere;                                            │  │
+│ ├──────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────┤  │
+│ │ details-grid 两列布局中右列过窄导致内容溢出          │ 降低比例 1fr 1fr，或在小屏下单列                                                           │  │
+│ ├──────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────┤  │
+│ │ hero p 和 chapter-title-wrap p 中 code               │ 添加 code { word-break: break-all; }                                                       │  │
+│ │ 标签在窄屏换行失败                                   │                                                                                            │  │
+│ ├──────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────┤  │
+│ │ node-grid 5列在中等屏下每格太窄                      │ 调整 repeat(5, minmax(0, 1fr)) → repeat(auto-fill, minmax(160px, 1fr))                     │  │
+│ ├──────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────┤  │
+│ │ source-card a 链接 URL 溢出                          │ 已有 word-break: break-all，确认即可                                                       │  │
+│ ├──────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────┤  │
+│ │ summary-title 在折叠条中超宽时文字溢出               │ 添加 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; 但保留 title 提示     │  │
+│ └──────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                                                                                        │
+│ ---                                                                                                                                                    │
+│ Phase 4: 优化建议内容扩充                                                                                                                              │
+│                                                                                                                                                        │
+│ 每个优化章节需增加：                                                                                                                                   │
+│ - 方法的核心原理（1-3句话）                                                                                                                            │
+│ - 为什么适合本系统的这个节点                                                                                                                           │
+│ - 具体实现步骤（3-5个可操作要点）                                                                                                                      │
+│                                                                                                                                                        │
+│ 各节点详细扩充内容                                                                                                                                     │
+│                                                                                                                                                        │
+│ 阶段 0（调度入口）— AutoGen SOP 协议                                                                                                                   │
+│                                                                                                                                                        │
+│ AutoGen 原理：微软提出的多 Agent 对话框架，核心思想是把每个 Agent 的角色、可发消息类型、消息格式定义为结构化                                           │
+│ Schema，并通过"对话管理器（GroupChatManager）"路由消息、强制校验格式，防止级联幻觉。                                                                   │
+│ 具体落地：                                                                                                                                             │
+│ 1. 在 SubmitMissionRequest() 前定义一个 AgentRoleManifest 结构：声明本轮每类 Agent 的"可输入动词"（如只允许 Scout 产出 Observe/MoveTo）                │
+│ 2. 每次 LLM 调用后增加 Schema 校验层，拒绝不合法输出并触发 re-prompt                                                                                   │
+│ 3. 把"允许产出的结构、角色边界、失败回退格式"写入统一系统 prompt，而不是分散在各个 LLM 调用里                                                          │
+│                                                                                                                                                        │
+│ 阶段 1（LLM#1 任务解析）— MetaGPT SOP                                                                                                                  │
+│                                                                                                                                                        │
+│ MetaGPT 原理：为每个角色定义标准作业流程（SOP），用发布-订阅式共享消息池（而不是点对点消息）分发中间结果；每个角色只读特定频道、只产出特定文档类型，从 │
+│ 而让整个流程可验证、可重放。                                                                                                                           │
+│ 具体落地：                                                                                                                                             │
+│ 1. 把 LLM#1 的任务解析 prompt 改为"目标→参与方→资源→同步条件→互斥条件→时限"六段式填空，减少自由发挥                                                    │
+│ 2. 产出 ParsedMission 后，增加后验校验器：验证 groupCnt == groupMsns.Length、所有 groupScope 在 [0, groupCnt) 范围内、每个 C2 必须有至少2个成员        │
+│ 3. 失败时不直接进入 Failed，而是把问题描述反馈给 LLM，最多重试2次                                                                                      │
+│                                                                                                                                                        │
+│ 阶段 2（分组与广播）— MRTA + CBBA                                                                                                                      │
+│                                                                                                                                                        │
+│ MRTA 原理（Gerkey & Matarić,                                                                                                                           │
+│ 2004）：将多机器人任务分配形式化为三个维度——任务能否分解(ST/MT)、机器人能否承接多任务(SR/MR)、时间窗口(IP/TP)。不同类型对应不同最优算法。本系统是      │
+│ ST-SR-TP 类型（单任务单机器人实时分配）。                                                                                                              │
+│ CBBA 原理（Choi et al., 2009）：在局部通信约束下，Agent 先对任务出价，再通过共识阶段解决冲突，收敛到全局次优分配，不需要中心节点。                     │
+│ 具体落地：                                                                                                                                             │
+│ 1. 给 SelectLeader() 增加多维评分：score = w1×battery + w2×proximity_to_task + w3×comm_range + w4×agent_type_match                                     │
+│ 2. 给 AssignGroups() 增加能力-任务匹配矩阵：先统计各 Agent 的 AgentType、MaxSpeed、SensorRange，再按任务需求优先分配匹配度高的                         │
+│ 3. 对于对抗场景，引入 CBBA 局部共识：组内成员同时出价（报距离+电量+角色匹配度），组长做共识收敛而不是直接按顺序切                                      │
+│                                                                                                                                                        │
+│ 博弈论插入点（阶段 2）— 合作博弈/竞拍博弈                                                                                                              │
+│                                                                                                                                                        │
+│ Shapley Value 原理：合作博弈中，公平分配每个成员对联盟价值的边际贡献，适合计算"谁更应该被分配高价值任务"。                                             │
+│ 具体落地：在组形成时用简化 Shapley value 估算各 Agent 对子组价值的贡献（基于位置、能力、电量），从而做能力匹配分组而不是顺序切组。                     │
+│                                                                                                                                                        │
+│ 阶段 3（槽位生成）— Contract Net                                                                                                                       │
+│                                                                                                                                                        │
+│ Contract Net 原理（Smith, 1980）：分布式问题求解中的招标协议。管理节点（组长）发布任务公告，潜在承包商节点（成员）评估并回报投标（含代价、时间、资源） │
+│ ，管理节点选标并授权。三个阶段：announcement → bidding → awarding。                                                                                    │
+│ 当前系统的映射：组长 RunLLM2() → 槽位公告；成员 RunLLM3() → 投标（但目前只回报 slotId）；组长 ResolveAndConfirm() → 授标（但目前是先到先得）。         │
+│ 具体落地：                                                                                                                                             │
+│ 1. 修改 SlotSelectPayload 增加竞标字段：{ "slotId": "s1", "bid": { "distance": 45.2, "battery": 0.78, "estimatedTime": 12.0, "roleMatch": 0.9 } }      │
+│ 2. 修改 ResolveAndConfirm() 从"先到先得"改为"按加权评分选最优投标者"：score = w1/distance + w2*battery + w3/estimatedTime + w4*roleMatch               │
+│ 3. 对冲突槽位，先把投标方案汇总，再做整体最优分配（可用贪心或匈牙利算法）                                                                              │
+│                                                                                                                                                        │
+│ 博弈论插入点（阶段 3/4）— Stackelberg + 机制设计                                                                                                       │
+│                                                                                                                                                        │
+│ Stackelberg 原理：领导者-追随者博弈。领导者先承诺策略，追随者观察到领导者策略后做最优响应。SSE（Stackelberg                                            │
+│ 均衡）保证在领导者最优的同时追随者有激励配合。                                                                                                         │
+│ 具体落地：组长 RunLLM2() 时同时声明"分配规则"（即惩罚/激励机制），成员 RunLLM3() 知道规则后理性选择最有利的槽位，组长 ResolveAndConfirm()              │
+│ 执行预先承诺的规则，从而产生激励相容的分配。                                                                                                           │
+│                                                                                                                                                        │
+│ 阶段 5（步骤拆解）— HTN Planning                                                                                                                       │
+│                                                                                                                                                        │
+│ HTN 原理（Hierarchical Task                                                                                                                            │
+│ Network）：将复合任务递归分解为有序原语任务，每一级分解由方法（method）控制，支持前提条件检查和分解树剪枝。相比纯自然语言拆解，HTN                     │
+│ 可以保证分解结构的合法性（约束不会被错误分配到错误步骤）。                                                                                             │
+│ 具体落地：                                                                                                                                             │
+│ 1. 为 LLM#4 的 prompt 引入伪 HTN 格式：先输出分解树结构（task → [subtask1, subtask2]），再映射到 PlanStep[]                                            │
+│ 2. 对 C2 约束添加后验规则：确认"最后一个实质步骤必须绑定 C2"，否则重试                                                                                 │
+│ 3. 对 C3 sign=+1 约束添加后验规则：确认"第一步必须是 Wait 类型或有明确前提条件"                                                                        │
+│                                                                                                                                                        │
+│ 阶段 7（滚动决策）— Markov Games + Nash Q-Learning                                                                                                     │
+│                                                                                                                                                        │
+│ Markov Games 原理（Littman, 1994）：多智能体 MDP 推广。状态由所有 Agent 的联合状态组成，每个 Agent                                                     │
+│ 有独立奖励函数，动作组合决定状态转移。零和版本有理论最优策略（minimax-Q），一般和版本用 Nash Q-learning。                                              │
+│ 适用场景：对抗任务的追捕/逃脱问题可形式化为两阶段 Markov Game：追捕方最大化捕获概率，逃脱方最大化逃脱步数。                                            │
+│ 具体落地：                                                                                                                                             │
+│ 1. 在 ReadRefereeContext() 后增加"对手状态建模"：根据裁判事件和感知事件估算对手位置概率分布                                                            │
+│ 2. 在 BuildRollingPrompt() 中注入对手模型描述："对手估计在 X 区，置信度 0.7，上一轮动作为 MoveTo(南门)"                                                │
+│ 3. 对高价值对抗步骤，可离线预计算 Nash Q-table（基于简化状态空间），在 rolling loop 里查表得到建议动作，再用 LLM 做语义翻译                            │
+│                                                                                                                                                        │
+│ Nash Q-Learning 原理（Hu & Wellman, 2003）：在 Markov Game 中每步计算 Nash 均衡来更新 Q                                                                │
+│ 值，能处理一般和博弈（非零和）。适合竞争场景中多方同时争抢资源时的稳定策略学习。                                                                       │
+│ 具体落地：                                                                                                                                             │
+│ 1. 定义简化状态空间：(自身位置区域, 目标占用状态, 对手位置区域)，枚举有限                                                                              │
+│ 2. 在每次竞争任务仿真后，用 Nash Q-learning 更新 Q-table                                                                                               │
+│ 3. 在后续仿真中，BuildRollingPrompt() 查 Q-table 得到"Nash 建议动作"作为 LLM 决策的软约束                                                              │
+│                                                                                                                                                        │
+│ 阶段 7 — 潜在博弈 (Potential Game) 用于竞争资源选择                                                                                                    │
+│                                                                                                                                                        │
+│ 潜在博弈原理：所有玩家的收益变化与一个全局"潜在函数"的变化方向一致，因此玩家各自追求局部最优时，整个系统会收敛到纳什均衡。合作覆盖任务是典型潜在博弈： │
+│ 每个 Agent 选择覆盖区域时，总覆盖面积是潜在函数。                                                                                                      │
+│ 具体落地：对竞争资源选择，定义潜在函数 = 总体任务完成收益 - 冲突惩罚。每个成员在 WriteC3MutexClaims()                                                  │
+│ 时，选择能最大化潜在函数增量的目标，而不是直接选最近目标。                                                                                             │
+│                                                                                                                                                        │
+│ ---                                                                                                                                                    │
+│ Phase 5: 新增内容（HTML 中完全缺失的部分）                                                                                                             │
+│                                                                                                                                                        │
+│ 新增：Memory & Reflection 模块在主链中的位置                                                                                                           │
+│                                                                                                                                                        │
+│ MemoryModule 在当前主链中只被 ActionDecisionModule 和 ReflectionModule 弱引用，但 HTML 完全未提及。需要增加：                                          │
+│ - MemoryModule.StoreMemory() 在每次 rolling loop 后记录执行历史                                                                                        │
+│ - GetRelevantInsights() 在 BuildRollingPrompt() 中注入历史经验                                                                                         │
+│ - 容量管理（512条，LRU淘汰）与时效窗口（72小时）                                                                                                       │
+│                                                                                                                                                        │
+│ ReflectionModule 的触发机制和落点：                                                                                                                    │
+│ - 触发条件：相同动作连续失败2次、Agent 被标记为 Blocked、任务完成后回溯                                                                                │
+│ - 反思输出：提取可复用规则（如"东区水池附近不要低空飞行"）注入后续 prompt                                                                              │
+│ - 当前代码状态：接口完整但在主链中没有明确的"何时调用"文档                                                                                             │
+│                                                                                                                                                        │
+│ 新增：容错与鲁棒性问题                                                                                                                                 │
+│                                                                                                                                                        │
+│ 当前 HTML 没有讨论 LLM 调用失败、超时、返回非法 JSON 等问题：                                                                                          │
+│ - RunLLM1/2/4 失败时的最小重试策略（当前代码有 WaitSec=25f 超时，但失败回退不完整）                                                                    │
+│ - ActionDecisionModule 的 MaxIterations=10 死锁防护（已有），但超限后如何优雅退出到 PlanningModule 未说明                                              │
+│ - MaxReplanCount=5：重规划上限存在，但触发条件和处理流程未文档化                                                                                       │
+│                                                                                                                                                        │
+│ 新增：感知驱动重规划（TODO 补全建议）                                                                                                                  │
+│                                                                                                                                                        │
+│ HandlePendingPerceptionEvents() 是 TODO，具体实现建议：                                                                                                │
+│ 1. 在 RunRollingLoop() 每轮开始检查 pendingPerceptionEvents 队列                                                                                       │
+│ 2. 若发现高优先级事件（如发现敌方），立即终止当前动作批次，重构 ActionExecutionContext                                                                 │
+│ 3. 把感知事件摘要注入 executedActionsSummary，让 LLM 在下一轮感知更新后的上下文中重新规划                                                              │
+│ 4. 引入"响应等级"：轻微更新（仅注入上下文）vs 完整重规划（重置 actionQueue）                                                                           │
+│                                                                                                                                                        │
+│ 新增：ReadySignal 写入点补全建议                                                                                                                       │
+│                                                                                                                                                        │
+│ R2 中已指出 ReadySignal 无写入点。具体补全方案：                                                                                                       │
+│ - 在 RunRollingLoop() 中，当 ADM 判断当前步骤进入"就绪等待"状态时（例如抵达集合点后），写入 WhiteboardEntryType.ReadySignal                            │
+│ - 在 WriteWhiteboardIntentSignals() 里，当 C3 sign=+1 且当前步骤是等待类步骤时，自动生成 ReadySignal                                                   │
+│ - 测试方法：创建一个 C3 sign=+1 的两 Agent 场景，Agent A 等待 Agent B 的 ReadySignal，验证 B 在到达指定位置后正确写入                                  │
+│                                                                                                                                                        │
+│ 新增：RefereeManager 最小接线方案                                                                                                                      │
+│                                                                                                                                                        │
+│ R1 中已指出裁判未接线。最小接线路径：                                                                                                                  │
+│ 1. 在 AgentLLMControl.Start() 或 IntelligentAgent.InitializeAgent() 里调用 RefereeManager.Instance.RegisterAgent(agentId, callback)                    │
+│ 2. 在 AgentMotionExecutor.DoMoveTo() 完成时，如果目标是资源点，调用 RefereeManager.Instance.BroadcastEvent(ResourceClaimed, agentId, resourceId)       │
+│ 3. 在 IntelligentAgent.OnEliminated() 里调用 BroadcastEvent(AgentEliminated)                                                                           │
+│ 4. 以上三步是"裁判完整闭环"的最小可验证路径                                                                                                            │
+│                                                                                                                                                        │
+│ ---                                                                                                                                                    │
+│ Critical Files to Modify                                                                                                                               │
+│                                                                                                                                                        │
+│ - system-flow-reference.html（唯一目标文件，约2585行）                                                                                                 │
+│                                                                                                                                                        │
+│ ---                                                                                                                                                    │
+│ Implementation Steps                                                                                                                                   │
+│                                                                                                                                                        │
+│ 1. CSS 修复（排版溢出）：                                                                                                                              │
+│   - 修复 pre、code、field-table td、summary-title、node-card 的 overflow                                                                               │
+│   - 调整 details-grid、node-grid 响应式断点                                                                                                            │
+│   - 确保所有 grid cells 有 min-width: 0                                                                                                                │
+│ 2. JS 修复（折叠功能）：                                                                                                                               │
+│   - 替换静态 "v" 箭头为动态 "▶"/"▼" 符号                                                                                                               │
+│   - 使用 details.addEventListener('toggle', ...) 监听展开/收起                                                                                         │
+│   - 加入平滑高度动画                                                                                                                                   │
+│ 3. 内容修复（代码准确性）：                                                                                                                            │
+│   - 补全 R1 R2 R3 的具体实现建议                                                                                                                       │
+│   - 增加 Memory/Reflection 模块章节说明                                                                                                                │
+│   - 修正阶段编号说明                                                                                                                                   │
+│ 4. 内容扩充（优化建议）：                                                                                                                              │
+│   - 每个 summary-badge summary-paper 或 summary-game 节点的 details-body 增加：                                                                        │
+│       - 方法原理（3-5句）                                                                                                                              │
+│     - 为何适合本节点（2-3句）                                                                                                                          │
+│     - 具体实现步骤（3-5条）                                                                                                                            │
+│ 5. 新增章节：在审阅结论汇总之前，增加"Memory & Reflection 主链位置"章节 + 感知重规划/ReadySignal/裁判接线的补全建议                                    │
+│                                                                                                                                                        │
+│ ---                                                                                                                                                    │
+│ Verification                                                                                                                                           │
+│                                                                                                                                                        │
+│ - 在浏览器中打开 HTML 文件，验证：                                                                                                                     │
+│   a. 折叠/展开有平滑动画，箭头正确切换                                                                                                                 │
+│   b. 所有卡片/框架无文字溢出（在 1280px 宽度下测试）                                                                                                   │
+│   c. 所有优化建议节点有详细原理和步骤说明                                                                                                              │
+│   d. Memory/Reflection 章节出现在正确位置                                                                                                              │
+│   e. 响应式布局在窄屏下不出现横向滚动条                                                                                                                │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
- Context
+● Searched for 1 pattern, read 1 file (ctrl+o to expand)
 
- 当前 RunLLMA 是一次性规划：进入步骤时调用一次 LLM
- 生成完整动作序列后顺序执行，无法根据执行中途的环境变化自适应调整，也没有步骤完成判断机制。     
+● Let me read the full file to understand its structure before making changes.
 
- 用户要求：
- 1. 滚动规划：每次 LLM 生成 1-3 个动作，执行完后重新感知环境，LLM
- 判断步骤是否完成，如未完成则继续生成下一批动作
- 2. 结构化约束：将 PlanStep.constraints string[] 完全替换为
- StructuredConstraint[]，PlanningModule 的 LLM 提示同步升级
- 3. 白板（SharedWhiteboard）：组内共享状态池，ADM 每次 LLM 调用前读写白板
- 4. 裁判（RefereeManager）：宣布物理世界客观事实，ADM 被动监听
+● Read 1 file (ctrl+o to expand)
 
- 用户选择：约束字段完全替换 / LLM 判断步骤完成 / 两者都实现 / LLM 自决生成 1-3 个动作。
+● The file is large (~2585 lines). I'll use the Agent tool to handle the full implementation.
 
- ---
- 涉及文件
+● Agent(Implement all HTML improvements per plan)
+  ⎿  Done (34 tool uses · 89.6k tokens · 6m 40s)
+  (ctrl+o to expand)
 
- 新建
+❯ 重新完善一下整个计划
 
- - Assets/Resource/Scripts/SharedWhiteboard.cs - 组内白板（全局单例 MonoBehaviour）
- - Assets/Resource/Scripts/RefereeManager.cs - 裁判事件系统（全局单例 MonoBehaviour）
+● Read 1 file (ctrl+o to expand)
 
- 修改
+● Plan(Revise and improve the full plan)
+  ⎿  Done (16 tool uses · 107.8k tokens · 5m 4s)
+  (ctrl+o to expand)
 
- - LLM_Modules/Data/Planning/PlanContracts.cs - 新增 StructuredConstraint，更新
- PlanStep、PlanSlot
- - LLM_Modules/Data/Planning/MissionContracts.cs - ParsedMission 新增
- constraints[]，GroupBootstrapPayload 新增 constraints[]
- - LLM_Modules/Data/Planning/ActionContracts.cs - ActionExecutionContext 新增滚动规划状态字段   
- - Enums/ExecutionEnums.cs - ADMStatus 新增 BatchDone
- - LLM_Modules/ActionDecisionModule.cs - 重构 RunLLMA → 滚动规划循环
- - LLM_Modules/PlanningModule.cs - 更新 LLM#1/LLM#4 提示词，新增约束查询接口
+● 以下是经过深度代码核实后的完整修订计划：
 
- ---
- 实现步骤
+  ---
+  系统主链参考文档全面优化计划（修订版）
 
- Step 1：数据结构升级（PlanContracts.cs）
+  目标文件： system-flow-reference.html（当前 2824 行，上一轮已完成基础改动）
 
- 新增 StructuredConstraint 类（完整字段对应 constraint-reference.html）：
- // 通用字段
- string constraintId; string cType; string channel; string[] involvedAgents;
- // C1 Assignment
- string subject; string targetObject; bool exclusive;
- // C2 Completion
- string condition; string[] syncWith;
- // C3 Coupling
- int sign; string watchAgent; string reactTo;
- // C4 Priority
- string[] overrides; string triggerCondition; string fallback;
+  ---
+  执行优先级总览
 
- 更新 PlanStep：
- - 删除 string[] constraints（文本）
- - 新增 string[] constraintIds（引用 StructuredConstraint）
+  ┌──────┬────────┬────────┬────────────────────────────────────────────────────────────────────────────┬────────┐
+  │ 优先 │  编号  │  类别  │                                    描述                                    │ 复杂度 │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P0   │ CSS-1  │ CSS    │ Memory/Robustness 章节结构不符合标准 DOM                                   │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P0   │ CSS-2  │ CSS    │ memory-reflection 的内联 style 覆盖媒体查询                                │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P0   │ JS-1   │ JS     │ IntersectionObserver rootMargin 导航激活判定不准                           │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P0   │ ACC-1  │ 准确性 │ MemoryModule 接口名写错（RememberPlanSnapshot 未提及）                     │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P0   │ ACC-2  │ 准确性 │ ReflectionModule 遗漏第三个触发入口 NotifyImportantObservation 和 90s 冷却 │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P0   │ ACC-3  │ 准确性 │ memory-reflection 缺口描述有自指错误                                       │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P0   │ ACC-8  │ 准确性 │ RefereeManager.PollEvents() 主动轮询接口完全未提及                         │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P0   │ COMP-1 │ 完整性 │ 缺少 PlanningState 完整枚举表（状态→进入条件→对应章节）                    │ M      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P0   │ COMP-2 │ 完整性 │ SharedWhiteboard.defaultStaleSeconds=10f 自动超时过滤未提及                │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P0   │ STR-1  │ 结构   │ R1/R2/R3 实现建议缺少可测试的验收标准                                      │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P1   │ CSS-3  │ CSS    │ robustness 表格大量内联 style 与已有 .field-table 规则重复                 │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P1   │ CSS-4  │ CSS    │ details 展开无过渡动画，体验跳跃                                           │ M      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P1   │ JS-2   │ JS     │ 键盘导航缺少 focus-visible 样式                                            │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P1   │ JS-3   │ JS     │ 缺少"全部展开 / 全部折叠"按钮                                              │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P1   │ ACC-4  │ 准确性 │ AssignGroups 余数全给第一组（HTML 写"顺序均分"不准确）                     │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P1   │ ACC-5  │ 准确性 │ LLM#3 回退静默选 availableSlots[0] 未在文档中体现                          │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P1   │ ACC-6  │ 准确性 │ 各 LLM 的 maxTokens 限制未标注（LLM#3 只有 150！）                         │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P1   │ COMP-3 │ 完整性 │ timeLimit > 0 触发 TimeLimitCoroutine 未说明会做什么                       │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P1   │ COMP-4 │ 完整性 │ AgentStateServer HTTP 入口的含义未展开                                     │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P1   │ COMP-5 │ 完整性 │ commModule.ProcessMessages() 隐性依赖轮询节拍未说明                        │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P1   │ STR-2  │ 结构   │ robustness 缺少 CheckTimeout 失败广播死锁问题说明                          │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P1   │ STR-3  │ 结构   │ 来源索引缺少 HTN 论文                                                      │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P1   │ STR-4  │ 结构   │ overview 的 hero-grid 缺少"已知缺口"统计卡                                 │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P2   │ CSS-5  │ CSS    │ aside scrollbar 未美化                                                     │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P2   │ JS-4   │ JS     │ 缺少"回到顶部"按钮                                                         │ S      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P2   │ JS-5   │ JS     │ 代码块缺少"复制"按钮                                                       │ M      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P2   │ COMP-6 │ 完整性 │ 缺少主链全景 ASCII 流程图                                                  │ M      │
+  ├──────┼────────┼────────┼────────────────────────────────────────────────────────────────────────────┼────────┤
+  │ P2   │ STR-5  │ 结构   │ 每个章节缺少完整性状态徽章                                                 │ S      │
+  └──────┴────────┴────────┴────────────────────────────────────────────────────────────────────────────┴────────┘
 
- 更新 PlanSlot：
- - 删除 StepConstraint[] coordinationConstraints（旧类）
- - 新增 string[] constraintIds（引用）
+  ---
+  Phase 0：需先核实的源码事项
 
- 删除旧的 StepConstraint 类（被 StructuredConstraint 取代）
+  在落地部分内容之前，需要读以下文件：
 
- Step 2：任务合约升级（MissionContracts.cs）
+  ┌────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────────┐
+  │                  文件                  │                                 需确认的内容                                 │
+  ├────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────┤
+  │ PlanningModule.cs（第 600 行后）       │ CheckTimeout() 超时后完整退出路径；TimeLimitCoroutine() 实现                 │
+  ├────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────┤
+  │ ActionDecisionModule.cs（第 350 行后） │ ReadRefereeContext()、WriteWhiteboardDoneSignals()、WaitForC2Sync() 实现细节 │
+  ├────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────┤
+  │ IntelligentAgent.cs                    │ 确认 decisionCheckInterval = 2.0f 字段名和值                                 │
+  ├────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────┤
+  │ ReflectionModule.cs                    │ GetActionGuidance() 完整签名；autoReflectOnMissionCompletion 字段接线情况    │
+  ├────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────┤
+  │ AgentStateServer.cs                    │ HTTP 接口路径和 ExecuteCommand() 真实触发方式                                │
+  └────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────────┘
 
- ParsedMission 新增：
- - StructuredConstraint[] constraints - LLM#1 提取的全量约束列表
+  ---
+  Phase 1：CSS/Layout 修复（P0-P1）
 
- GroupBootstrapPayload 新增：
- - StructuredConstraint[] constraints - 广播给全组成员，让每人持有完整约束集
+  CSS-1（P0）：Memory/Robustness 章节结构不规范
 
- Step 3：执行上下文升级（ActionContracts.cs）
+  两个新章节的 chapter-header 没有套 chapter-title-wrap 类，且 chapter-tag 里有"⬡"装饰符与其他章节风格不符。需改为标准结构并去除装饰符。
 
- ActionExecutionContext 新增：
- - StructuredConstraint[] stepConstraints - 当前步骤关联的结构化约束对象（已从 ID 解析）        
- - List<string> executedActionsSummary - 已执行动作摘要（供 LLM 判断进度）
- - int iterationCount - 当前滚动迭代次数
- - const int MaxIterations = 10 - 防死锁上限
- - bool isRollingMode - 标记当前处于滚动模式，CompleteCurrentAction 据此决定行为
+  CSS-2（P0）：memory-reflection 内联 style 覆盖媒体查询
 
- Step 4：ADMStatus 新增（ExecutionEnums.cs）
+  第 2577 行 <div class="node-grid" style="grid-template-columns: ..."> 的内联 style 优先级高于 CSS 媒体查询，窄屏下不折单列。删除内联 style，直接复用    
+  .node-grid 类即可。
 
- BatchDone, // 当前批次动作全部完成，等待滚动循环处理（非步骤完成）
+  CSS-3（P1）：robustness 表格内联 style 冗余
 
- Step 5：SharedWhiteboard.cs（新建）
+  <table>/<th>/<td> 都带内联 style，而 .field-table 规则已存在。清理内联 style，改用 .field-table 类；通过 :nth-child 设置三列宽度（20% / 30% / 50%）。   
 
- 类设计（全局单例 MonoBehaviour，带详细注释和分区）：
+  CSS-4（P1）：details 展开无过渡动画
 
- // ── 数据类型区 ──────────────────────────────
- WhiteboardEntry { agentId, timestamp, constraintId, entryType, status, progress }
- // entryType: "IntentAnnounce" | "ReadySignal" | "DoneSignal" | "StatusUpdate"
+  添加 grid-template-rows: 0fr → 1fr 动画方案（或 max-height 方案），在 .details-body 上加 overflow: hidden; transition: grid-template-rows 0.25s ease。  
 
- // ── 内部存储区 ──────────────────────────────
- Dictionary<string, List<WhiteboardEntry>> _store  // key = groupId
+  CSS-5（P2）：aside scrollbar 美化
 
- // ── 写接口区 ────────────────────────────────
- WriteEntry(groupId, entry)
- // 按 (agentId, constraintId) 唯一键覆盖，last-write-wins，无需锁（每个 agent 只写自己的条目） 
+  添加 scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent 和 ::-webkit-scrollbar 规则。
 
- // ── 读接口区 ────────────────────────────────
- QueryEntries(groupId, constraintId, agentId=null, staleSeconds=10f)
- // 返回 List<WhiteboardEntry>，自动过滤超时条目
- bool HasSignal(groupId, constraintId, agentId, entryType)
- // 快速检查某 agent 是否已写某类型信号
+  ---
+  Phase 2：JS 交互改进（P0-P2）
 
- // ── 清理接口区 ──────────────────────────────
- ClearGroup(groupId)           // 任务结束时清空
- ClearEntry(groupId, agentId, constraintId)  // 单条清除
+  JS-1（P0）：IntersectionObserver rootMargin 不准
 
- 读写冲突处理：每个 agent 只写自己 agentId 的条目，不同 agent
- 互不覆盖。唯一可能冲突的情况是同一 agent 同一 constraintId 更新 → 覆盖最新值即可（Unity        
- 单线程，无需锁）。
+  当前 -20% 0px -70% 0px 对长章节判定偏早。改为 -10% 0px -85% 0px，threshold: 0。
 
- Step 6：RefereeManager.cs（新建）
+  JS-2（P1）：键盘导航缺少 focus-visible
 
- 类设计（全局单例 MonoBehaviour，带详细注释和分区）：
+  在 .nav-group a:hover, .nav-group a.active 追加 :focus-visible；添加 summary:focus-visible 样式。
 
- // ── 数据类型区 ──────────────────────────────
- RefereeEvent { eventType, constraintId, payload, visibleTo[], timestamp }
- // eventType:
- ResourceClaimed|ResourceReleased|AgentEliminated|ConditionMet|MissionResult|PriorityOverride   
+  JS-3（P1）：全展开 / 全折叠按钮
 
- // ── 注册接口区（Agent 启动时调用）────────────
- RegisterAgent(agentId, Action<RefereeEvent> handler)
- UnregisterAgent(agentId)
+  在 aside 导航底部添加两个按钮，JS 里：document.querySelectorAll('details').forEach(d => d.open = true/false)。
 
- // ── 广播接口区（裁判逻辑调用）───────────────
- BroadcastEvent(RefereeEvent evt)
- // 按 visibleTo 过滤，只投递给可见 agent 的已注册 handler
+  JS-4（P2）：回到顶部按钮
 
- // ── 查询接口区（ADM 轮询用）─────────────────
- PollEvents(agentId, constraintId, since=0f)
- // 返回该 agent 可见且与 constraintId 匹配的未处理事件列表
- AcknowledgeEvent(agentId, eventId)
- // 标记已读，避免重复处理
+  position: fixed; bottom: 24px; right: 24px，scrollY > 600 时显示，点击 scrollTo({top:0, behavior:'smooth'})。
 
- // ── 清理接口区 ──────────────────────────────
- ClearEvents(olderThanSeconds=60f)
+  JS-5（P2）：代码块复制按钮
 
- Step 7：PlanningModule 升级
+  JS 自动为每个 <pre> 注入 <button class="copy-btn">复制</button>，点击调用 navigator.clipboard.writeText()。约 30 行 JS + 10 行 CSS。
 
- 新增方法：
- - GetConstraint(constraintId) → StructuredConstraint - ADM 通过 ID 查询完整约束对象
- - GetGroupId() → string - 供白板读写使用
+  ---
+  Phase 3：内容准确性修复（基于源码核实）
 
- LLM#1 提示词新增：要求输出 constraints:
- StructuredConstraint[]，包含从任务描述中提取的所有协同约束；格式参考 StructuredConstraint      
- 字段说明。
+  ACC-1（P0）：MemoryModule 接口描述错误
 
- LLM#4 提示词新增：步骤拆解时为每个 PlanStep 分配 constraintIds[]（从 constraints
- 中选择适用于本步骤的约束 ID）。
+  HTML 写的 StoreMemory() / GetRelevantInsights() 与实际代码不符。实际接口是：
+  - Remember() / StoreMemory(Memory m) — 统一入库
+  - RememberPlanSnapshot(missionId, slotId, stepLabel, planSummary, targetRef) — 专用于 PlanningModule Active 阶段（HTML 完全未提）
+  - 检索通过 ReflectionModule.GetActionGuidance() 间接实现，没有 GetRelevantInsights() 这个方法名
 
- OnGroupBootstrap：接收 GroupBootstrapPayload 时，将 payload.constraints 存储到本地字典，供
- GetConstraint 查询。
+  ACC-2（P0）：ReflectionModule 触发条件不完整
 
- 广播时：GroupBootstrapPayload 中带上 constraints 数组。
+  遗漏了第三个触发入口 NotifyImportantObservation() → TriggerReason.ImportantObservation，以及 reflectionCooldownSeconds = 90f 冷却机制和
+  GetActionGuidance(missionText, missionId, slotId, stepText, targetRef, maxInsights=2) 查询签名。
 
- Step 8：ActionDecisionModule 重构（核心）
+  ACC-3（P0）：memory-reflection 缺口描述有自指错误
 
- StartStep 改动：
- - 构建 ctx.stepConstraints = 通过 constraintIds 从 PlanningModule 查询完整
- StructuredConstraint 对象
- - 设置 ctx.isRollingMode = true
- - 调用 RunRollingLoop(step) 协程（原 RunLLMA 改名并重构）
+  "ReflectionModule 只被 ActionDecisionModule 和 ReflectionModule 弱引用" — ReflectionModule 不会引用自身，需改为准确描述：MemoryModule 已在
+  PlanningModule.Start() 通过 GetComponent 取到引用，但 memory 字段后续调用点未实现。
 
- CompleteCurrentAction 改动：
- 当 currentActionIdx >= actionQueue.Length：
-   if ctx.isRollingMode → SetStatus(BatchDone)，不调用 planningModule.CompleteCurrentStep()     
-   else → 原有逻辑（SetStatus(Done), planningModule.CompleteCurrentStep()）
+  ACC-4（P1）：AssignGroups 余数分配逻辑
 
- RunRollingLoop(step) 新协程逻辑：
- SetStatus(Interpreting)
- loop (iterationCount < MaxIterations):
-   1. CheckC4Triggers() → 如触发，执行 fallback AtomicAction，结束步骤（强制完成或Failed）      
-   2. ReadWhiteboardContext() → 读取本步骤所有 channel=whiteboard 约束的白板条目
-   3. CheckC3WaitConditions() → 若 C3 sign=+1 且 watchAgent 未就绪，生成 Wait
- 动作并执行，continue
-   4. BuildRollingPrompt(step, whiteboard_ctx, referee_ctx, perception, history) → string       
-   5. LLM 调用，返回 JSON:
-      {"isDone": bool, "doneReason": "...", "nextActions": [...]}
-      nextActions 为 1-3 个 AtomicAction，isDone=true 时可为空
-   6. 解析 JSON
-      if isDone:
-        WriteWhiteboardSignals(DoneSignal)   // 写 C2 完成信号
-        if C2.syncWith 非空:
-          yield WaitForSyncWith(groupId, constraintId, syncWith[], timeout=30s)
-        PlanningModule.CompleteCurrentStep()
-        SetStatus(Done)
-        yield break
-      if nextActions 为空:
-        log warning，强制设 isDone=true，结束
-   7. ctx.actionQueue = nextActions; ctx.currentActionIdx = 0
-      WriteWhiteboardSignals(IntentAnnounce) // 宣告意图（可选）
-      SetStatus(Running)
-      yield return new WaitUntil(() => status == BatchDone || status == Failed)
-      if status == Failed: yield break
-   8. UpdateHistory(nextActions)  // 追加到 executedActionsSummary
-      iterationCount++
-      SetStatus(Interpreting)     // 进入下一轮
+  代码第 501-509 行明确写了余数全给第一组（g == 0 ? remainder : 0），而 HTML 写"顺序均分"——这不准确。5 Agent 分 2 组实际是 g0 得 3 台、g1 得 2 台。       
 
- // 超出 MaxIterations：强制完成，log warning
- PlanningModule.CompleteCurrentStep()
- SetStatus(Done)
+  ACC-5（P1）：LLM#3 回退行为未记录
 
- BuildRollingPrompt 新结构：
- [角色定义] 你是无人机战术执行规划器...
+  代码第 357、374-378 行：LLM#3 返回空或 JSON 解析失败时，静默选择 availableSlots[0]，不进入 Failed。这造成"第一个槽位偏好"的隐性偏差，在 Contract Net    
+  优化建议里尤其重要（因为 Contract Net 需要真实竞标数据，但现有回退会绕过竞标）。
 
- [步骤目标]
- 步骤文本：{step.text}
- 完成条件（doneCond）：{step.doneCond}
+  ACC-6（P1）：各 LLM token 限制未标注
 
- [已执行历史]
- {executedActionsSummary}  // 列表，供 LLM 判断进度
+  - LLM#1：maxTokens: 1000
+  - LLM#2：maxTokens: 1000
+  - LLM#3：maxTokens: 150（极短！直接解释了为何 LLM#3 只输出 {"slotId":"s1"}）
+  - LLM#4：maxTokens: 800
+  - 滚动规划：maxTokens: 900
 
- [当前状态]
- 位置：{currentLocationName}
- 感知快照：{perception}
+  Contract Net 优化建议里须补充：若改为携带竞标数据，LLM#3 需提升到 300-400 tokens。
 
- [白板状态（组内协同）]
- {whiteboard_entries_for_this_step}
+  ACC-7（P1）：decisionCheckInterval 来源需标注
 
- [裁判事件]
- {relevant_referee_events}
+  HTML 写了 decisionCheckInterval = 2.0f 但未注明来自 IntelligentAgent.cs，需核实并标注来源。
 
- [协同约束]
- {structured_constraint_summary}  // 结构化格式，包含 cType/channel/reactTo 等
+  ACC-8（P0）：RefereeManager.PollEvents() 完全未提及
 
- [输出格式]
- 返回 JSON:
- {
-   "isDone": true/false,
-   "doneReason": "说明为什么完成或未完成",
-   "nextActions": [  // isDone=true 时可为空数组；最多3个
-     {"actionId":"aa_N", "type":"...", ...}
-   ]
- }
+  RefereeManager.cs 除被动推送外还有 PollEvents(agentId, ackPolicy) 主动轮询接口，注释明确写"ADM 可在每次滚动规划迭代前调用"。R1
+  接线方案应将两种方式都列出。
 
- ---
- 关键约束处理逻辑
+  ---
+  Phase 4：内容完整性补充
 
- ┌─────────────┬─────────────────────────────┬─────────────────────────────────────────────┐    
- │  约束类型   │   在滚动循环中的处理位置    │                白板/裁判操作                │    
- ├─────────────┼─────────────────────────────┼─────────────────────────────────────────────┤    
- │ C1          │ BuildRollingPrompt          │ 写 IntentAnnounce 宣告占有意图              │    
- │ Assignment  │ 提供分配信息                │                                             │    
- ├─────────────┼─────────────────────────────┼─────────────────────────────────────────────┤    
- │ C2          │ isDone 判断后               │ 写 DoneSignal；等待 syncWith 全部写入       │    
- │ Completion  │ WaitForSyncWith             │                                             │    
- ├─────────────┼─────────────────────────────┼─────────────────────────────────────────────┤    
- │ C3 sign=+1  │ 每轮开始                    │ 等待 watchAgent 写                          │    
- │             │ CheckC3WaitConditions       │ ReadySignal；自己到位时写 ReadySignal       │    
- ├─────────────┼─────────────────────────────┼─────────────────────────────────────────────┤    
- │ C3          │ BuildRollingPrompt          │ 监听 RefereeManager 裁判广播                │    
- │ sign=0/-1   │ 提供裁判事件                │                                             │    
- ├─────────────┼─────────────────────────────┼─────────────────────────────────────────────┤    
- │ C4 Priority │ 每轮开始 CheckC4Triggers    │ 触发时写 StatusUpdate（预警）；直接生成     │    
- │             │ 最先检查                    │ fallback 动作                               │    
- └─────────────┴─────────────────────────────┴─────────────────────────────────────────────┘    
+  COMP-1（P0）：PlanningState 完整枚举表
 
- ---
- 验证方案
+  在"阶段序号与 PlanningState 不对应"的 meta-note 下方，添加字段表：
 
- 1. 单 Agent 滚动规划：给定一个步骤 text + doneCond，观察 LLM 是否多轮生成动作并最终判断        
- isDone=true，日志应看到多次 [ADM] → Interpreting → Running → BatchDone → Interpreting 循环     
- 2. 白板同步：两个 Agent 执行 C3 sign=+1 约束，观察 Agent A 是否等待 Agent B 写 ReadySignal     
- 后才继续
- 3. C2 同步完成：两个 Agent 都完成后，观察 PlanningModule.CompleteCurrentStep 是否在双方都写    
- DoneSignal 后才触发
- 4. 裁判广播：调用 RefereeManager.BroadcastEvent，验证 visibleTo 过滤是否正确，不可见 agent     
- 收不到事件
- 5. C4 降级：手动降低 agentState.BatteryLevel，观察 ADM 是否在下一轮开始时触发 fallback
- 动作而非继续执行原计划
- 6. 防死锁：禁止 watchAgent 写 ReadySignal，验证 WaitForSyncWith 超时后能正确退出
+  ┌──────────┬──────────────────┬────────────────┬────────────────────────┐
+  │  枚举值  │       含义       │ 对应 HTML 章节 │        进入条件        │
+  ├──────────┼──────────────────┼────────────────┼────────────────────────┤
+  │ Idle     │ 等待任务提交     │ 阶段0          │ 初始/任务完成后        │
+  ├──────────┼──────────────────┼────────────────┼────────────────────────┤
+  │ Parsing  │ LLM#1 任务解析中 │ 阶段1          │ SubmitMissionRequest() │
+  ├──────────┼──────────────────┼────────────────┼────────────────────────┤
+  │ Grouping │ 本地分组计算     │ 阶段2          │ Parsing 完成           │
+  ├──────────┼──────────────────┼────────────────┼────────────────────────┤
+  │ ...      │ ...              │ ...            │ ...                    │
+  ├──────────┼──────────────────┼────────────────┼────────────────────────┤
+  │ Active   │ ADM 消费执行步骤 │ 阶段8（HTML）  │ StepGen 完成           │
+  ├──────────┼──────────────────┼────────────────┼────────────────────────┤
+  │ Failed   │ 超时/解析失败    │ —              │ CheckTimeout()         │
+  └──────────┴──────────────────┴────────────────┴────────────────────────┘
 
- ---
- 备注
+  COMP-2（P0）：SharedWhiteboard 超时过滤
 
- - ParsedMission.constraints 由 LLM#1 生成；LLM#1 需要能从任务自然语言提取
- StructuredConstraint，提示词需补充示例和字段说明
- - 白板超时阈值 staleSeconds=10f 可在 Inspector 中暴露为序列化字段
- - RefereeManager 初期由开发者手动调用 BroadcastEvent 测试；后续可接入物理检测逻辑
- - 实现顺序建议：数据结构 → Whiteboard → Referee → PlanningModule → ADM 重构
-╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+  defaultStaleSeconds = 10f：超过 10 秒未更新的条目在 QueryEntries/HasSignal 时被自动过滤。这直接影响 C3 sign=+1 等待可靠性：若 ReadySignal 发出后超 10   
+  秒未刷新，等待方会误判"信号不存在"。
+
+  COMP-3（P1）：timeLimit 触发 TimeLimitCoroutine
+
+  timeLimit > 0 时 RunLLM4() 后会启动 TimeLimitCoroutine(timeLimit)。需核实该协程到时后的处理逻辑（预计进入 Failed 或 Done）。
+
+  COMP-4（P1）：AgentStateServer HTTP 入口含义
+
+  AgentStateServer 是 Unity 运行时内嵌的 HTTP 服务器，可通过 REST 接口触发 SubmitMissionRequest()。这是外部监控面板（如 Web UI）与主链之间的唯一接线点。  
+
+  COMP-5（P1）：commModule.ProcessMessages() 隐性依赖
+
+  DecideNextAction() 每次调用时先执行 commModule.ProcessMessages()，意味着白板/裁判消息的传递依赖 Agent 周期决策——不再决策就不再收消息。
+
+  COMP-6（P2）：主链全景 ASCII 流程图
+
+  在 #overview hero-grid 后添加完整调用链流程图，展示从 SubmitMissionRequest 到 CompleteCurrentAction() 的路径，包含组长/成员分支点、LLM
+  调用点、白板读写点。
+
+  ---
+  Phase 5：结构改进
+
+  STR-1（P0）：R1/R2/R3 验收标准
+
+  - R1 验收： 手动调用 BroadcastEvent(ResourceClaimed,...)，确认 ReadRefereeContext() 返回非空且 LLM prompt 包含该事件描述
+  - R2 验收： 两 Agent 场景，B 抵达后写 ReadySignal，确认 A 的等待条件从"返回 Wait"变为"返回 null（继续执行）"
+  - R3 验收： 注入高优先级感知事件，确认 pendingPerceptionEvents 被消费、actionQueue 被清空、下轮 prompt 包含事件描述
+
+  STR-2（P1）：CheckTimeout 失败死锁问题
+
+  当前超时进入 Failed 后没有广播失败通知，也没有为失败成员补充分配新槽位。整组任务会因单一成员超时而陷入等待死锁。建议超时后广播 GroupBroadcast 通知队友本
+   Agent 退出。
+
+  STR-3（P1）：来源索引补 HTN 文献
+
+  添加 SHOP2 论文（Nau et al., 2003，HTN Planning 的经典实现）。
+
+  STR-4（P1）：overview 已知缺口卡片
+
+  在 hero-grid 中添加"已知主链缺口"卡：R1 裁判未注册 · R2 ReadySignal 无写入点 · R3 感知重规划为 TODO · R5 API Key 硬编码。
+
+  STR-5（P2）：章节完整性状态徽章
+
+  每个 chapter-header 右侧加状态徽章：stage0-6 = 绿色"接入"，stage7 = 黄色"部分缺口"，Memory/Reflection = 紫色"接口预留"，Robustness = 黄色"部分处理"。   
+
+  ---
+  实施顺序建议： P0 项全部完成 → P1 项按 CSS-3/ACC-4-6/COMP-1-2/STR-1-4 顺序 → P2 项按需选做。
