@@ -486,13 +486,18 @@ public class PlanningModule : MonoBehaviour
             "   C3 sign=-1(动态互斥)→ 绑定到可能发生目标竞争的动作步骤(进入共享区域/资源的步骤)\n" +
             "      参与竞争的是所有绑定了同一 constraintId 的成员,不是看 watchAgent\n" +
             "8. 同一条约束只分配给一个步骤,不重复绑定。\n\n" +
-            "示例(生产侧步骤,含 C3+C2 约束):\n" +
+            "示例(agent_A 负责南区搜索后同步回传,含 C3 sign=+1 + C2 约束):\n" +
             "当前AgentID:\"agent_A\"\n" +
-            "desc:\"飞往掩护位执行搜索,完成后回传坐标\"\n" +
-            "可用约束: c3_wait_cover(C3, watchAgent=agent_A), c2_sync_report(C2)\n" +
+            "desc:\"飞往南区执行地面目标搜索,搜索完成后通过白板同步回传结果\"\n" +
+            "doneCond:\"南区搜索完成且结果已回传\"\n" +
+            "可用约束:\n" +
+            "  c3_wait_cover — C3, sign=+1, watchAgent=agent_A, reactTo=ReadySignal\n" +
+            "    (agent_A == watchAgent → 绑定到"完成搜索后需要发出 ReadySignal"的步骤)\n" +
+            "  c2_sync_report — C2, syncWith=[s0,s1]\n" +
+            "    (绑定到实质同步动作步骤:回传搜索结果)\n" +
             "[\n" +
-            "  {\"stepId\":\"step_1\",\"text\":\"飞往掩护位执行搜索\",\"doneCond\":\"掩护位搜索完成\",\"constraintIds\":[\"c3_wait_cover\"]},\n" +
-            "  {\"stepId\":\"step_2\",\"text\":\"回传坐标\",\"doneCond\":\"回传完成\",\"constraintIds\":[\"c2_sync_report\"]}\n" +
+            "  {\"stepId\":\"step_1\",\"text\":\"飞往南区执行地面目标搜索\",\"doneCond\":\"南区搜索完成\",\"constraintIds\":[\"c3_wait_cover\"]},\n" +
+            "  {\"stepId\":\"step_2\",\"text\":\"通过白板同步回传搜索结果\",\"doneCond\":\"结果回传完成\",\"constraintIds\":[\"c2_sync_report\"]}\n" +
             "]\n\n";
 
         string llmResult = null;
