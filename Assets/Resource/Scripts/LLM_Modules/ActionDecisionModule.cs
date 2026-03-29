@@ -199,11 +199,8 @@ public class ActionDecisionModule : MonoBehaviour
 
         while (ctx.iterationCount < MaxIterations)
         {
-            // ── 1. 读取白板上下文 ───────────────────────────────────
-            string whiteboardCtx = ReadWhiteboardContext();
-
-            // ── 2. 检查 C3 等待条件 ─────────────────────────────────
-            AtomicAction waitAction = CheckC3WaitConditions();
+            // ── 1. 读取白板上下文 & 检查 C3 等待条件 ─────────────────
+            var (waitAction, whiteboardCtx) = CheckWhiteboardAndGetContext();
             if (waitAction != null)
             {
                 ctx.actionQueue = new[] { waitAction };
@@ -216,16 +213,13 @@ public class ActionDecisionModule : MonoBehaviour
                 continue;
             }
 
-            // ── 3. 读取裁判事件 ─────────────────────────────────────
-            string refereeCtx = ReadRefereeContext();
-
-            // ── 4. 获取地图信息 ─────────────────────────────────────
+            // ── 3. 获取地图信息 ─────────────────────────────────────
             string relativeMap = campusGrid != null
                 ? MapTopologySerializer.GetAgentRelativeMap(campusGrid, agentState.Position)
                 : "(地图不可用)";
 
             // ── 5. 构建滚动规划提示词 ────────────────────────────────
-            string prompt = BuildRollingPrompt(step, whiteboardCtx, refereeCtx, relativeMap);
+            string prompt = BuildRollingPrompt(step, whiteboardCtx, relativeMap);
 
             // ── 6. 调用 LLM ──────────────────────────────────────────
             string llmResult = null;
@@ -321,7 +315,7 @@ public class ActionDecisionModule : MonoBehaviour
     // 滚动规划提示词构建
     // ─────────────────────────────────────────────────────────────
 
-    private string BuildRollingPrompt(PlanStep step, string whiteboardCtx, string refereeCtx, string relativeMap)
+    private string BuildRollingPrompt(PlanStep step, string whiteboardCtx, string relativeMap)
     {
         // 已执行历史
         string historyBlock = ctx.executedActionsSummary != null && ctx.executedActionsSummary.Count > 0
@@ -350,10 +344,7 @@ public class ActionDecisionModule : MonoBehaviour
             "═══ 周边地图（以本机为中心，半径300m） ═══\n" +
             relativeMap + "\n\n" +
             "═══ 白板状态（组内协同） ═══\n" +
-            (string.IsNullOrWhiteSpace(whiteboardCtx) ? "（无白板数据）" : whiteboardCtx) + "\n" +
-            "（⚠ 标记的目标已被其他 Agent 占用，请在本轮 nextActions 中避免前往）\n\n" +
-            "═══ 裁判事件 ═══\n" +
-            (string.IsNullOrWhiteSpace(refereeCtx) ? "（无裁判事件）" : refereeCtx) + "\n\n" +
+            (string.IsNullOrWhiteSpace(whiteboardCtx) ? "（无白板数据）" : whiteboardCtx) + "\n\n" +
             "═══ 协同约束 ═══\n" +
             (string.IsNullOrWhiteSpace(constraintBlock) ? "无约束（本步骤独立执行）" : constraintBlock) + "\n\n" +
             "═══ 原子动作类型说明 ═══\n" +
@@ -428,114 +419,165 @@ public class ActionDecisionModule : MonoBehaviour
     // ─────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// 检查 C3 约束的等待条件：
-    ///   sign=+1：等待 watchAgent 写入 ReadySignal（单向前置依赖）
-    ///   sign=-1：动态互斥，处理完全移至 Prompt 层（ReadWhiteboardContext）和写入层（WriteC3MutexClaims），此处不再拦截。
-    /// 返回 Wait AtomicAction 表示需要等待；返回 null 表示可以继续。
+    /// 单次遍历本步骤约束，完成两件事：
+    ///
+    /// ── Phase 1: C3 sign=+1 等待拦截 ──────────────────────────────────────
+    /// C3 sign=+1 是单向前置依赖：同一 constraintId 同时绑定到等待侧和生产侧。
+    ///   - 等待侧（myId != watchAgent）：执行本步骤前必须等 watchAgent 写入 ReadySignal。
+    ///   - 生产侧（myId == watchAgent）：本步骤完成后由 WriteWhiteboardDoneSignals 写 ReadySignal，无需此处拦截。
+    /// 若等待条件未满足，提前返回 Wait AtomicAction（whiteboardCtx 为空，调用方跳过 LLM）。
+    /// 提前返回可避免 Phase 2 白板查询的无效开销。
+    ///
+    /// ── Phase 2: 构建 JSON 白板上下文 ──────────────────────────────────────
+    /// 遍历所有 channel=whiteboard 约束，按语义分三组序列化为紧凑 JSON：
+    ///   "occupied" : C3 sign=-1 互斥约束中，其他 agent 的 IntentAnnounce.progress（已占目标名）。
+    ///                LLM 应在本轮 nextActions 中避开这些目标（先到先得互斥）。
+    ///                自身条目不收录（对 LLM 无用）。
+    ///   "signals"  : DoneSignal（type="done"）和 ReadySignal（type="ready"）。
+    ///                告知 LLM 哪些依赖步骤已完成或就绪。
+    ///   "intents"  : 非 C3-1 约束下其他 agent 的 IntentAnnounce / StatusUpdate。
+    ///                提供队友当前执行意图，供 LLM 协同决策参考。
+    /// 空字段不输出；三组均空时返回 string.Empty（调用方显示"无白板数据"）。
     /// </summary>
-    private AtomicAction CheckC3WaitConditions()
+    private (AtomicAction waitAction, string whiteboardCtx) CheckWhiteboardAndGetContext()
     {
-        if (ctx.stepConstraints == null) return null;
+        if (SharedWhiteboard.Instance == null || ctx.stepConstraints == null)
+            return (null, string.Empty);
         string groupId = planningModule?.GetGroupId();
-        if (string.IsNullOrWhiteSpace(groupId) || SharedWhiteboard.Instance == null) return null;
+        if (string.IsNullOrWhiteSpace(groupId)) return (null, string.Empty);
         string myId = agentProperties?.AgentID ?? string.Empty;
 
+        // ── Phase 1: C3 sign=+1 等待拦截 ──────────────────────────────────────────
+        // 注：此处只处理等待侧逻辑；生产侧（myId == watchAgent）在步骤完成时由
+        //     WriteWhiteboardDoneSignals() 写 ReadySignal，不在此处操作。
         foreach (var c in ctx.stepConstraints)
         {
             if (c.cType != "C3" && c.cType != "Coupling") continue;
-
-            if (c.sign == 1)
+            if (c.sign != 1) continue;
+            if (string.IsNullOrWhiteSpace(c.watchAgent))
             {
-                // C3 sign=+1 采用双边绑定:
-                // - 若 self != watchAgent,当前是等待侧,执行该步骤前等待对方写 ReadySignal
-                // - 若 self == watchAgent,当前是生产侧,该步骤完成后由本 Agent 写 ReadySignal
-                if (string.IsNullOrWhiteSpace(c.watchAgent))
-                {
-                    Debug.LogWarning($"[ADM] {myId} C3+1 constraint {c.constraintId} missing runtime watchAgent, skip wait");
-                    continue;
-                }
-
-                if (string.Equals(myId, c.watchAgent, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                bool watchReady = SharedWhiteboard.Instance.HasSignal(
-                    groupId, c.constraintId, c.watchAgent, WhiteboardEntryType.ReadySignal);
-                if (!watchReady)
-                {
-                    Debug.Log($"[ADM] {myId} C3+1 约束 {c.constraintId} 等待 {c.watchAgent} 就绪");
-                    return new AtomicAction
-                    {
-                        actionId      = "aa_wait_c3_plus",
-                        type          = AtomicActionType.Wait,
-                        targetName    = string.Empty,
-                        targetAgentId = c.watchAgent,
-                        duration      = 5f,
-                        actionParams  = $"等待 {c.watchAgent} 就绪（约束 {c.constraintId}）",
-                        spatialHint   = string.Empty,
-                    };
-                }
+                // watchAgent 在运行时回填阶段（BuildRuntimeConstraintsForAgent）应被填充；
+                // 若为空说明规划数据异常，跳过本约束以免误拦截。
+                Debug.LogWarning($"[ADM] {myId} C3+1 constraint {c.constraintId} missing runtime watchAgent, skip wait");
+                continue;
             }
-            // sign=-1：不在此处拦截，由 ReadWhiteboardContext 将已占目标注入 Prompt，让 LLM 主动避开
+            if (string.Equals(myId, c.watchAgent, StringComparison.OrdinalIgnoreCase))
+                continue; // 本机是生产侧，无需等待
+
+            // 查询 watchAgent 是否已写入 ReadySignal
+            bool watchReady = SharedWhiteboard.Instance.HasSignal(
+                groupId, c.constraintId, c.watchAgent, WhiteboardEntryType.ReadySignal);
+            if (!watchReady)
+            {
+                Debug.Log($"[ADM] {myId} C3+1 约束 {c.constraintId} 等待 {c.watchAgent} 就绪");
+                // 返回 Wait 动作；调用方检测到 waitAction != null 后跳过 LLM，直接执行等待
+                return (new AtomicAction
+                {
+                    actionId      = "aa_wait_c3_plus",
+                    type          = AtomicActionType.Wait,
+                    targetName    = string.Empty,
+                    targetAgentId = c.watchAgent,
+                    duration      = 5f,
+                    actionParams  = $"等待 {c.watchAgent} 就绪（约束 {c.constraintId}）",
+                    spatialHint   = string.Empty,
+                }, string.Empty);
+            }
         }
-        return null;
-    }
 
-    /// <summary>读取白板上与本步骤 channel=whiteboard 约束相关的条目，格式化为字符串。
-    /// C3 sign=-1 约束额外追加其他 agent 的已占目标，供 LLM 主动避开。</summary>
-    private string ReadWhiteboardContext()
-    {
-        if (SharedWhiteboard.Instance == null || ctx.stepConstraints == null) return string.Empty;
-        string groupId = planningModule?.GetGroupId();
-        if (string.IsNullOrWhiteSpace(groupId)) return string.Empty;
-        string myId = agentProperties?.AgentID ?? string.Empty;
+        // ── Phase 2: 构建 JSON 白板上下文 ──────────────────────────────────────────
+        // 先收集所有 C3 sign=-1 约束 ID，用于后续分类（互斥 vs 普通意图）
+        var mutexConstraintIds = new HashSet<string>();
+        foreach (var c in ctx.stepConstraints)
+            if ((c.cType == "C3" || c.cType == "Coupling") && c.sign == -1)
+                mutexConstraintIds.Add(c.constraintId);
 
-        var sb = new StringBuilder();
+        var occupied = new List<string>();                      // 已被他人占用的目标名
+        var signals  = new List<Dictionary<string, string>>();  // DoneSignal / ReadySignal
+        var intents  = new List<Dictionary<string, string>>();  // 非互斥 IntentAnnounce / StatusUpdate
+
         foreach (var c in ctx.stepConstraints)
         {
             if (c.channel != "whiteboard") continue;
-            var entries = SharedWhiteboard.Instance.QueryEntries(groupId, c.constraintId);
-            foreach (var e in entries)
-                sb.AppendLine($"  [{e.constraintId}] agent={e.agentId}, type={e.entryType}, status={e.status}, progress={e.progress}");
-        }
+            // isMutex=true 时：该约束是 C3 sign=-1 互斥约束，IntentAnnounce 代表"已占目标"
+            bool isMutex = mutexConstraintIds.Contains(c.constraintId);
 
-        // 收集 C3 sign=-1 约束中其他 agent 的已占目标，注入 Prompt 让 LLM 主动避开
-        foreach (var c in ctx.stepConstraints)
-        {
-            if ((c.cType != "C3" && c.cType != "Coupling") || c.sign != -1) continue;
-            var entries = SharedWhiteboard.Instance.QueryEntries(groupId, c.constraintId);
-            foreach (var e in entries)
+            foreach (var e in SharedWhiteboard.Instance.QueryEntries(groupId, c.constraintId))
             {
-                if (e.agentId == myId) continue;
-                if (e.entryType != WhiteboardEntryType.IntentAnnounce) continue;
-                if (string.IsNullOrEmpty(e.progress)) continue;
-                sb.AppendLine($"  ⚠ [{e.agentId}] 已占用目标：{e.progress}");
+                switch (e.entryType)
+                {
+                    case WhiteboardEntryType.DoneSignal:
+                        // 步骤完成信号，由 WriteWhiteboardDoneSignals 写入（C2 约束）
+                        signals.Add(new Dictionary<string, string>
+                            { ["agent"] = e.agentId, ["cid"] = c.constraintId, ["type"] = "done" });
+                        break;
+
+                    case WhiteboardEntryType.ReadySignal:
+                        // 就绪信号，由 WriteWhiteboardDoneSignals 写入（C3 sign=+1 生产侧）
+                        signals.Add(new Dictionary<string, string>
+                            { ["agent"] = e.agentId, ["cid"] = c.constraintId, ["type"] = "ready" });
+                        break;
+
+                    case WhiteboardEntryType.IntentAnnounce:
+                        if (isMutex)
+                        {
+                            // C3 sign=-1：IntentAnnounce.progress = 该 agent 已锁定的目标名。
+                            // 仅收录他人条目；自身条目对本机 LLM 决策无意义，丢弃。
+                            if (e.agentId != myId && !string.IsNullOrEmpty(e.progress))
+                                occupied.Add(e.progress);
+                        }
+                        else
+                        {
+                            // 非互斥约束：记录为普通意图宣告供 LLM 参考
+                            var entry = new Dictionary<string, string>
+                                { ["agent"] = e.agentId, ["cid"] = c.constraintId };
+                            if (!string.IsNullOrEmpty(e.progress)) entry["progress"] = e.progress;
+                            intents.Add(entry);
+                        }
+                        break;
+
+                    case WhiteboardEntryType.StatusUpdate:
+                        // 通用状态更新；progress 为空则无实质内容，跳过
+                        if (!string.IsNullOrEmpty(e.progress))
+                            intents.Add(new Dictionary<string, string>
+                                { ["agent"] = e.agentId, ["cid"] = c.constraintId, ["progress"] = e.progress });
+                        break;
+                }
             }
         }
 
-        return sb.ToString().TrimEnd();
-    }
+        // ── Phase 3: 读取裁判通知（跨队情报，组长写入，队员读取）─────────────────
+        var refereeEntries = SharedWhiteboard.Instance.QueryEntries(
+            groupId, GroupMonitor.RefereeConstraintId);
 
-    /// <summary>轮询裁判事件中与本步骤约束相关的条目，格式化为字符串并标记已读。</summary>
-    private string ReadRefereeContext()
-    {
-        if (RefereeManager.Instance == null || ctx.stepConstraints == null) return string.Empty;
-        string agentId = agentProperties?.AgentID;
-        if (string.IsNullOrWhiteSpace(agentId)) return string.Empty;
-
-        var sb = new StringBuilder();
-        foreach (var c in ctx.stepConstraints)
+        var refereeList = new List<Dictionary<string, string>>();
+        foreach (var e in refereeEntries)
         {
-            var events = RefereeManager.Instance.PollEvents(agentId, c.constraintId);
-            foreach (var evt in events)
+            if (e.entryType != WhiteboardEntryType.RefereeNotice) continue;
+            var notice = JsonUtility.FromJson<RefereeNoticeData>(e.progress);
+            if (notice == null) continue;
+            refereeList.Add(new Dictionary<string, string>
             {
-                sb.AppendLine($"  [{evt.constraintId}] {evt.eventType}: {evt.payload}");
-                RefereeManager.Instance.AcknowledgeEvent(agentId, evt.eventId);
-            }
+                ["from"]    = notice.fromGroupId,
+                ["event"]   = notice.eventType,
+                ["summary"] = notice.summary,
+                ["at"]      = notice.receivedAt.ToString("F1"),
+            });
         }
-        return sb.ToString().TrimEnd();
+
+        if (occupied.Count == 0 && signals.Count == 0 && intents.Count == 0 && refereeList.Count == 0)
+            return (null, string.Empty);
+
+        // 按重要性排序字段（occupied 最关键，放最前）；空字段不序列化
+        var result = new Dictionary<string, object>();
+        if (occupied.Count > 0)   result["occupied"] = occupied;
+        if (signals.Count > 0)    result["signals"]  = signals;
+        if (intents.Count > 0)    result["intents"]  = intents;
+        if (refereeList.Count > 0) result["referee"] = refereeList;
+
+        return (null, JsonConvert.SerializeObject(result));
     }
 
-    /// <summary>Handle whiteboard writes after the current step completes.</summary>
+/// <summary>Handle whiteboard writes after the current step completes.</summary>
     private void WriteWhiteboardDoneSignals()
     {
         if (SharedWhiteboard.Instance == null || ctx.stepConstraints == null) return;
@@ -543,18 +585,24 @@ public class ActionDecisionModule : MonoBehaviour
         if (string.IsNullOrWhiteSpace(groupId)) return;
         string agentId = agentProperties?.AgentID ?? string.Empty;
 
+        var currentStep = planningModule?.GetCurrentStep();
+        string roleTag  = ctx.role.ToString();
+        string doneCond = currentStep != null
+            ? (string.IsNullOrWhiteSpace(currentStep.doneCond) ? currentStep.text : currentStep.doneCond)
+            : ctx.stepText;
+
         foreach (var c in ctx.stepConstraints)
         {
             if (c.cType == "C2" || c.cType == "Completion")
             {
-                // C2：写 DoneSignal
+                // C2：写 DoneSignal，progress 格式 "[角色] 完成条件" 供 GroupMonitor 收集
                 SharedWhiteboard.Instance.WriteEntry(groupId, new WhiteboardEntry
                 {
                     agentId      = agentId,
                     constraintId = c.constraintId,
                     entryType    = WhiteboardEntryType.DoneSignal,
                     status       = 1,
-                    progress     = "步骤完成",
+                    progress     = $"[{roleTag}] {doneCond}",
                 });
                 Debug.Log($"[ADM] {agentId} 写入 DoneSignal: constraintId={c.constraintId}");
             }

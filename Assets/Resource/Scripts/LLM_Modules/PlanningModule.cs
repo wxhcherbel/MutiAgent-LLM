@@ -26,6 +26,7 @@ public class PlanningModule : MonoBehaviour
     // ─── 本轮任务数据 ─────────────────────────────────────────
     private ParsedMission parsed;
     private GroupDef myGroup;
+    private GroupDef[] allGroups;
     private bool isLeader;
 
     // ─── 组长专用 ─────────────────────────────────────────────
@@ -492,7 +493,7 @@ public class PlanningModule : MonoBehaviour
             "doneCond:\"南区搜索完成且结果已回传\"\n" +
             "可用约束:\n" +
             "  c3_wait_cover — C3, sign=+1, watchAgent=agent_A, reactTo=ReadySignal\n" +
-            "    (agent_A == watchAgent → 绑定到"完成搜索后需要发出 ReadySignal"的步骤)\n" +
+            "    (agent_A == watchAgent → 绑定到\"完成搜索后需要发出 ReadySignal\"的步骤)\n" +
             "  c2_sync_report — C2, syncWith=[s0,s1]\n" +
             "    (绑定到实质同步动作步骤:回传搜索结果)\n" +
             "[\n" +
@@ -641,6 +642,8 @@ public class PlanningModule : MonoBehaviour
             parsed = new ParsedMission { msnId = p.msnId };
         else if (p.msnId != parsed.msnId)
             return;
+
+        allGroups = p.groups;
 
         for (int groupIndex = 0; groupIndex < p.groups.Length; groupIndex++)
         {
@@ -837,6 +840,21 @@ public class PlanningModule : MonoBehaviour
             groupId = myGroup.groupId,
             constraints = BuildRuntimeConstraintsForAgent(props.AgentID, assignedSlotsByAgent)
         });
+
+        // 仅组长初始化 GroupMonitor（含通信层和监控层）
+        if (GetComponent<GroupMonitor>() == null)
+        {
+            string[] otherLeaderIds = allGroups != null
+                ? allGroups
+                    .Where(g => g.groupId != myGroup.groupId)
+                    .Select(g => g.leaderId)
+                    .ToArray()
+                : Array.Empty<string>();
+
+            var monitor = gameObject.AddComponent<GroupMonitor>();
+            monitor.Initialize(myGroup, myGroup.groupId, myGroup.leaderId,
+                               otherLeaderIds, llm);
+        }
     }
 
     // ─────────────────────────────────────────────────────────

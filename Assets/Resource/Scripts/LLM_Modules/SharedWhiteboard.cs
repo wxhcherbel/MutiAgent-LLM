@@ -14,6 +14,7 @@ public enum WhiteboardEntryType
     ReadySignal,    // 就绪信号（C3 前置等待条件已满足）
     DoneSignal,     // 完成信号（本 Agent 完成约束关联的步骤，用于 C2 跨 Agent 同步）
     StatusUpdate,   // 通用状态更新
+    RefereeNotice,  // 跨队裁判通知（组长从裁判层写入，供本队队员读取）
 }
 
 /// <summary>
