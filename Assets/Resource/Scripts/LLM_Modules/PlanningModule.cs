@@ -178,7 +178,9 @@ public class PlanningModule : MonoBehaviour
             "· c2_sync_report 中 syncWith 填 [],由运行时确定等待对象。";
 
         string llmResult = null;
-        yield return StartCoroutine(llm.SendRequest(prompt, r => llmResult = r, maxTokens: 1200));
+        yield return StartCoroutine(llm.SendRequest(
+            new LLMRequestOptions { prompt = prompt, maxTokens = 1200, enableJsonMode = true, callTag = "LLM#1_Parse" },
+            r => llmResult = r));
 
         if (string.IsNullOrWhiteSpace(llmResult))
         {
@@ -282,7 +284,9 @@ public class PlanningModule : MonoBehaviour
             "}\n" +
             "注意:sign=+1 时 watchAgent 先写 slotId;sign=-1 时 watchAgent 保持空字符串,参与者由绑定了同一 constraintId 的槽位共同决定。";
         string llmResult = null;
-        yield return StartCoroutine(llm.SendRequest(prompt, r => llmResult = r, maxTokens: 1400));
+        yield return StartCoroutine(llm.SendRequest(
+            new LLMRequestOptions { prompt = prompt, maxTokens = 1400, enableJsonMode = true, callTag = "LLM#2_SlotGen" },
+            r => llmResult = r));
 
         if (string.IsNullOrWhiteSpace(llmResult))
         {
@@ -394,7 +398,9 @@ public class PlanningModule : MonoBehaviour
             "}";
 
         string llmResult = null;
-        yield return StartCoroutine(llm.SendRequest(prompt, r => llmResult = r, maxTokens: 150));
+        yield return StartCoroutine(llm.SendRequest(
+            new LLMRequestOptions { prompt = prompt, maxTokens = 150, enableJsonMode = true, callTag = "LLM#3_SlotPick" },
+            r => llmResult = r));
 
         Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] LLM#3 原始回复: {llmResult}");
 
@@ -478,6 +484,7 @@ public class PlanningModule : MonoBehaviour
             "4. desc 只含一个动作时,输出 1 步。\n" +
             "5. doneCond:完成条件,没有时填 \" \"。\n" +
             "6. stepId 格式:step_1、step_2 ...\n" +
+            "6b. targetName:从 text 中提取的空间目标名（地名/区域名），无空间目标时填 \"\"。如果目标带有\'附近\',\'东边\'等方位性描述,不用提取\n" +
             "7. 重点理解 C2 和 C3 的意义,再把 constraintIds 绑定到正确动作步骤:\n" +
             "   C1(资源分配)→ 一般不用重点考虑,分槽阶段已处理;若需要,绑定到进入 targetObject 的动作步骤\n" +
             "   C2(完成同步)→ 绑定到该成员完成后需要参与同步的那个实质动作步骤\n" +
@@ -497,12 +504,14 @@ public class PlanningModule : MonoBehaviour
             "  c2_sync_report — C2, syncWith=[s0,s1]\n" +
             "    (绑定到实质同步动作步骤:回传搜索结果)\n" +
             "[\n" +
-            "  {\"stepId\":\"step_1\",\"text\":\"飞往南区执行地面目标搜索\",\"doneCond\":\"南区搜索完成\",\"constraintIds\":[\"c3_wait_cover\"]},\n" +
-            "  {\"stepId\":\"step_2\",\"text\":\"通过白板同步回传搜索结果\",\"doneCond\":\"结果回传完成\",\"constraintIds\":[\"c2_sync_report\"]}\n" +
+            "  {\"stepId\":\"step_1\",\"text\":\"飞往南区执行地面目标搜索\",\"targetName\":\"南区\",\"doneCond\":\"南区搜索完成\",\"constraintIds\":[\"c3_wait_cover\"]},\n" +
+            "  {\"stepId\":\"step_2\",\"text\":\"通过白板同步回传搜索结果\",\"targetName\":\"\",\"doneCond\":\"结果回传完成\",\"constraintIds\":[\"c2_sync_report\"]}\n" +
             "]\n\n";
 
         string llmResult = null;
-        yield return StartCoroutine(llm.SendRequest(prompt, r => llmResult = r, maxTokens: 800));
+        yield return StartCoroutine(llm.SendRequest(
+            new LLMRequestOptions { prompt = prompt, maxTokens = 800, enableJsonMode = true, callTag = "LLM#4_StepGen" },
+            r => llmResult = r));
 
         if (string.IsNullOrWhiteSpace(llmResult))
         {

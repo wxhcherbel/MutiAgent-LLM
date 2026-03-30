@@ -35,6 +35,9 @@ public class AtomicAction
 [Serializable]
 public class RollingPlanResult
 {
+    /// <summary>LLM 对当前局势的推理过程（ReAct Thought，1-2句）。</summary>
+    public string thought;
+
     /// <summary>LLM 判断当前步骤是否已完成。</summary>
     public bool isDone;
 

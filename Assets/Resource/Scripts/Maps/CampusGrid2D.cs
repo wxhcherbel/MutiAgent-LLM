@@ -745,34 +745,6 @@ public class CampusGrid2D : MonoBehaviour
             return true;
         }
 
-        if (TryResolveFeatureCell(q, out Vector2Int cell, out string matchedUid, out string matchedName, preferWalkable: false, ignoreCase: ignoreCase))
-        {
-            string resolvedUid = matchedUid;
-            if (string.IsNullOrWhiteSpace(resolvedUid) &&
-                TryGetCellFeatureInfo(cell.x, cell.y, out string cellUid, out string _, out _, out _))
-            {
-                resolvedUid = cellUid;
-            }
-
-            if (!string.IsNullOrWhiteSpace(resolvedUid) &&
-                featureSpatialIndexByUid.TryGetValue(resolvedUid.Trim(), out index) &&
-                index != null)
-            {
-                return true;
-            }
-
-            if (!string.IsNullOrWhiteSpace(matchedName) &&
-                featureUidsByName != null &&
-                featureUidsByName.TryGetValue(matchedName.Trim(), out List<string> fuzzyUids) &&
-                fuzzyUids != null &&
-                fuzzyUids.Count > 0 &&
-                featureSpatialIndexByUid.TryGetValue(fuzzyUids[0], out index) &&
-                index != null)
-            {
-                return true;
-            }
-        }
-
         return false;
     }
 
@@ -2437,7 +2409,7 @@ public class CampusGrid2D : MonoBehaviour
 
         string rawName = !string.IsNullOrWhiteSpace(feature.name) && feature.name.Trim() != "-"
             ? feature.name.Trim()
-            : feature.uid;
+            : NormalizeFeatureKindToken(feature.kind);
         string baseName = SanitizeFeatureAliasToken(rawName);
         string kind = NormalizeFeatureKindToken(feature.kind);
 
@@ -2483,7 +2455,7 @@ public class CampusGrid2D : MonoBehaviour
         for (int i = 0; i < s.Length; i++)
         {
             char c = s[i];
-            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c > 127)
             {
                 sb.Append(c);
             }
@@ -2977,6 +2949,26 @@ public class CampusGrid2D : MonoBehaviour
     private static long PackCellKey(int x, int z)
     {
         return (((long)x) << 32) ^ (uint)z;
+    }
+
+    /// <summary>
+    /// 将世界坐标列表转为 A* 临时阻挡键集合，供 FindPathAStar 的 transientBlockedKeys 参数使用。
+    /// bufferRadius=0 仅阻挡节点所在格；bufferRadius=1 同时阻挡周围一圈（共9格）。
+    /// </summary>
+    public HashSet<long> WorldPositionsToBlockedKeys(IEnumerable<Vector3> positions, int bufferRadius = 0)
+    {
+        var keys = new HashSet<long>();
+        foreach (var pos in positions)
+        {
+            Vector2Int cell = WorldToGrid(pos);
+            for (int dx = -bufferRadius; dx <= bufferRadius; dx++)
+            for (int dz = -bufferRadius; dz <= bufferRadius; dz++)
+            {
+                int x = cell.x + dx, z = cell.y + dz;
+                if (IsInBounds(x, z)) keys.Add(PackCellKey(x, z));
+            }
+        }
+        return keys;
     }
 
     private bool IsPathWalkable(int x, int z, HashSet<long> transientBlockedKeys)

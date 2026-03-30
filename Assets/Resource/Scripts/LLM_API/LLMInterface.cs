@@ -3,6 +3,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using TMPro;
 using UnityEngine;
@@ -11,6 +12,10 @@ using UnityEngine.UI;
 
 public class LLMInterface : MonoBehaviour
 {
+    // ─── 可靠性常量 ──────────────────────────────────────────────
+    private const int MaxRetries = 3;
+    private const int TimeoutSeconds = 30;
+
     [Header("LLM Provider")]
     [SerializeField] private LLMProviderConfig providerConfig = new LLMProviderConfig
     {
@@ -55,6 +60,14 @@ public class LLMInterface : MonoBehaviour
     {
         sessionStartTime = DateTime.Now;
         sessionId = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+
+        // 优先从环境变量加载 API Key，避免明文写入代码/Inspector
+        string envKey = System.Environment.GetEnvironmentVariable("DASHSCOPE_API_KEY");
+        if (!string.IsNullOrWhiteSpace(envKey))
+        {
+            providerConfig.apiKey = envKey;
+            Debug.Log("[LLMInterface] API key loaded from environment variable DASHSCOPE_API_KEY.");
+        }
 
         string scriptPath = Path.GetDirectoryName(Application.dataPath) + "/Scripts/API/LLM_Logs";
         logDirectoryPath = scriptPath;
@@ -170,49 +183,88 @@ public class LLMInterface : MonoBehaviour
         string jsonData = BuildRequestJson(options, resolvedModel);
         byte[] rawData = System.Text.Encoding.UTF8.GetBytes(jsonData);
 
-        Debug.Log($"{AgentProps?.AgentID ?? "Unknown"}: Sending request: {jsonData}");
+        string agentId = AgentProps?.AgentID ?? "Unknown";
+        Debug.Log($"{agentId}: Sending request [{options.callTag}]: {jsonData}");
 
-        using (UnityWebRequest request = new UnityWebRequest(providerConfig.apiUrl, "POST"))
+        AppendToLog(
+            $"send:\n provider: {providerConfig.providerName}\n url: {providerConfig.apiUrl}\n model: {resolvedModel}\n temperature: {options.temperature}\n maxTokens: {options.maxTokens}\n tag: {options.callTag}\n prompt: {options.prompt}",
+            "send", resolvedModel, options.temperature, options.maxTokens);
+
+        // ─── 超时+重试循环 ────────────────────────────────────────────
+        string responseText = null;
+        bool success = false;
+        string lastError = null;
+        DateTime sendStart = DateTime.Now;
+
+        for (int attempt = 1; attempt <= MaxRetries && !success; attempt++)
         {
-            request.uploadHandler = new UploadHandlerRaw(rawData);
-            request.downloadHandler = new DownloadHandlerBuffer();
-            request.SetRequestHeader("Content-Type", providerConfig.contentType);
-            ApplyHeaders(request);
-
-            AppendToLog(
-                $"send:\n provider: {providerConfig.providerName}\n url: {providerConfig.apiUrl}\n model: {resolvedModel}\n temperature: {options.temperature}\n maxTokens: {options.maxTokens}\n prompt: {options.prompt}",
-                "send",
-                resolvedModel,
-                options.temperature,
-                options.maxTokens);
-
-            yield return request.SendWebRequest();
-
-            if (request.result == UnityWebRequest.Result.Success)
+            // 指数退避：第2次等1s，第3次等2s
+            if (attempt > 1)
             {
-                string responseText = ExtractContent(request.downloadHandler.text);
-                if (!string.IsNullOrWhiteSpace(responseText))
+                float delaySec = Mathf.Pow(2f, attempt - 2f); // 1, 2
+                Debug.LogWarning($"[LLMInterface] [{options.callTag}] Retry {attempt}/{MaxRetries} in {delaySec}s...");
+                yield return new WaitForSeconds(delaySec);
+            }
+
+            using (UnityWebRequest request = new UnityWebRequest(providerConfig.apiUrl, "POST"))
+            {
+                request.uploadHandler   = new UploadHandlerRaw(rawData);
+                request.downloadHandler = new DownloadHandlerBuffer();
+                request.SetRequestHeader("Content-Type", providerConfig.contentType);
+                request.timeout = TimeoutSeconds;
+                ApplyHeaders(request);
+
+                yield return request.SendWebRequest();
+
+                if (request.result == UnityWebRequest.Result.Success)
                 {
-                    resultText = responseText.Trim();
-                    callback?.Invoke(resultText);
-                    AppendToLog($"ReceiveResponse:\n {resultText}", "receive", resolvedModel, options.temperature, options.maxTokens);
+                    string extracted = ExtractContent(request.downloadHandler.text);
+                    if (!string.IsNullOrWhiteSpace(extracted))
+                    {
+                        responseText = extracted.Trim();
+                        success = true;
+                    }
+                    else
+                    {
+                        lastError = "no usable content in response";
+                        Debug.LogError($"[LLMInterface] [{options.callTag}] {lastError}. Raw: {request.downloadHandler.text}");
+                    }
+                    break; // 请求成功（无论内容是否有效），不再重试
                 }
                 else
                 {
-                    Debug.LogError("[LLMInterface] No usable text content found in response.");
-                    callback?.Invoke(null);
-                    AppendToLog("Error: no usable text content found in response.", "error", resolvedModel, options.temperature, options.maxTokens);
+                    long httpCode = request.responseCode;
+                    lastError = $"{request.error} (HTTP {httpCode})";
+                    Debug.LogError($"[LLMInterface] [{options.callTag}] Attempt {attempt}/{MaxRetries} failed: {lastError}");
+                    Debug.LogError($"[LLMInterface] Response body: {request.downloadHandler.text}");
+
+                    // 4xx 客户端错误（参数错误/鉴权失败）不重试
+                    bool isClientError = httpCode >= 400 && httpCode < 500;
+                    if (isClientError)
+                    {
+                        Debug.LogError($"[LLMInterface] 4xx error, no retry.");
+                        break;
+                    }
                 }
-            }
-            else
-            {
-                Debug.LogError($"[LLMInterface] {providerConfig.providerName} API error: {request.error}");
-                Debug.LogError($"Response: {request.downloadHandler.text}");
-                callback?.Invoke(null);
-                AppendToLog($"API Error: {request.error}\nResponse Content: {request.downloadHandler.text}", "error", resolvedModel, options.temperature, options.maxTokens);
             }
         }
 
+        // ─── 处理最终结果 ─────────────────────────────────────────────
+        long latencyMs = (long)(DateTime.Now - sendStart).TotalMilliseconds;
+
+        if (success)
+        {
+            resultText = responseText;
+            callback?.Invoke(resultText);
+            AppendToLog($"ReceiveResponse [{options.callTag}] ({latencyMs}ms):\n {resultText}", "receive", resolvedModel, options.temperature, options.maxTokens);
+        }
+        else
+        {
+            callback?.Invoke(null);
+            AppendToLog($"Error [{options.callTag}] ({latencyMs}ms): {lastError ?? "unknown"}", "error", resolvedModel, options.temperature, options.maxTokens);
+        }
+
+        WriteJsonlMetric(options.callTag, resolvedModel, success, latencyMs, success ? null : lastError);
         SaveLogToFile();
     }
 
@@ -242,6 +294,13 @@ public class LLMInterface : MonoBehaviour
                 };
                 body[providerConfig.temperatureFieldName] = options.temperature;
                 body[providerConfig.maxTokensFieldName] = options.maxTokens;
+
+                // JSON 输出模式：强制 LLM 返回合法 JSON，无需正则提取
+                // 注意：仅在 Prompt 已明确要求输出 JSON 时启用，否则部分 API 会报错
+                if (options.enableJsonMode)
+                {
+                    body["response_format"] = new JObject { ["type"] = "json_object" };
+                }
                 break;
         }
 
@@ -284,6 +343,35 @@ public class LLMInterface : MonoBehaviour
         {
             Debug.LogError($"[LLMInterface] Failed to parse response: {e.Message}");
             return null;
+        }
+    }
+
+    /// <summary>
+    /// 追加写入一条结构化 JSONL 指标日志，每行一个 JSON 对象，便于后续统计分析。
+    /// 文件路径：LLM_Logs/llm_metrics_{sessionId}.jsonl
+    /// </summary>
+    private void WriteJsonlMetric(string callTag, string model, bool success, long latencyMs, string error = null)
+    {
+        if (string.IsNullOrEmpty(logDirectoryPath)) return;
+        try
+        {
+            var metric = new
+            {
+                timestamp  = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                agent      = AgentProps?.AgentID ?? "Unknown",
+                tag        = callTag ?? string.Empty,
+                model,
+                latency_ms = latencyMs,
+                success,
+                error      = error ?? string.Empty
+            };
+            string line = JsonConvert.SerializeObject(metric);
+            string metricsPath = Path.Combine(logDirectoryPath, $"llm_metrics_{sessionId}.jsonl");
+            File.AppendAllText(metricsPath, line + "\n", System.Text.Encoding.UTF8);
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[LLMInterface] Failed to write JSONL metric: {e.Message}");
         }
     }
 

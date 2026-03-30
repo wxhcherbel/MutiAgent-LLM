@@ -40,7 +40,8 @@ public class PerceptionVisualizer : MonoBehaviour, IPerceptionVisualizer
     private Material sphereMaterial;
     private MaterialPropertyBlock spherePropertyBlock;
     private LineRenderer rangeRenderer;
-    private LineRenderer rayRenderer;
+    private LineRenderer resourceRayRenderer;
+    private LineRenderer obstacleRayRenderer;
 
     private readonly Queue<GameObject> spherePool = new();
     private readonly List<GameObject> sphereMarkers = new();
@@ -65,6 +66,7 @@ public class PerceptionVisualizer : MonoBehaviour, IPerceptionVisualizer
         public Vector3 to;
         public Color color;
         public float createdTime;
+        public bool isResource;
     }
 
     private void Awake()
@@ -92,10 +94,15 @@ public class PerceptionVisualizer : MonoBehaviour, IPerceptionVisualizer
         rangeRenderer = rangeObj.AddComponent<LineRenderer>();
         ConfigureLineRenderer(rangeRenderer, sortingOrder: 5000);
 
-        GameObject rayObj = new GameObject("PerceptionRayRenderer");
-        rayObj.transform.SetParent(transform, false);
-        rayRenderer = rayObj.AddComponent<LineRenderer>();
-        ConfigureLineRenderer(rayRenderer, sortingOrder: 5001);
+        GameObject resourceRayObj = new GameObject("PerceptionResourceRayRenderer");
+        resourceRayObj.transform.SetParent(transform, false);
+        resourceRayRenderer = resourceRayObj.AddComponent<LineRenderer>();
+        ConfigureLineRenderer(resourceRayRenderer, sortingOrder: 5001);
+
+        GameObject obstacleRayObj = new GameObject("PerceptionObstacleRayRenderer");
+        obstacleRayObj.transform.SetParent(transform, false);
+        obstacleRayRenderer = obstacleRayObj.AddComponent<LineRenderer>();
+        ConfigureLineRenderer(obstacleRayRenderer, sortingOrder: 5002);
     }
 
     private void Update()
@@ -230,7 +237,8 @@ public class PerceptionVisualizer : MonoBehaviour, IPerceptionVisualizer
         }
 
         if (rangeRenderer != null) Destroy(rangeRenderer.gameObject);
-        if (rayRenderer != null) Destroy(rayRenderer.gameObject);
+        if (resourceRayRenderer != null) Destroy(resourceRayRenderer.gameObject);
+        if (obstacleRayRenderer != null) Destroy(obstacleRayRenderer.gameObject);
         if (lineMaterial != null) Destroy(lineMaterial);
         if (sphereMaterial != null) Destroy(sphereMaterial);
     }
@@ -265,7 +273,8 @@ public class PerceptionVisualizer : MonoBehaviour, IPerceptionVisualizer
                 from = frame.agentPosition,
                 to = pt.position + Vector3.up * markerHeightOffset,
                 color = color,
-                createdTime = Time.time
+                createdTime = Time.time,
+                isResource = (pt.type == SmallNodeType.ResourcePoint)
             });
         }
 
@@ -279,7 +288,8 @@ public class PerceptionVisualizer : MonoBehaviour, IPerceptionVisualizer
                 from = frame.agentPosition,
                 to = enemy.position + Vector3.up * markerHeightOffset,
                 color = color,
-                createdTime = Time.time
+                createdTime = Time.time,
+                isResource = false
             });
         }
     }
@@ -307,33 +317,69 @@ public class PerceptionVisualizer : MonoBehaviour, IPerceptionVisualizer
 
     private void DrawPendingRays()
     {
-        if (rayRenderer == null || !showGameViewVisualization || !showDetectionRays)
+        if (!showGameViewVisualization || !showDetectionRays)
         {
-            if (rayRenderer != null) rayRenderer.positionCount = 0;
+            if (resourceRayRenderer != null) resourceRayRenderer.positionCount = 0;
+            if (obstacleRayRenderer != null) obstacleRayRenderer.positionCount = 0;
             return;
         }
 
         float now = Time.time;
-        int lineIndex = 0;
-        rayRenderer.positionCount = 0;
-        rayRenderer.widthMultiplier = GetEffectiveLineWidth() * 0.75f;
+        float lifetime = Mathf.Max(0.2f, rayLifetime);
+        float effectiveWidth = GetEffectiveLineWidth() * 0.75f;
+
+        if (resourceRayRenderer != null)
+        {
+            resourceRayRenderer.positionCount = 0;
+            resourceRayRenderer.widthMultiplier = effectiveWidth;
+        }
+        if (obstacleRayRenderer != null)
+        {
+            obstacleRayRenderer.positionCount = 0;
+            obstacleRayRenderer.widthMultiplier = effectiveWidth;
+        }
+
+        int resourceIndex = 0;
+        int obstacleIndex = 0;
+
+        // Set uniform colors before adding positions
+        if (resourceRayRenderer != null)
+        {
+            Color rc = resourceColor;
+            rc.a = Mathf.Clamp01(rayAlpha);
+            resourceRayRenderer.startColor = rc;
+            resourceRayRenderer.endColor = rc;
+        }
+        if (obstacleRayRenderer != null)
+        {
+            Color oc = obstacleColor;
+            oc.a = Mathf.Clamp01(rayAlpha);
+            obstacleRayRenderer.startColor = oc;
+            obstacleRayRenderer.endColor = oc;
+        }
 
         for (int i = pendingRays.Count - 1; i >= 0; i--)
         {
             RayDrawCmd cmd = pendingRays[i];
             float age = now - cmd.createdTime;
-            if (age > Mathf.Max(0.2f, rayLifetime))
+            if (age > lifetime)
             {
                 pendingRays.RemoveAt(i);
                 continue;
             }
 
-            Color color = cmd.color;
-            color.a *= Mathf.Clamp01(1f - age / Mathf.Max(0.2f, rayLifetime));
-            AddLineToRenderer(rayRenderer, cmd.from, cmd.to, color, ref lineIndex);
+            if (cmd.isResource && resourceRayRenderer != null)
+            {
+                AddLineToRenderer(resourceRayRenderer, cmd.from, cmd.to, cmd.color, ref resourceIndex);
+            }
+            else if (!cmd.isResource && obstacleRayRenderer != null)
+            {
+                AddLineToRenderer(obstacleRayRenderer, cmd.from, cmd.to, cmd.color, ref obstacleIndex);
+            }
         }
 
-        rayRenderer.positionCount = lineIndex;
+        if (resourceRayRenderer != null) resourceRayRenderer.positionCount = resourceIndex;
+        if (obstacleRayRenderer != null) obstacleRayRenderer.positionCount = obstacleIndex;
     }
 
     private void DrawRangeInGameView()
@@ -530,7 +576,8 @@ public class PerceptionVisualizer : MonoBehaviour, IPerceptionVisualizer
     private void ClearRuntimeRenderers()
     {
         if (rangeRenderer != null) rangeRenderer.positionCount = 0;
-        if (rayRenderer != null) rayRenderer.positionCount = 0;
+        if (resourceRayRenderer != null) resourceRayRenderer.positionCount = 0;
+        if (obstacleRayRenderer != null) obstacleRayRenderer.positionCount = 0;
     }
 
     private Color GetDetectionColor(SmallNodeType type)

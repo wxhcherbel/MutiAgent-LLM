@@ -214,8 +214,24 @@ public class ActionDecisionModule : MonoBehaviour
             }
 
             // ── 3. 获取地图信息 ─────────────────────────────────────
+            Vector3? stepTargetWorldPos = null;
+            if (campusGrid != null && !string.IsNullOrWhiteSpace(step.targetName))
+            {
+                if (campusGrid.TryResolveFeatureSpatialProfile(
+                        step.targetName,
+                        agentState?.Position ?? Vector3.zero,
+                        out FeatureSpatialProfile targetProfile))
+                {
+                    stepTargetWorldPos = targetProfile.centroidWorld;
+                }
+                else
+                {
+                    Debug.LogWarning($"[ADM] 无法解析步骤目标 '{step.targetName}'，地图将不标注目标趋向");
+                }
+            }
+
             string relativeMap = campusGrid != null
-                ? MapTopologySerializer.GetAgentRelativeMap(campusGrid, agentState.Position)
+                ? MapTopologySerializer.GetAgentRelativeMap(campusGrid, agentState.Position, stepTargetWorldPos)
                 : "(地图不可用)";
 
             // ── 5. 构建滚动规划提示词 ────────────────────────────────
@@ -223,7 +239,15 @@ public class ActionDecisionModule : MonoBehaviour
 
             // ── 6. 调用 LLM ──────────────────────────────────────────
             string llmResult = null;
-            yield return StartCoroutine(llmInterface.SendRequest(prompt, r => llmResult = r, maxTokens: 900));
+            yield return StartCoroutine(llmInterface.SendRequest(
+                new LLMRequestOptions
+                {
+                    prompt         = prompt,
+                    maxTokens      = 900,
+                    enableJsonMode = true,
+                    callTag        = $"ADM_Roll_iter{ctx.iterationCount + 1}"
+                },
+                r => llmResult = r));
 
             if (string.IsNullOrWhiteSpace(llmResult))
             {
@@ -247,6 +271,10 @@ public class ActionDecisionModule : MonoBehaviour
                 if (agentState != null) agentState.Status = AgentStatus.Idle;
                 yield break;
             }
+
+            // 输出思维链（可追溯性）
+            if (!string.IsNullOrWhiteSpace(planResult?.thought))
+                Debug.Log($"[ADM] {agentProperties?.AgentID} [Thought] {planResult.thought}");
 
             if (planResult == null)
             {
@@ -323,8 +351,8 @@ public class ActionDecisionModule : MonoBehaviour
             : "  （本步骤尚无已执行动作）";
 
         // 感知快照
-        string perception = BuildPerceptionSnapshot();
-        string perceptionBlock = string.IsNullOrWhiteSpace(perception) ? "无感知数据" : perception;
+        // string perception = BuildPerceptionSnapshot();
+        // string perceptionBlock = string.IsNullOrWhiteSpace(perception) ? "无感知数据" : perception;
 
         // 协同约束摘要
         string constraintBlock = BuildConstraintSummary();
@@ -339,10 +367,17 @@ public class ActionDecisionModule : MonoBehaviour
             "═══ 当前状态 ═══\n" +
             $"当前角色：{ctx.role}\n" +
             $"当前位置：{ctx.currentLocationName}\n\n" +
-            "═══ 环境感知 ═══\n" +
-            perceptionBlock + "\n\n" +
             "═══ 周边地图（以本机为中心，半径300m） ═══\n" +
             relativeMap + "\n\n" +
+            "═══ 导航规则（重要） ═══\n" +
+            "本地图仅覆盖当前位置半径300m范围内的地物。\n" +
+            "• 若目标在300m范围内（标注\"在本地图范围内\"）：可直接使用目标名作为 MoveTo 的 targetName。\n" +
+            "• 若目标在300m范围外（标注\"超出范围\"）：\n" +
+            "  - 不得直接填写目标名，执行层无法解析范围外地点。\n" +
+            "  - 必须选取标有 ★ 的中间航点（趋向目标方向），逐步靠近。\n" +
+            "  - 导航链示例：当前位置 → 航点C（★） → 航点D（★） → 最终目标\n" +
+            "  - 每轮只需规划到下一个航点，下轮会重新获取更新的地图。\n" +
+            "• targetName 必须是本地图300m范围内列出的地点名称，禁止编造或使用范围外地点名。\n\n" +
             "═══ 白板状态（组内协同） ═══\n" +
             (string.IsNullOrWhiteSpace(whiteboardCtx) ? "（无白板数据）" : whiteboardCtx) + "\n\n" +
             "═══ 协同约束 ═══\n" +
@@ -360,6 +395,7 @@ public class ActionDecisionModule : MonoBehaviour
             "3. 协同约束非空时，动作必须遵守约束要求（如等待信号、保持间距等）。\n\n" +
             "═══ 输出格式（JSON 对象，非数组） ═══\n" +
             "{\n" +
+            "  \"thought\": \"对当前局势的简短推理（1-2句），说明为何选择接下来的动作或判断步骤完成\",\n" +
             "  \"isDone\": true/false,\n" +
             "  \"doneReason\": \"说明为何步骤完成或未完成\",\n" +
             "  \"nextActions\": [\n" +
@@ -367,10 +403,11 @@ public class ActionDecisionModule : MonoBehaviour
             "  ]\n" +
             "}\n\n" +
             "规则：\n" +
-            "1. isDone=true 时 nextActions 可为空数组 []。\n" +
-            "2. isDone=false 时 nextActions 必须有 1-3 个动作。\n" +
-            "3. targetName 必须是地图中存在的地点名称，禁止编造。\n" +
-            "4. 每个动作必须包含全部字段：actionId / type / targetName / targetAgentId / duration / actionParams / spatialHint。\n";
+            "1. thought 必填，是推理摘要，不影响执行逻辑，仅用于可追溯性。\n" +
+            "2. isDone=true 时 nextActions 可为空数组 []。\n" +
+            "3. isDone=false 时 nextActions 必须有 1-3 个动作。\n" +
+            "4. targetName 必须是本地图300m范围内存在的地点名称，禁止编造。\n" +
+            "5. 每个动作必须包含全部字段：actionId / type / targetName / targetAgentId / duration / actionParams / spatialHint。\n";
     }
 
     private string BuildConstraintSummary()

@@ -110,6 +110,12 @@ public class PlanStep
     /// <summary>供 ADM 继续解释的步骤文本。</summary>
     public string text;
 
+    /// <summary>
+    /// LLM#4 从 text 中提取的空间目标名称（例如"南区"）。
+    /// 无明确空间目标的步骤填 ""。
+    /// </summary>
+    public string targetName;
+
     /// <summary>该步骤的完成条件。</summary>
     public string doneCond;
 

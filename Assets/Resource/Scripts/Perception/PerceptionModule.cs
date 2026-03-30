@@ -9,6 +9,7 @@ using System.Collections.Generic;
 /// 3. 将小节点写入共享注册表，并把关键事件上报给 ActionDecisionModule。
 /// 4. 不负责任何可视化逻辑，显示层应由 PerceptionVisualizer 等脚本主动读取结果。
 /// </summary>
+[RequireComponent(typeof(PerceptionVisualizer))]
 public class PerceptionModule : MonoBehaviour
 {
     // ------------------------------------------------------------------
@@ -272,6 +273,7 @@ public class PerceptionModule : MonoBehaviour
             ScanAsDrone();
             return;
         }
+        ScanAsGroundVehicle();
     }
 
     /// <summary>
@@ -304,6 +306,26 @@ public class PerceptionModule : MonoBehaviour
         ScanVerticalAxis(origin, maxRange);
     }
 
+    /// <summary>
+    /// 地面车辆扫描流程。
+    /// 水平扇扫 groundHorizontalAngle 度，加小俯仰变化以覆盖不同高度目标。
+    /// </summary>
+    private void ScanAsGroundVehicle()
+    {
+        Vector3 origin = transform.position;
+        float maxRange = ownerAgent.Properties.PerceptionRange;
+        float angleStep = Mathf.Max(1f, droneScanAngleStep);
+        float halfAngle = groundHorizontalAngle / 2f;
+
+        for (float yaw = -halfAngle; yaw <= halfAngle; yaw += angleStep)
+        {
+            Vector3 dir = Quaternion.Euler(0f, yaw, 0f) * transform.forward;
+            if (Physics.Raycast(origin, dir, out RaycastHit hit, maxRange, detectionLayers))
+            {
+                HandleRaycastHit(hit);
+            }
+        }
+    }
 
     /// <summary>
     /// 处理一次射线或球射线命中。

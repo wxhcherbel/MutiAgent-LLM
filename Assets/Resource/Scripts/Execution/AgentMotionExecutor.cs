@@ -49,6 +49,8 @@ public class AgentMotionExecutor : MonoBehaviour
     private List<Vector3>      currentPath    = new();
     private int                waypointIdx    = 0;
 
+    private AgentDynamicState  agentState;
+
     // ─────────────────────────────────────────────────────────────
     // Unity 生命周期
     // ─────────────────────────────────────────────────────────────
@@ -66,6 +68,8 @@ public class AgentMotionExecutor : MonoBehaviour
         campusGrid = FindObjectOfType<CampusGrid2D>();
         agent      = GetComponent<IntelligentAgent>();
         props      = agent?.Properties;
+        agentState = agent?.CurrentState;
+
 
         if (props != null && props.MaxSpeed > 0f)
             maxSpeed = props.MaxSpeed;
@@ -246,6 +250,10 @@ public class AgentMotionExecutor : MonoBehaviour
         pathVisualizer?.ShowPath(currentPath, teamColor);
 
         // 4. 沿 waypoint 飞行
+        const float OBSTACLE_REPLAN_RANGE = 20f;  // 触发重规划的障碍感知距离（m）
+        const float REPLAN_COOLDOWN       = 3f;   // 重规划最短间隔（s），防止抖动
+        float replanTimer = 0f;
+
         while (waypointIdx < currentPath.Count)
         {
             Vector3 wp = currentPath[waypointIdx];
@@ -259,6 +267,36 @@ public class AgentMotionExecutor : MonoBehaviour
             if (dist < 1.5f)
             {
                 waypointIdx++;
+            }
+
+            // ── 障碍感知触发局部重规划 ─────────────────────────────────
+            replanTimer -= Time.deltaTime;
+            if (replanTimer <= 0f && agentState?.DetectedSmallNodes != null)
+            {
+                var obstaclePositions = agentState.DetectedSmallNodes
+                    .Where(n => n.NodeType == SmallNodeType.Pedestrian
+                             || n.NodeType == SmallNodeType.Vehicle
+                             || n.NodeType == SmallNodeType.TemporaryObstacle)
+                    .Where(n => Vector3.Distance(transform.position, n.WorldPosition) < OBSTACLE_REPLAN_RANGE)
+                    .Select(n => n.WorldPosition)
+                    .ToList();
+
+                if (obstaclePositions.Count > 0)
+                {
+                    var blocked = campusGrid.WorldPositionsToBlockedKeys(obstaclePositions);
+                    Vector2Int curCell = campusGrid.WorldToGrid(transform.position);
+                    var newGridPath = campusGrid.FindPathAStar(curCell, goalCell, null, blocked);
+                    if (newGridPath != null && newGridPath.Count > 0)
+                    {
+                        currentPath = newGridPath
+                            .Select(c => { var w = campusGrid.GridToWorldCenter(c.x, c.y); w.y = hoverHeight; return w; })
+                            .ToList();
+                        waypointIdx = 0;
+                        pathVisualizer?.ShowPath(currentPath, GetTeamColor());
+                        Debug.Log($"[AME] MoveTo '{action.targetName}' 感知到{obstaclePositions.Count}个障碍，触发局部重规划");
+                    }
+                    replanTimer = REPLAN_COOLDOWN;
+                }
             }
 
             yield return null;

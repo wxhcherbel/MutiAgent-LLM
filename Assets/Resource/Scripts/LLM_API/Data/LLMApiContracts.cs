@@ -120,4 +120,14 @@ public class LLMRequestOptions
 
     /// <summary>本次请求允许生成的最大 token 数。</summary>
     public int maxTokens = 500;
+
+    /// <summary>
+    /// 是否启用 JSON 输出模式（response_format: json_object）。
+    /// 设为 true 时，LLM 被强制输出合法 JSON，无需正则抠取。
+    /// 仅当 Prompt 中已明确要求输出 JSON 时才启用，否则部分 API 会报错。
+    /// </summary>
+    public bool enableJsonMode = false;
+
+    /// <summary>可选的调用标签，用于结构化日志（如 "LLM#1"、"ADM_Roll"）。</summary>
+    public string callTag = "";
 }

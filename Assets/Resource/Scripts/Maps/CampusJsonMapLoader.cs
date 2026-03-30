@@ -19,6 +19,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using UnityEngine;
 using Newtonsoft.Json.Linq;
 
@@ -189,7 +190,18 @@ public class CampusJsonMapLoader : MonoBehaviour
         for (int i = 0; i < features.Count; i++)
         {
             CampusFeature f = features[i];
-            string baseName = SanitizeName(string.IsNullOrWhiteSpace(f.name) || f.name.Trim() == "-" ? f.uid : f.name.Trim());
+            string uidBase = f.uid ?? "";
+            int lastUs = uidBase.LastIndexOf('_');
+            if (lastUs > 0 && lastUs < uidBase.Length - 1)
+            {
+                string suffix = uidBase.Substring(lastUs + 1);
+                bool allDigits = suffix.Length > 0 && suffix.All(char.IsDigit);
+                if (allDigits) uidBase = uidBase.Substring(0, lastUs);
+            }
+            string baseName = SanitizeName(
+                string.IsNullOrWhiteSpace(f.name) || f.name.Trim() == "-"
+                    ? uidBase
+                    : f.name.Trim());
 
             // 建筑：必须生成（无 rings 用 bounds 兜底）
             if (f.kind == CampusFeatureKind.Building)
