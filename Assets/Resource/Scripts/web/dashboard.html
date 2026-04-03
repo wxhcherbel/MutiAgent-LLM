@@ -238,13 +238,38 @@ select {
 .row {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   margin: 2px 0;
   font-size: 11px;
   gap: 4px;
 }
 .lbl { color: var(--muted); flex-shrink: 0; }
-.val { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; max-width: 185px; }
+.val { white-space: pre-wrap; word-break: break-word; text-align: left; flex: 1; }
+
+/* ── ctx block ─────────────────────────────────────────────────────────────── */
+.ctx-block {
+  margin-top: 5px;
+  background: rgba(88,166,255,0.05);
+  border: 1px solid rgba(88,166,255,0.15);
+  border-radius: 4px;
+  padding: 5px 7px;
+  font-size: 10px;
+}
+.ctx-block-title {
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: bold;
+  margin-bottom: 4px;
+}
+.ctx-list-item {
+  color: var(--text);
+  padding: 1px 0 1px 8px;
+  border-left: 2px solid var(--border);
+  margin: 1px 0;
+  font-size: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .battery-bar  { height: 4px; background: var(--border); border-radius: 2px; margin: 3px 0; }
 .battery-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
 .expand-btn {
@@ -366,7 +391,8 @@ select {
 }
 .llm-entry-header {
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
+  align-items: flex-start;
   gap: 6px;
   padding: 5px 8px;
   cursor: pointer;
@@ -384,6 +410,13 @@ select {
 .llm-ts     { color: var(--muted); font-size: 10px; flex-shrink: 0; }
 .llm-model  { color: var(--muted); font-size: 10px; flex-shrink: 0; }
 .llm-preview { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.llm-tag {
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  flex-shrink: 0;
+  font-style: italic;
+}
 .llm-body {
   display: none;
   padding: 6px 8px;
@@ -486,6 +519,63 @@ textarea.ctrl-input { resize: vertical; min-height: 60px; }
 .bar       { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
 .bar-fill  { height: 100%; border-radius: 3px; transition: width 0.3s; }
 
+/* ── Whiteboard tab ─────────────────────────────────────────────────────────── */
+#tab-whiteboard { padding: 0; overflow: hidden; }
+#wb-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--card);
+}
+#wb-toolbar label { font-size: 10px; color: var(--muted); }
+#wb-body { flex: 1; overflow-y: auto; padding: 8px; }
+.wb-section { margin-bottom: 12px; }
+.wb-section-title {
+  font-size: 11px;
+  color: var(--blue);
+  font-weight: bold;
+  margin-bottom: 5px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--border);
+}
+.wb-group { margin-bottom: 8px; }
+.wb-group-header {
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: bold;
+  margin-bottom: 3px;
+  padding: 2px 4px;
+  background: rgba(33,38,45,0.5);
+  border-radius: 3px;
+}
+.wb-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+.wb-table th {
+  color: var(--muted);
+  text-align: left;
+  padding: 2px 5px;
+  border-bottom: 1px solid var(--border);
+  font-weight: normal;
+}
+.wb-table td { padding: 2px 5px; border-bottom: 1px solid rgba(33,38,45,0.5); }
+.wb-entry-type {
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: bold;
+}
+.wb-history-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+}
+.wb-history-time { color: var(--muted); flex-shrink: 0; min-width: 40px; }
+
 /* ── Scrollbar ─────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar       { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -538,6 +628,7 @@ textarea.ctrl-input { resize: vertical; min-height: 60px; }
       <button class="tab-btn active" onclick="switchTab('agents')">Agents</button>
       <button class="tab-btn" onclick="switchTab('comms')">通信</button>
       <button class="tab-btn" onclick="switchTab('llm')" id="tab-btn-llm">LLM 日志</button>
+      <button class="tab-btn" onclick="switchTab('whiteboard')">白板</button>
       <button class="tab-btn" onclick="switchTab('control')">控制</button>
       <button class="tab-btn" onclick="switchTab('debug')">调试</button>
     </div>
@@ -579,9 +670,25 @@ textarea.ctrl-input { resize: vertical; min-height: 60px; }
             <option value="receive">receive</option>
             <option value="error">error</option>
           </select>
+          <label>阶段:</label>
+          <select id="llm-tag-filter" onchange="renderLlmLogs()">
+            <option value="">全部</option>
+          </select>
           <button class="ctrl-btn" style="margin-left:auto;padding:2px 10px;font-size:10px" onclick="fetchLlmLogs()">刷新</button>
         </div>
         <div id="llm-list"></div>
+      </div>
+
+      <!-- Whiteboard tab -->
+      <div class="tab-pane" id="tab-whiteboard">
+        <div id="wb-toolbar">
+          <label>Group:</label>
+          <select id="wb-group-filter" onchange="renderWhiteboard()">
+            <option value="">全部</option>
+          </select>
+          <button class="ctrl-btn" style="margin-left:auto;padding:2px 10px;font-size:10px" onclick="fetchWhiteboard()">刷新</button>
+        </div>
+        <div id="wb-body"></div>
       </div>
 
       <!-- Control tab -->
@@ -668,17 +775,41 @@ const FEATURE_STYLES = {
   default:  { fill:'rgba(150,150,150,0.15)', stroke:'#888888', strokeW:1,   minR:3 },
 };
 
-const TAB_NAMES = ['agents','comms','llm','control','debug'];
+const TAB_NAMES = ['agents','comms','llm','whiteboard','control','debug'];
+
+const WB_TYPE_COLORS = {
+  IntentAnnounce: '#58a6ff',
+  ReadySignal:    '#3fb950',
+  DoneSignal:     '#39d353',
+  StatusUpdate:   '#8b949e',
+  RefereeNotice:  '#bc8cff',
+};
+
+const LLM_TAG_COLORS = {
+  'LLM#1': '#58a6ff',
+  'LLM#2': '#39d353',
+  'LLM#3': '#d29922',
+  'LLM#4': '#d29922',
+  'LLM#5': '#bc8cff',
+};
+function llmTagColor(tag) {
+  if (!tag) return 'transparent';
+  if (LLM_TAG_COLORS[tag]) return LLM_TAG_COLORS[tag];
+  if (tag.startsWith('ADM_Roll')) return '#3fb950';
+  if (tag.toLowerCase().includes('error')) return '#f85149';
+  return '#8b949e';
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // State
 // ══════════════════════════════════════════════════════════════════════════════
-let agents     = [];
-let messages   = [];
-let posHistory = {};
-let gridmap    = null;
-let mapMeta    = { cellSize: 1, gridWidth: 200, gridLength: 200, originX: 0, originZ: 0, features: [] };
-let llmLogs    = [];
+let agents         = [];
+let messages       = [];
+let posHistory     = {};
+let gridmap        = null;
+let mapMeta        = { cellSize: 1, gridWidth: 200, gridLength: 200, originX: 0, originZ: 0, features: [] };
+let llmLogs        = [];
+let whiteboardData = { entries: [], history: [] };
 
 let selectedId   = null;
 let pollTimer    = null;
@@ -1145,10 +1276,11 @@ function switchTab(name) {
   if (pane) pane.classList.add('active');
   document.querySelectorAll('.tab-btn').forEach(b => {
     if (b.textContent.trim() === {
-      agents: 'Agents', comms: '通信', llm: 'LLM 日志', control: '控制', debug: '调试'
+      agents: 'Agents', comms: '通信', llm: 'LLM 日志', whiteboard: '白板', control: '控制', debug: '调试'
     }[name]) b.classList.add('active');
   });
   if (name === 'llm') fetchLlmLogs();
+  if (name === 'whiteboard') fetchWhiteboard();
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1296,7 +1428,90 @@ function updateAgentCard(card, ag) {
       <div class="row"><span class="lbl">附近</span><span class="val">${escHtml((ag.nearbyAgentIds||[]).join(', ') || '—')}</span></div>
       <div class="row"><span class="lbl">敌方</span><span class="val" style="color:var(--red)">${escHtml((ag.enemyAgentIds||[]).join(', ') || '—')}</span></div>
       ${teammates.length > 0 ? `<div class="row" style="flex-wrap:wrap;gap:2px"><span class="lbl">队友</span>${teammateChips}</div>` : ''}
+      ${buildCtxBlock(ag)}
     </div>`;
+}
+
+// 约束类型颜色
+const CTYPE_COLORS = { C1: '#58a6ff', C2: '#3fb950', C3: '#d29922',
+                       Assignment: '#58a6ff', Completion: '#3fb950', Coupling: '#d29922' };
+function ctypeColor(cType) { return CTYPE_COLORS[cType] || '#8b949e'; }
+
+function buildConstraintsHtml(constraints) {
+  if (!constraints || constraints.length === 0) return '';
+  const rows = constraints.map(c => {
+    const col = ctypeColor(c.cType);
+    // 各类型专属字段
+    let extra = '';
+    const ct = (c.cType || '').toUpperCase();
+    if (ct === 'C1' || ct === 'ASSIGNMENT') {
+      const parts = [];
+      if (c.subject)      parts.push(`subject=<b>${escHtml(c.subject)}</b>`);
+      if (c.targetObject) parts.push(`target=<b>${escHtml(c.targetObject)}</b>`);
+      if (c.exclusive)    parts.push(`<span style="color:var(--red)">exclusive</span>`);
+      extra = parts.join(' &nbsp; ');
+    } else if (ct === 'C2' || ct === 'COMPLETION') {
+      const parts = [];
+      if (c.condition) parts.push(`cond: ${escHtml(c.condition)}`);
+      if (c.syncWith && c.syncWith.length > 0)
+        parts.push(`syncWith: [${c.syncWith.map(escHtml).join(', ')}]`);
+      extra = parts.join(' &nbsp; ');
+    } else if (ct === 'C3' || ct === 'COUPLING') {
+      const signStr = c.sign === 1
+        ? `<span style="color:var(--green)">sign=+1 (前置等待)</span>`
+        : c.sign === -1
+        ? `<span style="color:var(--orange)">sign=-1 (互斥)</span>`
+        : `sign=${c.sign}`;
+      const parts = [signStr];
+      if (c.watchAgent) parts.push(`watch=<b>${escHtml(c.watchAgent)}</b>`);
+      if (c.reactTo)    parts.push(`react=${escHtml(c.reactTo)}`);
+      extra = parts.join(' &nbsp; ');
+    }
+    const chanBadge = c.channel
+      ? `<span style="font-size:9px;padding:0 3px;border:1px solid var(--border);border-radius:2px;color:var(--muted)">${escHtml(c.channel)}</span>`
+      : '';
+    return `<div style="padding:3px 0;border-bottom:1px solid rgba(33,38,45,0.6);display:flex;flex-wrap:wrap;gap:4px;align-items:baseline">
+      <span style="background:${col}22;color:${col};padding:0 4px;border-radius:3px;font-size:9px;font-weight:bold;flex-shrink:0">${escHtml(c.cType)}</span>
+      <span style="color:var(--muted);font-size:9px;flex-shrink:0">${escHtml(c.constraintId)}</span>
+      ${chanBadge}
+      <span style="font-size:10px;flex:1">${extra}</span>
+    </div>`;
+  }).join('');
+  return `<div style="margin-top:4px"><div style="color:var(--muted);font-size:9px;margin-bottom:2px">步骤约束 (${constraints.length})</div>${rows}</div>`;
+}
+
+function buildCtxBlock(ag) {
+  if (!ag.msnId && !ag.stepId && !ag.stepText) return '';
+
+  const aq = ag.actionQueue || [];
+  const idx = ag.currentActionIdx ?? 0;
+  // 动作队列：当前正在执行的高亮，已完成的暗色，待执行的橙色
+  const aqHtml = aq.map((t, i) => {
+    let style = '';
+    if (i < idx)       style = 'color:var(--muted);text-decoration:line-through';
+    else if (i === idx) style = 'color:var(--green);font-weight:bold';
+    else                style = 'color:var(--orange)';
+    return `<div class="ctx-list-item" style="${style}">${i}. ${escHtml(t)}</div>`;
+  }).join('');
+
+  const execHtml = (ag.executedActions || []).map((s, i) =>
+    `<div class="ctx-list-item">${i+1}. ${escHtml(s)}</div>`).join('');
+
+  const scHtml = buildConstraintsHtml(ag.stepConstraints || []);
+
+  return `<div class="ctx-block">
+    <div class="ctx-block-title">执行上下文（ctx）</div>
+    <div class="row"><span class="lbl">任务ID</span><span class="val">${escHtml(ag.msnId || '—')}</span></div>
+    <div class="row"><span class="lbl">步骤ID</span><span class="val">${escHtml(ag.stepId || '—')}</span></div>
+    <div class="row"><span class="lbl">步骤文本</span><span class="val">${escHtml(ag.stepText || '—')}</span></div>
+    <div class="row"><span class="lbl">ctx状态</span><span class="val">${escHtml(ag.ctxStatus || '—')}</span></div>
+    <div class="row"><span class="lbl">迭代次数</span><span class="val">${ag.iterationCount ?? 0}</span></div>
+    <div class="row"><span class="lbl">当前位置</span><span class="val">${escHtml(ag.currentLocationName || '—')}</span></div>
+    <div class="row"><span class="lbl">滚动模式</span><span class="val">${ag.isRollingMode ? '是' : '否'}</span></div>
+    ${scHtml}
+    ${aqHtml ? `<div style="margin-top:3px;color:var(--muted);font-size:9px">动作队列 [idx=${idx}]</div>${aqHtml}` : ''}
+    ${execHtml ? `<div style="margin-top:3px;color:var(--muted);font-size:9px">已执行摘要 (${(ag.executedActions||[]).length})</div>${execHtml}` : ''}
+  </div>`;
 }
 
 function toggleDetails(btn, agentId) {
@@ -1388,6 +1603,7 @@ async function fetchLlmLogs() {
     const res = await fetch('/api/llm-logs');
     llmLogs = await res.json();
     updateLlmAgentFilter();
+    updateLlmTagFilter();
     renderLlmLogs();
   } catch(e) {
     console.warn('fetchLlmLogs failed', e);
@@ -1402,13 +1618,23 @@ function updateLlmAgentFilter() {
   if (ids.includes(cur)) sel.value = cur;
 }
 
+function updateLlmTagFilter() {
+  const sel = document.getElementById('llm-tag-filter');
+  const cur = sel.value;
+  const tags = [...new Set(llmLogs.map(e => e.tag).filter(Boolean))].sort();
+  sel.innerHTML = '<option value="">全部</option>' + tags.map(t => `<option value="${escHtml(t)}">${escHtml(t)}</option>`).join('');
+  if (tags.includes(cur)) sel.value = cur;
+}
+
 function renderLlmLogs() {
   const agentFilter = document.getElementById('llm-agent-filter').value;
   const typeFilter  = document.getElementById('llm-type-filter').value;
+  const tagFilter   = document.getElementById('llm-tag-filter').value;
 
   let filtered = llmLogs;
   if (agentFilter) filtered = filtered.filter(e => e.agentId === agentFilter);
   if (typeFilter)  filtered = filtered.filter(e => e.type === typeFilter);
+  if (tagFilter)   filtered = filtered.filter(e => e.tag === tagFilter);
 
   const list = document.getElementById('llm-list');
   list.innerHTML = '';
@@ -1418,7 +1644,12 @@ function renderLlmLogs() {
   for (let i = filtered.length - 1; i >= 0; i--) {
     const e = filtered[i];
     const col = typeColors[e.type] || '#8b949e';
-    const preview = (e.content || '').replace(/\n/g, ' ').slice(0, 80);
+    // Preview: preserve newlines as spaces, first 80 chars
+    const preview = (e.content || '').slice(0, 80).replace(/\n/g, ' ');
+    const tagCol  = llmTagColor(e.tag);
+    const tagHtml = e.tag
+      ? `<span class="llm-tag" style="background:${tagCol}22;color:${tagCol}">${escHtml(e.tag)}</span>`
+      : '';
 
     const entry = document.createElement('div');
     entry.className = 'llm-entry';
@@ -1428,6 +1659,7 @@ function renderLlmLogs() {
     hdr.innerHTML = `
       <span class="llm-type-tag" style="background:${col}22;color:${col}">${escHtml(e.type)}</span>
       <span class="llm-agent">${escHtml(e.agentId)}</span>
+      ${tagHtml}
       <span class="llm-model">${escHtml(e.model || '')}</span>
       <span class="llm-ts">${escHtml(e.timestamp || '')}</span>
       <span class="llm-preview">${escHtml(preview)}</span>`;
@@ -1445,6 +1677,97 @@ function renderLlmLogs() {
   if (filtered.length === 0) {
     list.innerHTML = '<div style="padding:16px;color:var(--muted);text-align:center">暂无日志（切换到此标签时自动刷新）</div>';
   }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Whiteboard
+// ══════════════════════════════════════════════════════════════════════════════
+async function fetchWhiteboard() {
+  try {
+    const res = await fetch('/api/whiteboard');
+    whiteboardData = await res.json();
+    updateWbGroupFilter();
+    renderWhiteboard();
+  } catch(e) {
+    console.warn('fetchWhiteboard failed', e);
+  }
+}
+
+function updateWbGroupFilter() {
+  const sel = document.getElementById('wb-group-filter');
+  const cur = sel.value;
+  const entries = whiteboardData.entries || [];
+  const groups = [...new Set(entries.map(e => e.groupId))].sort();
+  sel.innerHTML = '<option value="">全部</option>' + groups.map(g =>
+    `<option value="${escHtml(g)}">${escHtml(g)}</option>`).join('');
+  if (groups.includes(cur)) sel.value = cur;
+}
+
+function renderWhiteboard() {
+  const body = document.getElementById('wb-body');
+  const groupFilter = document.getElementById('wb-group-filter').value;
+  const entries = (whiteboardData.entries || []).filter(e => !groupFilter || e.groupId === groupFilter);
+  const history = (whiteboardData.history || []).filter(e => !groupFilter || e.groupId === groupFilter);
+
+  // Group entries by groupId
+  const byGroup = {};
+  for (const e of entries) {
+    if (!byGroup[e.groupId]) byGroup[e.groupId] = [];
+    byGroup[e.groupId].push(e);
+  }
+
+  let html = '';
+
+  // Current state section
+  html += '<div class="wb-section"><div class="wb-section-title">当前状态</div>';
+  if (Object.keys(byGroup).length === 0) {
+    html += '<div style="color:var(--muted);font-size:11px;padding:8px">暂无白板数据</div>';
+  } else {
+    for (const [gid, ents] of Object.entries(byGroup)) {
+      html += `<div class="wb-group">
+        <div class="wb-group-header">Group: ${escHtml(gid)}</div>
+        <table class="wb-table">
+          <thead><tr>
+            <th>Agent</th><th>约束ID</th><th>类型</th><th>状态</th><th>进度</th><th>时间</th>
+          </tr></thead>
+          <tbody>`;
+      for (const e of ents) {
+        const tc = WB_TYPE_COLORS[e.entryType] || '#8b949e';
+        html += `<tr>
+          <td style="color:var(--blue)">${escHtml(e.agentId)}</td>
+          <td style="color:var(--muted)">${escHtml(e.constraintId)}</td>
+          <td><span class="wb-entry-type" style="background:${tc}22;color:${tc}">${escHtml(e.entryType)}</span></td>
+          <td style="color:${e.status===1?'var(--green)':'var(--muted)'}">${e.status===1?'✓':'○'}</td>
+          <td>${escHtml(e.progress || '—')}</td>
+          <td style="color:var(--muted)">${formatTime(e.timestamp)}</td>
+        </tr>`;
+      }
+      html += '</tbody></table></div>';
+    }
+  }
+  html += '</div>';
+
+  // Write history section
+  const recentHistory = history.slice(-50).reverse();
+  html += '<div class="wb-section"><div class="wb-section-title">写入历史（最近 50 条）</div>';
+  if (recentHistory.length === 0) {
+    html += '<div style="color:var(--muted);font-size:11px;padding:8px">暂无写入记录</div>';
+  } else {
+    for (const r of recentHistory) {
+      const tc = WB_TYPE_COLORS[r.entryType] || '#8b949e';
+      html += `<div class="wb-history-item">
+        <span class="wb-history-time">${formatTime(r.timestamp)}</span>
+        <span style="color:var(--blue)">${escHtml(r.agentId)}</span>
+        <span style="color:var(--muted)">[${escHtml(r.groupId)}]</span>
+        <span class="wb-entry-type" style="background:${tc}22;color:${tc}">${escHtml(r.entryType)}</span>
+        <span style="color:var(--muted)">${escHtml(r.constraintId)}</span>
+        ${r.progress ? `<span style="color:var(--text)">${escHtml(r.progress)}</span>` : ''}
+      </div>`;
+    }
+  }
+  html += '</div>';
+
+  body.innerHTML = html;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1678,6 +2001,7 @@ async function poll() {
     renderAgents();
     renderComms();
     if (currentTab === 'debug') renderDebug();
+    if (currentTab === 'whiteboard') fetchWhiteboard();
   } catch(e) {
     document.getElementById('conn-badge').textContent = '连接失败';
     document.getElementById('conn-badge').className   = 'badge err';

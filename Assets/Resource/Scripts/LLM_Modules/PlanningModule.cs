@@ -140,13 +140,24 @@ public class PlanningModule : MonoBehaviour
             "【C3 行为耦合】两种子类型,只在存在明确的等待/互斥关系时才生成,纯并行不需要 C3:\n" +
             "  sign=+1(单向前置等待):一机必须等另一机到位/就绪后才允许开始行动(非对称依赖)。\n" +
             "    watchAgent=被等待的 agentId(不知道时填 '')  reactTo='ReadySignal'\n" +
-            "  sign=-1(动态互斥):多 agent 运行时动态争夺同一目标,先到先得,后到者等待。\n" +
-            "    不需要提前指定目标名,由 ADM 在决策时从白板读取已占目标。\n" +
-            "    与 C1 区别:C1 是静态分配(规划时决定谁用什么),C3-1 是运行时动态抢占(任何一方可先到)。\n" +
-            "    参与互斥的成员由后续绑定到同一 constraintId 的槽位/步骤共同决定。\n" +
+            "  sign=-1(动态互斥)：满足以下全部条件时生成：\n" +
+            "    ① 存在多个 agent 和一个同类目标集合（如多个检查点、路径节点、共享设施等）\n" +
+            "    ② 每个具体目标同一时刻只允许一个 agent 占用/前往\n" +
+            "    ③ 具体哪个 agent 去哪个目标，规划时无法静态确定（若已确定则用 C1）\n" +
+            "    不需要提前指定目标名，由 ADM 在运行时通过白板读取已占目标后动态选择未占目标。\n" +
+            "    参与互斥的成员由绑定到同一 constraintId 的槽位共同决定。\n" +
             "    watchAgent 保持空字符串 ''  reactTo='IntentAnnounce'\n" +
+            "  【重要】C3-1 是组内协同机制：参与互斥的 agent 仍属同一协作团队，relType=Cooperation；\n" +
+            "         互斥/避让行为不代表对抗，不应影响 relType 的判断。\n" +
             "  channel=whiteboard\n\n" +
             GetConciseTextPromptText() + "\n" +
+            "─── 输出前检查（必做）───\n" +
+            "逐类型扫描任务描述：\n" +
+            "· C1：有没有「谁负责什么目标/区域」？\n" +
+            "· C2：有没有「都完成后一起/同步」？\n" +
+            "· C3-1：是否存在目标集合、且每个目标只允许一人占用、且具体分配规划时不确定？→ sign=-1\n" +
+            "· C3+1：是否有一机必须等另一机发出就绪信号后才能行动（单向前置依赖）？→ sign=+1\n" +
+            "确认无遗漏后再输出 JSON。\n\n" +
 
             "─── 输出要求 ───\n" +
             "1. 输出内容仅包含 JSON,所有字符串字段不得为 null(不知道时填空字符串 '')。\n" +
@@ -172,10 +183,7 @@ public class PlanningModule : MonoBehaviour
             "    {\"constraintId\":\"c2_sync_report\",\"cType\":\"C2\",\"channel\":\"whiteboard\",\"groupScope\":0,\"condition\":\"A和B均完成侦察后同步回传坐标\",\"syncWith\":[]}\n" +
             "  ]\n" +
             "}\n\n" +
-            "注意:\n" +
-            "· c3_b_wait_a_ready (sign=+1):B单向等待A就绪,watchAgent 填 '' 因运行时才知道 agentId。\n" +
-            "· c3_charger_mutex (sign=-1):动态互斥,被占目标由白板运行时记录(ADM 写 IntentAnnounce.progress)。\n" +
-            "· c2_sync_report 中 syncWith 填 [],由运行时确定等待对象。";
+            "";
 
         string llmResult = null;
         yield return StartCoroutine(llm.SendRequest(
@@ -236,24 +244,28 @@ public class PlanningModule : MonoBehaviour
             $"可选角色:{roleTypes}\n\n" +
             "输入约束(StructuredConstraint JSON):\n" +
             $"{constraintsJson}\n\n" +
-            "规则:\n" +
+            "【Slots 规则】\n" +
             "1. 输出一个 JSON 对象,包含 slots 和 constraints。\n" +
-            $"2. slots 数量必须等于 {memberCount}。\n" +
-            "3. slotId 用 s0、s1、s2 ...\n" +
-            "4. desc 只写该成员自己的行动。\n" +
-            "5. desc 要覆盖完整任务,不要漏动作。\n" +
-            "6. 相同 role 的多个槽,desc 也要体现不同分工。\n" +
-            "7. doneCond 没有时填 \" \"。\n" +
-            "8. constraintIds 填适用于该槽的 constraintId。没有就填 []。\n" +
-            "9. constraints 必须保留输入中的每一条 constraintId。不要新增,不要删除。\n" +
-            "10. C1:把对应 constraintId 绑定到正确槽位。\n" +
-            "11. C3 sign=+1:同一 constraintId 要同时绑定到等待方槽位和 watchAgent 槽位。\n" +
-            "12. C3 sign=+1:watchAgent 写成被等待槽位的 slotId。\n" +
-            "13. C3 sign=-1:把同一 constraintId 绑定到所有会竞争同一共享资源/目标的槽位。\n" +
-            "14. C3 sign=-1:watchAgent 保持空字符串,参与者由绑定范围决定。\n" +
-            "15. C2:把 syncWith 写成参与同步的 slotId 数组。可以包含自己。\n" +
-            "16. 除 watchAgent 和 syncWith 外,其他字段尽量保持原语义。\n" +
-            "17. 如果无法判断等待/同步对象,才允许留空。\n\n" +
+            $"2. slots 数量必须等于 {memberCount},slotId 用 s0、s1、s2 ...\n" +
+            "3. desc 只写该成员自己的行动,须覆盖完整分工,不要漏动作。\n" +
+            "4. 相同 role 的多个槽,desc 也要体现不同分工。\n" +
+            "4b. desc 禁止出现任务描述中未明确命名的目标点/对象。\n" +
+            "    若某目标由运行时动态决定（C3-1 约束涉及的目标），不要在 desc 中提及或命名该中间目标，\n" +
+            "    反例（禁止）：「飞往检查点A，再前往艺术中心」（任务未命名「检查点A」）\n" +
+            "    正例（允许）：「飞往艺术中心，到达后参与巡逻」\n" +
+            "5. doneCond 没有时填 \" \";constraintIds 没有就填 []。\n\n" +
+            "【Constraints 回写规则】\n" +
+            "6. 必须保留输入中的每一条 constraintId,不新增,不删除。\n" +
+            "7. C1:把对应 constraintId 绑定到负责该资源/区域的槽位。\n" +
+            "8. C2:syncWith 填参与同步的 slotId 数组,可包含自己。\n" +
+            "9. 除 watchAgent 和 syncWith 外,其他字段保持原语义;无法判断时才允许留空。\n\n" +
+            "【C3 绑定规则】\n" +
+            "sign=+1(单向等待):\n" +
+            "  · 同一 constraintId 同时绑定到「等待方」槽位和「被等待方」槽位。\n" +
+            "  · watchAgent 改写为被等待方的 slotId。\n" +
+            "sign=-1(动态互斥):\n" +
+            "  · 同一 constraintId 绑定到所有可能竞争该共享资源的槽位。\n" +
+            "  · watchAgent 保持空字符串,参与者由绑定范围共同决定。\n\n" +
             GetConciseTextPromptText() + "\n" +
             "输出格式:\n" +
             "{\n" +
@@ -281,8 +293,7 @@ public class PlanningModule : MonoBehaviour
             "    {\"constraintId\":\"c3_wait_cover\",\"cType\":\"C3\",\"channel\":\"whiteboard\",\"sign\":1,\"watchAgent\":\"s0\",\"reactTo\":\"ReadySignal\"},\n" +
             "    {\"constraintId\":\"c3_charge_mutex\",\"cType\":\"C3\",\"channel\":\"whiteboard\",\"sign\":-1,\"watchAgent\":\"\",\"reactTo\":\"IntentAnnounce\"}\n" +
             "  ]\n" +
-            "}\n" +
-            "注意:sign=+1 时 watchAgent 先写 slotId;sign=-1 时 watchAgent 保持空字符串,参与者由绑定了同一 constraintId 的槽位共同决定。";
+            "}\n";
         string llmResult = null;
         yield return StartCoroutine(llm.SendRequest(
             new LLMRequestOptions { prompt = prompt, maxTokens = 1400, enableJsonMode = true, callTag = "LLM#2_SlotGen" },
@@ -484,7 +495,12 @@ public class PlanningModule : MonoBehaviour
             "4. desc 只含一个动作时,输出 1 步。\n" +
             "5. doneCond:完成条件,没有时填 \" \"。\n" +
             "6. stepId 格式:step_1、step_2 ...\n" +
-            "6b. targetName:从 text 中提取的空间目标名（地名/区域名），无空间目标时填 \"\"。如果目标带有\'附近\',\'东边\'等方位性描述,不用提取\n" +
+            "6b. targetName:从 text 中提取该步骤唯一的空间目标名（地名/区域名），无空间目标时填 \"\"。\n" +
+            "    方位修饰词（附近/东边等）不提取。\n" +
+            "6c. 【步骤原子化】每步 text 的结构：\n" +
+            "    恰好一个移动动作 + 目标（+ 必要参数），可附加零或多个非移动动作 + 目标（+ 必要参数）。\n" +
+            "    text 格式：主谓宾，只保留动作、目标和必要参数。\n" +
+            "    desc 中含 N 个依次到达的地点时，拆为 N 步，每步一个移动目标。\n" +
             "7. 重点理解 C2 和 C3 的意义,再把 constraintIds 绑定到正确动作步骤:\n" +
             "   C1(资源分配)→ 一般不用重点考虑,分槽阶段已处理;若需要,绑定到进入 targetObject 的动作步骤\n" +
             "   C2(完成同步)→ 绑定到该成员完成后需要参与同步的那个实质动作步骤\n" +
@@ -506,6 +522,20 @@ public class PlanningModule : MonoBehaviour
             "[\n" +
             "  {\"stepId\":\"step_1\",\"text\":\"飞往南区执行地面目标搜索\",\"targetName\":\"南区\",\"doneCond\":\"南区搜索完成\",\"constraintIds\":[\"c3_wait_cover\"]},\n" +
             "  {\"stepId\":\"step_2\",\"text\":\"通过白板同步回传搜索结果\",\"targetName\":\"\",\"doneCond\":\"结果回传完成\",\"constraintIds\":[\"c2_sync_report\"]}\n" +
+            "]\n\n" +
+            "示例2(含多段移动+约束绑定，规则6c 触发):\n" +
+            "当前AgentID:\"agent_B\"\n" +
+            "desc:\"飞往物资补给点领取装备，随后前往指挥所完成任务汇报，最后飞至集结区待命\"\n" +
+            "doneCond:\"到达集结区且已完成汇报\"\n" +
+            "可用约束:\n" +
+            "  c2_sync_assembly — C2, syncWith=[s0,s1], condition=\"两机均到达集结区后统一待命\"\n" +
+            "    (绑定到实质完成动作：到达集结区待命)\n" +
+            "【原子化分析】desc含3个移动目标(物资补给点→指挥所→集结区)，\n" +
+            "    每步结构：一个移动动作+一个目标（+非移动附加动作）→ 拆为3步\n" +
+            "[\n" +
+            "  {\"stepId\":\"step_1\",\"text\":\"飞往物资补给点领取装备\",\"targetName\":\"物资补给点\",\"doneCond\":\"装备领取完成\",\"constraintIds\":[]},\n" +
+            "  {\"stepId\":\"step_2\",\"text\":\"前往指挥所完成任务汇报\",\"targetName\":\"指挥所\",\"doneCond\":\"任务汇报完成\",\"constraintIds\":[]},\n" +
+            "  {\"stepId\":\"step_3\",\"text\":\"飞至集结区待命\",\"targetName\":\"集结区\",\"doneCond\":\"到达集结区\",\"constraintIds\":[\"c2_sync_assembly\"]}\n" +
             "]\n\n";
 
         string llmResult = null;

@@ -220,11 +220,15 @@ public class AgentMotionExecutor : MonoBehaviour
         }
 
         // 1. 查找目标世界坐标
-        if (!campusGrid.TryGetFeatureFirstCell(action.targetName, out Vector2Int goalCell, preferWalkable: true))
+        Debug.Log($"[AME] {props?.AgentID} DoMoveTo 开始: '{action.targetName}'");
+        if (!campusGrid.TryGetFeatureApproachCells(action.targetName, transform.position,
+                out Vector2Int[] approachArr, maxCount: 1)
+            || approachArr.Length == 0)
         {
-            Debug.LogWarning($"[AME] MoveTo: 找不到目标 '{action.targetName}'");
+            Debug.LogWarning($"[AME] MoveTo: 找不到目标 '{action.targetName}' 的接近点");
             yield break;
         }
+        Vector2Int goalCell = approachArr[0];
 
         Vector3 goalWorld = campusGrid.GridToWorldCenter(goalCell.x, goalCell.y, hoverHeight);
         goalWorld.y = hoverHeight;
@@ -250,9 +254,12 @@ public class AgentMotionExecutor : MonoBehaviour
         pathVisualizer?.ShowPath(currentPath, teamColor);
 
         // 4. 沿 waypoint 飞行
+        const float ARRIVE_THRESHOLD      = 3f;   // 到达判定半径（m）
+        const float WAYPOINT_TIMEOUT      = 12f;  // 单航点超时（s），超时自动跳过
         const float OBSTACLE_REPLAN_RANGE = 20f;  // 触发重规划的障碍感知距离（m）
         const float REPLAN_COOLDOWN       = 3f;   // 重规划最短间隔（s），防止抖动
-        float replanTimer = 0f;
+        float replanTimer    = 0f;
+        float waypointTimer  = 0f;
 
         while (waypointIdx < currentPath.Count)
         {
@@ -264,9 +271,13 @@ public class AgentMotionExecutor : MonoBehaviour
                 new Vector3(transform.position.x, 0f, transform.position.z),
                 new Vector3(wp.x, 0f, wp.z));
 
-            if (dist < 1.5f)
+            waypointTimer += Time.deltaTime;
+            if (dist < ARRIVE_THRESHOLD || waypointTimer >= WAYPOINT_TIMEOUT)
             {
+                if (waypointTimer >= WAYPOINT_TIMEOUT)
+                    Debug.LogWarning($"[AME] '{action.targetName}' 航点[{waypointIdx}] 超时跳过（dist={dist:F1}m）");
                 waypointIdx++;
+                waypointTimer = 0f;
             }
 
             // ── 障碍感知触发局部重规划 ─────────────────────────────────
@@ -310,32 +321,61 @@ public class AgentMotionExecutor : MonoBehaviour
 
     private IEnumerator DoPatrol(AtomicAction action)
     {
-        float duration = action.duration > 0f ? action.duration : 10f;
-        float radius   = ParseRadiusFromParams(action.actionParams, defaultRadius: 5f);
+        float duration = action.duration > 0f ? action.duration : 20f;
 
-        Vector3 center = transform.position;
-        if (campusGrid != null && !string.IsNullOrWhiteSpace(action.targetName) &&
-            campusGrid.TryGetFeatureFirstCell(action.targetName, out Vector2Int tc, true))
+        if (campusGrid == null || string.IsNullOrWhiteSpace(action.targetName))
         {
-            center = campusGrid.GridToWorldCenter(tc.x, tc.y);
-            center.y = hoverHeight;
+            yield return new WaitForSeconds(duration);
+            yield break;
         }
 
+        if (!campusGrid.TryBuildFeatureRingPath(action.targetName, transform.position,
+                out Vector2Int[] ringPath) || ringPath.Length == 0)
+        {
+            Debug.LogWarning($"[AME] PatrolAround: 无法为 '{action.targetName}' 构建环绕路径，降级为悬停");
+            yield return new WaitForSeconds(duration);
+            yield break;
+        }
+
+        List<Vector3> patrolWaypoints = ringPath
+            .Select(c => { var w = campusGrid.GridToWorldCenter(c.x, c.y); w.y = hoverHeight; return w; })
+            .ToList();
+
+        pathVisualizer?.ShowPath(patrolWaypoints, GetTeamColor());
+
+        const float ARRIVE_THRESHOLD = 3f;
+        const float WAYPOINT_TIMEOUT = 12f;
+
         float elapsed = 0f;
-        float angle   = 0f;
-        float speed   = 30f; // 度/秒绕圈
+        int   wpIdx   = 0;
+        float wpTimer = 0f;
 
         while (elapsed < duration)
         {
-            angle += speed * Time.deltaTime;
-            float rad  = angle * Mathf.Deg2Rad;
-            Vector3 wp = center + new Vector3(Mathf.Cos(rad) * radius, 0f, Mathf.Sin(rad) * radius);
-            wp.y = hoverHeight;
+            if (wpIdx >= patrolWaypoints.Count)
+                wpIdx = 0;
+
+            Vector3 wp = patrolWaypoints[wpIdx];
             ApplyHorizontalPD(wp);
             FaceToward(wp);
+
+            float dist = Vector3.Distance(
+                new Vector3(transform.position.x, 0f, transform.position.z),
+                new Vector3(wp.x, 0f, wp.z));
+
+            wpTimer += Time.deltaTime;
+            if (dist < ARRIVE_THRESHOLD || wpTimer >= WAYPOINT_TIMEOUT)
+            {
+                wpIdx++;
+                wpTimer = 0f;
+            }
+
             elapsed += Time.deltaTime;
             yield return null;
         }
+
+        pathVisualizer?.ClearPath();
+        Debug.Log($"[AME] PatrolAround '{action.targetName}' 完成");
     }
 
     // ─── Observe ──────────────────────────────────────────────────

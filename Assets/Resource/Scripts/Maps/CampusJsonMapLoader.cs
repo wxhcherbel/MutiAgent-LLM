@@ -211,7 +211,7 @@ public class CampusJsonMapLoader : MonoBehaviour
 
                 string finalName = string.IsNullOrWhiteSpace(f.name) || f.name.Trim() == "-"
                     ? $"building_{++buildingIndex}"
-                    : $"{baseName}_{++buildingIndex}";
+                    : f.name.Trim();
 
                 CampusFeature tmp = f;
                 if (!tmp.HasArea())
@@ -252,20 +252,21 @@ public class CampusJsonMapLoader : MonoBehaviour
                 float zBias = ((int)f.kind) * zBiasStepM;
                 float zCenter = groundZ + thick * 0.5f + zBias;
 
+                bool fHasName = !string.IsNullOrWhiteSpace(f.name) && f.name.Trim() != "-";
                 if (f.kind == CampusFeatureKind.Road)
                 {
                     SpawnStrokeRibbon(f.linePoints, width, thick, zCenter, colorRoad, enableCollisionForStrokes,
-                        rootRoad, $"{baseName}_{++roadIndex}");
+                        rootRoad, fHasName ? f.name.Trim() : $"road_{++roadIndex}");
                 }
                 else if (f.kind == CampusFeatureKind.Expressway)
                 {
                     SpawnStrokeRibbon(f.linePoints, width, thick, zCenter, colorExpressway, enableCollisionForStrokes,
-                        rootExpressway, $"{baseName}_{++expIndex}");
+                        rootExpressway, fHasName ? f.name.Trim() : $"expressway_{++expIndex}");
                 }
                 else if (f.kind == CampusFeatureKind.Bridge)
                 {
                     SpawnStrokeRibbon(f.linePoints, width, thick, zCenter, colorBridge, true,
-                        rootBridge, $"{baseName}_{++bridgeIndex}");
+                        rootBridge, fHasName ? f.name.Trim() : $"bridge_{++bridgeIndex}");
                 }
             }
 
@@ -276,29 +277,36 @@ public class CampusJsonMapLoader : MonoBehaviour
                 float thick = Mathf.Max(0.01f, areaThicknessM);
                 float zCenter = groundZ + thick * 0.5f + zBias;
 
+                bool aHasName = !string.IsNullOrWhiteSpace(f.name) && f.name.Trim() != "-";
                 if (f.kind == CampusFeatureKind.Water)
                 {
-                    SpawnExtrudedArea(f, thick, zCenter, colorWater, enableCollisionForAreas, rootWater, $"{baseName}_{++waterIndex}");
+                    SpawnExtrudedArea(f, thick, zCenter, colorWater, enableCollisionForAreas, rootWater,
+                        aHasName ? f.name.Trim() : $"water_{++waterIndex}");
                 }
                 else if (f.kind == CampusFeatureKind.Green)
                 {
-                    SpawnExtrudedArea(f, thick, zCenter, colorGreen, enableCollisionForAreas, rootGreen, $"{baseName}_{++greenIndex}");
+                    SpawnExtrudedArea(f, thick, zCenter, colorGreen, enableCollisionForAreas, rootGreen,
+                        aHasName ? f.name.Trim() : $"green_{++greenIndex}");
                 }
                 else if (f.kind == CampusFeatureKind.Forest)
                 {
-                    SpawnExtrudedArea(f, thick, zCenter, colorForest, enableCollisionForAreas, rootForest, $"{baseName}_{++forestIndex}");
+                    SpawnExtrudedArea(f, thick, zCenter, colorForest, enableCollisionForAreas, rootForest,
+                        aHasName ? f.name.Trim() : $"forest_{++forestIndex}");
                 }
                 else if (f.kind == CampusFeatureKind.Sports)
                 {
-                    SpawnExtrudedArea(f, thick, zCenter, colorSports, enableCollisionForAreas, rootSports, $"{baseName}_{++sportsIndex}");
+                    SpawnExtrudedArea(f, thick, zCenter, colorSports, enableCollisionForAreas, rootSports,
+                        aHasName ? f.name.Trim() : $"sports_{++sportsIndex}");
                 }
                 else if (f.kind == CampusFeatureKind.Parking)
                 {
-                    SpawnExtrudedArea(f, thick, zCenter, colorParking, enableCollisionForAreas, rootParking, $"{baseName}_{++parkingIndex}");
+                    SpawnExtrudedArea(f, thick, zCenter, colorParking, enableCollisionForAreas, rootParking,
+                        aHasName ? f.name.Trim() : $"parking_{++parkingIndex}");
                 }
                 else
                 {
-                    SpawnExtrudedArea(f, thick, zCenter, colorGreen, enableCollisionForAreas, rootGreen, $"{baseName}_{++greenIndex}");
+                    SpawnExtrudedArea(f, thick, zCenter, colorGreen, enableCollisionForAreas, rootGreen,
+                        aHasName ? f.name.Trim() : $"green_{++greenIndex}");
                 }
             }
         }

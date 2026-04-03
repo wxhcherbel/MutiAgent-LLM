@@ -35,6 +35,10 @@ public class ActionDecisionModule : MonoBehaviour
     // ─── 滚动规划常量 ─────────────────────────────────────────────
     private const int MaxIterations = 10;
 
+    // ─── 震荡检测状态 ─────────────────────────────────────────────
+    private bool _oscillationDetected  = false;
+    private int  _oscillationEscapeTtl = 0;
+
     // ─── JSON 提取正则 ────────────────────────────────────────────
     private static readonly Regex JsonBlockRe = new Regex(@"```(?:json)?\s*([\s\S]*?)```");
 
@@ -102,9 +106,13 @@ public class ActionDecisionModule : MonoBehaviour
             executedActionsSummary  = new List<string>(),
             iterationCount          = 0,
             isRollingMode           = true,
+            visitedNodeTabu         = new List<string>(),
+            tabuWindowSize          = 4,
         };
 
         replanCount = 0;
+        _oscillationDetected  = false;
+        _oscillationEscapeTtl = 0;
         SetStatus(ADMStatus.Idle);
         activeCoroutine = StartCoroutine(RunRollingLoop(step));
     }
@@ -116,6 +124,9 @@ public class ActionDecisionModule : MonoBehaviour
         pendingPerceptionEvents.Enqueue((eventDescription, locationName ?? string.Empty));
         Debug.Log($"[ADM] {agentProperties?.AgentID} 收到感知事件: {eventDescription}");
     }
+
+    /// <summary>仪表板查询当前执行上下文快照（只读）。</summary>
+    public ActionExecutionContext GetCtxSnapshot() => ctx;
 
     /// <summary>执行层查询当前应执行的原子动作。</summary>
     public AtomicAction GetCurrentAction()
@@ -199,10 +210,16 @@ public class ActionDecisionModule : MonoBehaviour
 
         while (ctx.iterationCount < MaxIterations)
         {
+            // ── 0. 获取 C3-1 互斥锁（串行化：读白板 + LLM + 写占位三阶段） ──
+            var mutexCids = GetC3MutexConstraintIds();
+            if (mutexCids.Count > 0)
+                yield return StartCoroutine(AcquireC3MutexLocks(mutexCids));
+
             // ── 1. 读取白板上下文 & 检查 C3 等待条件 ─────────────────
             var (waitAction, whiteboardCtx) = CheckWhiteboardAndGetContext();
             if (waitAction != null)
             {
+                ReleaseC3MutexLocks(mutexCids);
                 ctx.actionQueue = new[] { waitAction };
                 ctx.currentActionIdx = 0;
                 SetStatus(ADMStatus.Running);
@@ -212,6 +229,9 @@ public class ActionDecisionModule : MonoBehaviour
                 SetStatus(ADMStatus.Interpreting);
                 continue;
             }
+
+            // ── 2.5 刷新当前位置名称 ──────────────────────────────────
+            ctx.currentLocationName = ResolveCurrentLocationName();
 
             // ── 3. 获取地图信息 ─────────────────────────────────────
             Vector3? stepTargetWorldPos = null;
@@ -235,9 +255,10 @@ public class ActionDecisionModule : MonoBehaviour
                 : "(地图不可用)";
 
             // ── 5. 构建滚动规划提示词 ────────────────────────────────
-            string prompt = BuildRollingPrompt(step, whiteboardCtx, relativeMap);
+            List<string> suggestedWaypoints = ComputeTopoWaypointChain(step);
+            string prompt = BuildRollingPrompt(step, whiteboardCtx, relativeMap, suggestedWaypoints);
 
-            // ── 6. 调用 LLM ──────────────────────────────────────────
+            // ── 6. 调用 LLM（锁持有中）──────────────────────────────
             string llmResult = null;
             yield return StartCoroutine(llmInterface.SendRequest(
                 new LLMRequestOptions
@@ -252,6 +273,7 @@ public class ActionDecisionModule : MonoBehaviour
             if (string.IsNullOrWhiteSpace(llmResult))
             {
                 Debug.LogError($"[ADM] {agentProperties?.AgentID} 滚动规划第{ctx.iterationCount + 1}轮 LLM 返回空");
+                ReleaseC3MutexLocks(mutexCids);
                 SetStatus(ADMStatus.Failed);
                 if (agentState != null) agentState.Status = AgentStatus.Idle;
                 yield break;
@@ -267,6 +289,7 @@ public class ActionDecisionModule : MonoBehaviour
             catch (Exception e)
             {
                 Debug.LogError($"[ADM] 滚动规划 JSON 解析失败: {e.Message}");
+                ReleaseC3MutexLocks(mutexCids);
                 SetStatus(ADMStatus.Failed);
                 if (agentState != null) agentState.Status = AgentStatus.Idle;
                 yield break;
@@ -279,6 +302,7 @@ public class ActionDecisionModule : MonoBehaviour
             if (planResult == null)
             {
                 Debug.LogError($"[ADM] 滚动规划解析结果为 null");
+                ReleaseC3MutexLocks(mutexCids);
                 SetStatus(ADMStatus.Failed);
                 if (agentState != null) agentState.Status = AgentStatus.Idle;
                 yield break;
@@ -288,6 +312,7 @@ public class ActionDecisionModule : MonoBehaviour
             if (planResult.isDone)
             {
                 Debug.Log($"[ADM] {agentProperties?.AgentID} 步骤完成: {planResult.doneReason}");
+                ReleaseC3MutexLocks(mutexCids);
 
                 // 写 DoneSignal 到白板（C2 约束）
                 WriteWhiteboardDoneSignals();
@@ -305,6 +330,7 @@ public class ActionDecisionModule : MonoBehaviour
             if (planResult.nextActions == null || planResult.nextActions.Length == 0)
             {
                 Debug.LogWarning($"[ADM] {agentProperties?.AgentID} LLM 返回 isDone=false 但 nextActions 为空，强制完成步骤");
+                ReleaseC3MutexLocks(mutexCids);
                 planningModule?.CompleteCurrentStep();
                 SetStatus(ADMStatus.Done);
                 if (agentState != null) agentState.Status = AgentStatus.Idle;
@@ -318,6 +344,9 @@ public class ActionDecisionModule : MonoBehaviour
             // 写 C3 sign=-1 互斥占位（将 MoveTo 目标写入白板，供其他 Agent 避开）
             WriteC3MutexClaims(planResult.nextActions);
 
+            // 写完占位后立即释放锁，后来者进入时已能看到占位；动作执行不在锁内
+            ReleaseC3MutexLocks(mutexCids);
+
             // 写 IntentAnnounce 到白板（可选，通知队友意图）
             WriteWhiteboardIntentSignals();
 
@@ -328,6 +357,16 @@ public class ActionDecisionModule : MonoBehaviour
 
             // ── 11. 更新执行历史，进入下一迭代 ──────────────────────
             UpdateHistory(planResult.nextActions);
+
+            if (!_oscillationDetected && DetectOscillation())
+            {
+                _oscillationDetected  = true;
+                _oscillationEscapeTtl = 3;
+                Debug.LogWarning($"[ADM] {agentProperties?.AgentID} 检测到 A-B-A-B 震荡，启动逃逸模式（{_oscillationEscapeTtl} 轮）");
+            }
+            if (_oscillationEscapeTtl > 0 && --_oscillationEscapeTtl == 0)
+                _oscillationDetected = false;
+
             ctx.iterationCount++;
             SetStatus(ADMStatus.Interpreting);
         }
@@ -343,7 +382,8 @@ public class ActionDecisionModule : MonoBehaviour
     // 滚动规划提示词构建
     // ─────────────────────────────────────────────────────────────
 
-    private string BuildRollingPrompt(PlanStep step, string whiteboardCtx, string relativeMap)
+    private string BuildRollingPrompt(PlanStep step, string whiteboardCtx, string relativeMap,
+                                       List<string> suggestedWaypoints = null)
     {
         // 已执行历史
         string historyBlock = ctx.executedActionsSummary != null && ctx.executedActionsSummary.Count > 0
@@ -361,6 +401,7 @@ public class ActionDecisionModule : MonoBehaviour
             "你是无人机战术执行规划器，负责滚动式地为当前步骤生成下一批原子动作，并判断步骤是否已完成。\n\n" +
             "═══ 步骤目标 ═══\n" +
             $"步骤文本：{step.text}\n" +
+            $"导航目标（targetName）：{(string.IsNullOrWhiteSpace(step.targetName) ? "无" : step.targetName)}\n" +
             $"完成条件（doneCond）：{(string.IsNullOrWhiteSpace(step.doneCond) ? "未指定" : step.doneCond)}\n\n" +
             "═══ 已执行历史 ═══\n" +
             historyBlock + "\n\n" +
@@ -369,6 +410,7 @@ public class ActionDecisionModule : MonoBehaviour
             $"当前位置：{ctx.currentLocationName}\n\n" +
             "═══ 周边地图（以本机为中心，半径300m） ═══\n" +
             relativeMap + "\n\n" +
+            BuildTopoWaypointBlock(suggestedWaypoints) +
             "═══ 导航规则（重要） ═══\n" +
             "本地图仅覆盖当前位置半径300m范围内的地物。\n" +
             "• 若目标在300m范围内（标注\"在本地图范围内\"）：可直接使用目标名作为 MoveTo 的 targetName。\n" +
@@ -378,6 +420,8 @@ public class ActionDecisionModule : MonoBehaviour
             "  - 导航链示例：当前位置 → 航点C（★） → 航点D（★） → 最终目标\n" +
             "  - 每轮只需规划到下一个航点，下轮会重新获取更新的地图。\n" +
             "• targetName 必须是本地图300m范围内列出的地点名称，禁止编造或使用范围外地点名。\n\n" +
+            BuildTabuBlock() +
+            BuildEscapeBlock() +
             "═══ 白板状态（组内协同） ═══\n" +
             (string.IsNullOrWhiteSpace(whiteboardCtx) ? "（无白板数据）" : whiteboardCtx) + "\n\n" +
             "═══ 协同约束 ═══\n" +
@@ -407,7 +451,9 @@ public class ActionDecisionModule : MonoBehaviour
             "2. isDone=true 时 nextActions 可为空数组 []。\n" +
             "3. isDone=false 时 nextActions 必须有 1-3 个动作。\n" +
             "4. targetName 必须是本地图300m范围内存在的地点名称，禁止编造。\n" +
-            "5. 每个动作必须包含全部字段：actionId / type / targetName / targetAgentId / duration / actionParams / spatialHint。\n";
+            "5. 每个动作必须包含全部字段：actionId / type / targetName / targetAgentId / duration / actionParams / spatialHint。\n" +
+            "6. Tabu 规则：禁忌节点列表中的地点本轮不得选作 targetName。\n" +
+            "7. 全局路径建议优先于 ★ 启发；遇到震荡逃逸模式时，规则 6 和全局路径建议的优先级高于一切。\n";
     }
 
     private string BuildConstraintSummary()
@@ -449,6 +495,98 @@ public class ActionDecisionModule : MonoBehaviour
             }
         }
         return sb.ToString().TrimEnd();
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 震荡检测 & Tabu helpers
+    // ─────────────────────────────────────────────────────────────
+
+    private bool DetectOscillation()
+    {
+        var t = ctx?.visitedNodeTabu;
+        if (t == null || t.Count < 4) return false;
+        int n = t.Count;
+        return t[n-4] == t[n-2] && t[n-3] == t[n-1] && t[n-4] != t[n-3];
+    }
+
+    private List<string> _topoWaypointCache       = new List<string>();
+    private Vector3      _topoWaypointCachePos     = Vector3.positiveInfinity;
+    private string       _topoWaypointCacheTarget  = string.Empty;
+    private const float  TopoWaypointCacheRange    = 50f;
+
+    private List<string> ComputeTopoWaypointChain(PlanStep step, int maxWaypoints = 3)
+    {
+        if (campusGrid == null || string.IsNullOrWhiteSpace(step?.targetName))
+            return _topoWaypointCache;
+
+        Vector3 agentPos = agentState?.Position ?? Vector3.zero;
+        if (step.targetName == _topoWaypointCacheTarget &&
+            Vector3.Distance(agentPos, _topoWaypointCachePos) < TopoWaypointCacheRange &&
+            _topoWaypointCache.Count > 0)
+            return _topoWaypointCache;
+
+        _topoWaypointCache.Clear();
+        _topoWaypointCachePos   = agentPos;
+        _topoWaypointCacheTarget = step.targetName;
+
+        Vector2Int agentCell = campusGrid.WorldToGrid(agentPos);
+        if (!campusGrid.TryGetFeatureApproachCells(step.targetName, agentPos,
+                out Vector2Int[] approachArr, maxCount: 1)
+            || approachArr.Length == 0)
+            return _topoWaypointCache;
+        Vector2Int goalCell = approachArr[0];
+
+        List<Vector2Int> path = campusGrid.FindPathAStar(agentCell, goalCell);
+        if (path == null || path.Count == 0) return _topoWaypointCache;
+
+        string currentLoc = ctx?.currentLocationName ?? string.Empty;
+        string lastAdded  = string.Empty;
+        foreach (Vector2Int cell in path)
+        {
+            if (campusGrid.cellFeatureNameGrid == null) break;
+            string feat = campusGrid.cellFeatureNameGrid[cell.x, cell.y];
+            if (string.IsNullOrWhiteSpace(feat) || feat == currentLoc || feat == lastAdded) continue;
+            _topoWaypointCache.Add(feat);
+            lastAdded = feat;
+            if (feat == step.targetName || _topoWaypointCache.Count >= maxWaypoints) break;
+        }
+        return _topoWaypointCache;
+    }
+
+    private string BuildTabuBlock()
+    {
+        if (ctx?.visitedNodeTabu == null || ctx.visitedNodeTabu.Count == 0) return string.Empty;
+        return "═══ 导航禁忌（防震荡） ═══\n" +
+               "以下地点近期已访问，本轮【禁止】再次作为 targetName，\n" +
+               "除非别无选择（需在 thought 中说明）：\n" +
+               $"  禁止节点：{string.Join(", ", ctx.visitedNodeTabu)}\n\n";
+    }
+
+    private string BuildEscapeBlock()
+    {
+        if (!_oscillationDetected) return string.Empty;
+        var t = ctx?.visitedNodeTabu;
+        string pair = (t != null && t.Count >= 2)
+            ? $"[{t[t.Count-2]}] ↔ [{t[t.Count-1]}]"
+            : "未知节点对";
+        return "═══ 【紧急】震荡逃逸模式 ═══\n" +
+               $"检测到你在 {pair} 间循环。强制规则（最高优先级）：\n" +
+               "1. 禁忌列表节点本轮绝对不可选。\n" +
+               "2. 必须选一个全新的、未曾访问的节点作为 targetName。\n" +
+               "3. 优先按「全局路径建议」中未访问的节点选取。\n" +
+               $"4. 在 thought 中明确写出逃逸节点名称和理由。\n" +
+               $"剩余逃逸轮次：{_oscillationEscapeTtl}\n\n";
+    }
+
+    private string BuildTopoWaypointBlock(List<string> waypoints)
+    {
+        if (waypoints == null || waypoints.Count == 0) return string.Empty;
+        return "═══ 全局路径建议（A* 预规划） ═══\n" +
+               "基于全局地图计算的参考航点序列（从近到远）：\n" +
+               $"  {string.Join(" → ", waypoints)}\n" +
+               "• 优先按此顺序选 targetName（跳过不在 300m 内的节点）。\n" +
+               "• 此序列比 ★ 启发更准确，路径分歧时以此为准。\n" +
+               "• 序列节点若在禁忌列表中，跳过它选下一个。\n\n";
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -668,7 +806,8 @@ public class ActionDecisionModule : MonoBehaviour
         }
     }
 
-    /// <summary>为 channel=whiteboard 约束写入 IntentAnnounce（执行批次动作前调用）。</summary>
+    /// <summary>为 channel=whiteboard 约束写入 IntentAnnounce（执行批次动作前调用）。
+    /// 注意：C3 sign=-1 互斥约束由 WriteC3MutexClaims 专门处理（progress=targetName），此处跳过，避免覆盖。</summary>
     private void WriteWhiteboardIntentSignals()
     {
         if (SharedWhiteboard.Instance == null || ctx.stepConstraints == null) return;
@@ -679,6 +818,8 @@ public class ActionDecisionModule : MonoBehaviour
         foreach (var c in ctx.stepConstraints)
         {
             if (c.channel != "whiteboard") continue;
+            // C3 sign=-1 互斥约束由 WriteC3MutexClaims 写 progress=targetName，跳过，防止覆盖
+            if ((c.cType == "C3" || c.cType == "Coupling") && c.sign == -1) continue;
             SharedWhiteboard.Instance.WriteEntry(groupId, new WhiteboardEntry
             {
                 agentId      = agentId,
@@ -697,18 +838,61 @@ public class ActionDecisionModule : MonoBehaviour
     /// </summary>
     private void WriteC3MutexClaims(AtomicAction[] actions)
     {
-        if (SharedWhiteboard.Instance == null || ctx.stepConstraints == null || actions == null) return;
+        string myId = agentProperties?.AgentID ?? "?";
+
+        // ── 前置守卫诊断 ─────────────────────────────────────────────
+        if (SharedWhiteboard.Instance == null)
+        {
+            Debug.LogWarning($"[ADM][WriteC3MutexClaims] {myId} 跳过：SharedWhiteboard.Instance == null");
+            return;
+        }
+        if (ctx.stepConstraints == null)
+        {
+            Debug.LogWarning($"[ADM][WriteC3MutexClaims] {myId} 跳过：ctx.stepConstraints == null");
+            return;
+        }
+        if (actions == null)
+        {
+            Debug.LogWarning($"[ADM][WriteC3MutexClaims] {myId} 跳过：actions == null");
+            return;
+        }
+
         string groupId = planningModule?.GetGroupId();
-        if (string.IsNullOrWhiteSpace(groupId)) return;
-        string myId = agentProperties?.AgentID ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(groupId))
+        {
+            Debug.LogWarning($"[ADM][WriteC3MutexClaims] {myId} 跳过：groupId 为空（planningModule={planningModule != null})");
+            return;
+        }
+
+        // ── 约束遍历诊断 ─────────────────────────────────────────────
+        Debug.Log($"[ADM][WriteC3MutexClaims] {myId} 开始 | stepConstraints={ctx.stepConstraints.Length}" +
+                  $" | actions={actions.Length} | groupId={groupId}");
 
         foreach (var c in ctx.stepConstraints)
         {
-            if ((c.cType != "C3" && c.cType != "Coupling") || c.sign != -1) continue;
+            bool isC3  = c.cType == "C3" || c.cType == "Coupling";
+            bool isMux = c.sign == -1;
+            Debug.Log($"[ADM][WriteC3MutexClaims] {myId} 约束 {c.constraintId}: cType={c.cType} isC3={isC3} sign={c.sign} isMux={isMux}");
+
+            // 修复：原来只判断 "C3"，漏掉了 "Coupling"
+            if (!isC3 || !isMux) continue;
+
+            // ── 动作遍历诊断 ─────────────────────────────────────────
             foreach (var action in actions)
             {
-                if (action.type != AtomicActionType.MoveTo) continue;
-                if (string.IsNullOrEmpty(action.targetName)) continue;
+                Debug.Log($"[ADM][WriteC3MutexClaims] {myId}   action: type={action.type} targetName='{action.targetName}'");
+
+                if (action.type != AtomicActionType.MoveTo)
+                {
+                    Debug.Log($"[ADM][WriteC3MutexClaims] {myId}   跳过（非 MoveTo）");
+                    continue;
+                }
+                if (string.IsNullOrEmpty(action.targetName))
+                {
+                    Debug.LogWarning($"[ADM][WriteC3MutexClaims] {myId}   跳过（targetName 为空）");
+                    continue;
+                }
+
                 SharedWhiteboard.Instance.WriteEntry(groupId, new WhiteboardEntry
                 {
                     agentId      = myId,
@@ -717,9 +901,72 @@ public class ActionDecisionModule : MonoBehaviour
                     progress     = action.targetName,
                     status       = 1,
                 });
-                Debug.Log($"[ADM] {myId} C3-1 占位: constraintId={c.constraintId}, target={action.targetName}");
+                Debug.Log($"[ADM][WriteC3MutexClaims] {myId} ✓ 写入占位: group={groupId} cid={c.constraintId} target={action.targetName}");
             }
         }
+    }
+
+    /// <summary>返回当前步骤中所有 C3 sign=-1 互斥约束的 constraintId 列表（已去重）。</summary>
+    private List<string> GetC3MutexConstraintIds()
+    {
+        var ids = new List<string>();
+        if (ctx.stepConstraints == null) return ids;
+        foreach (var c in ctx.stepConstraints)
+        {
+            if ((c.cType == "C3" || c.cType == "Coupling") && c.sign == -1)
+                ids.Add(c.constraintId);
+        }
+        return ids;
+    }
+
+    /// <summary>
+    /// 协程：尝试获取本步骤所有 C3-1 互斥锁，全部获取后才返回。
+    /// 若部分锁被占用则全部释放并 0.1s 后重试（all-or-nothing，避免死锁）。
+    /// </summary>
+    private IEnumerator AcquireC3MutexLocks(List<string> constraintIds)
+    {
+        if (constraintIds == null || constraintIds.Count == 0) yield break;
+        string myId = agentProperties?.AgentID ?? string.Empty;
+
+        float timeout = 60f;
+        float elapsed = 0f;
+
+        while (elapsed < timeout)
+        {
+            bool allAcquired = true;
+            foreach (var cid in constraintIds)
+            {
+                if (!SharedWhiteboard.Instance.TryAcquireMutexLock(cid, myId))
+                {
+                    allAcquired = false;
+                    break;
+                }
+            }
+
+            if (allAcquired)
+            {
+                Debug.Log($"[ADM] {myId} 已获取所有 C3-1 互斥锁");
+                yield break;
+            }
+
+            // 部分失败：全部释放，等待后重试
+            foreach (var cid in constraintIds)
+                SharedWhiteboard.Instance.ReleaseMutexLock(cid, myId);
+
+            yield return new WaitForSeconds(0.1f);
+            elapsed += 0.1f;
+        }
+
+        Debug.LogError($"[ADM] {myId} 获取 C3-1 互斥锁超时！强制继续（可能冲突）");
+    }
+
+    /// <summary>释放本步骤所有 C3-1 互斥锁。</summary>
+    private void ReleaseC3MutexLocks(List<string> constraintIds)
+    {
+        if (constraintIds == null) return;
+        string myId = agentProperties?.AgentID ?? string.Empty;
+        foreach (var cid in constraintIds)
+            SharedWhiteboard.Instance.ReleaseMutexLock(cid, myId);
     }
 
     /// <summary>
@@ -823,6 +1070,14 @@ public class ActionDecisionModule : MonoBehaviour
             if (!string.IsNullOrWhiteSpace(a.actionParams))
                 line += $" - {a.actionParams}";
             ctx.executedActionsSummary.Add(line);
+
+            if (a.type == AtomicActionType.MoveTo && !string.IsNullOrWhiteSpace(a.targetName))
+            {
+                ctx.visitedNodeTabu.Remove(a.targetName);
+                ctx.visitedNodeTabu.Add(a.targetName);
+                while (ctx.visitedNodeTabu.Count > ctx.tabuWindowSize)
+                    ctx.visitedNodeTabu.RemoveAt(0);
+            }
         }
     }
 
@@ -923,10 +1178,17 @@ public class ActionDecisionModule : MonoBehaviour
     {
         if (agentState == null || campusGrid == null) return "未知位置";
         Vector3 pos = agentState.Position;
-        if (campusGrid.TryGetCellFeatureInfoByWorld(pos, out _, out _, out string name, out _, out _)
-            && !string.IsNullOrWhiteSpace(name))
-            return name;
-        return $"({pos.x:F0},{pos.z:F0})";
+        if (!campusGrid.TryGetCellFeatureInfoByWorld(pos, out _, out string uid, out string name, out _, out _))
+            return $"({pos.x:F0},{pos.z:F0})";
+
+        // 优先用 runtimeAlias（与地图显示一致），无则用 effectiveName
+        if (!string.IsNullOrWhiteSpace(uid)
+            && campusGrid.featureSpatialProfileByUid != null
+            && campusGrid.featureSpatialProfileByUid.TryGetValue(uid, out var profile)
+            && !string.IsNullOrWhiteSpace(profile.runtimeAlias))
+            return profile.runtimeAlias;
+
+        return !string.IsNullOrWhiteSpace(name) ? name : $"({pos.x:F0},{pos.z:F0})";
     }
 
     private void SyncCampusGridReference()

@@ -36,6 +36,9 @@ public class LogEntry
 
     /// <summary>请求的最大 token 数。</summary>
     public int max_tokens;
+
+    /// <summary>调用阶段标签，例如 "LLM#1"、"ADM_Roll_iter2"。</summary>
+    public string callTag;
 }
 
 /// <summary>

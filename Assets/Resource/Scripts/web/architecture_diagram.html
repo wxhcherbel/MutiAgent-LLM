@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>系统架构图 — Unity3D + LLM 多智能体仿真</title>
+<style>
+/* ── Reset & Base ─────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:     #0d1117;
+  --card:   #161b22;
+  --border: #21262d;
+  --blue:   #58a6ff;
+  --green:  #3fb950;
+  --orange: #d29922;
+  --red:    #f85149;
+  --purple: #bc8cff;
+  --text:   #c9d1d9;
+  --muted:  #8b949e;
+  --font:   'SF Mono', 'Consolas', 'Liberation Mono', monospace;
+}
+html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 12px; }
+
+/* ── Toolbar ──────────────────────────────────────────────────────────────── */
+#toolbar {
+  position: fixed; top: 0; left: 0; right: 0; height: 40px;
+  background: var(--card); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 6px; padding: 0 12px; z-index: 200;
+}
+#toolbar h1 { font-size: 13px; color: var(--blue); margin-right: 4px; white-space: nowrap; }
+.tb-btn {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 3px 10px; font-family: var(--font); font-size: 11px;
+  cursor: pointer; transition: border-color .15s, color .15s;
+}
+.tb-btn:hover { border-color: var(--blue); color: var(--blue); }
+.tb-sep { width: 1px; height: 20px; background: var(--border); flex-shrink: 0; }
+#tb-scale { font-size: 11px; color: var(--muted); min-width: 38px; text-align: center; }
+#tb-hint { font-size: 10px; color: var(--muted); margin-left: auto; white-space: nowrap; }
+
+/* ── Viewport ─────────────────────────────────────────────────────────────── */
+#viewport {
+  position: fixed; top: 40px; left: 0; right: 0; bottom: 0;
+  overflow: hidden; cursor: default;
+}
+#viewport.panning { cursor: grabbing; }
+
+/* ── Diagram canvas ───────────────────────────────────────────────────────── */
+#diagram {
+  position: absolute; width: 1860px; height: 1160px;
+  transform-origin: 0 0;
+}
+
+/* ── Layer background bands ───────────────────────────────────────────────── */
+.layer-bg {
+  position: absolute; left: 6px; width: 958px;
+  border-radius: 7px; border: 1px solid rgba(255,255,255,0.07);
+  pointer-events: none;
+}
+.layer-title {
+  position: absolute; left: 10px; top: 7px;
+  font-size: 10px; font-weight: bold; color: rgba(255,255,255,0.55);
+  background: rgba(0,0,0,0.35); padding: 2px 9px; border-radius: 3px;
+  border: 1px solid rgba(255,255,255,0.12); cursor: pointer;
+  pointer-events: all; user-select: none; white-space: nowrap;
+}
+.layer-title:hover { color: #fff; }
+
+/* ── SVG arrow overlay ────────────────────────────────────────────────────── */
+#arrows {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  pointer-events: none; overflow: visible;
+}
+
+/* ── Nodes ────────────────────────────────────────────────────────────────── */
+.node {
+  position: absolute; background: var(--card);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 8px; cursor: move; user-select: none;
+  transition: box-shadow .12s, border-color .12s; z-index: 10;
+}
+.node:hover  { border-color: var(--blue); box-shadow: 0 0 0 2px rgba(88,166,255,.2); z-index: 30; }
+.node.hl     { border-color: var(--blue); box-shadow: 0 0 0 2px rgba(88,166,255,.25); z-index: 30; }
+.node.dashed { border-style: dashed; border-color: #4b5563; opacity: .82; }
+.node.llm    { border-color: #3b82f6; background: #0f1f3d; }
+.node.col    {
+  border-radius: 8px; padding: 10px 9px;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.node-label {
+  font-size: 11px; font-weight: bold; color: var(--text);
+  white-space: nowrap; outline: none; cursor: text;
+}
+.node.col .node-label {
+  white-space: normal; text-align: center; border-bottom: 1px solid var(--border);
+  padding-bottom: 6px; margin-bottom: 5px; font-size: 10px; cursor: text;
+}
+.node-sub {
+  font-size: 9px; color: var(--muted); margin-top: 2px;
+  outline: none; white-space: pre; cursor: text; line-height: 1.55;
+}
+.node.col .node-sub { font-size: 9.5px; white-space: pre; flex: 1; overflow: auto; }
+
+/* ── Legend ───────────────────────────────────────────────────────────────── */
+#legend {
+  position: fixed; top: 50px; right: 12px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 6px;
+  padding: 10px 13px; z-index: 300; font-size: 10px; min-width: 158px;
+}
+#legend h3 { font-size: 11px; color: var(--blue); margin-bottom: 8px; }
+.li { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; }
+.ll { width: 28px; height: 0; flex-shrink: 0; }
+.ll.solid  { height: 2px; background: #c9d1d9; }
+.ll.blue   { border-bottom: 2px dashed #58a6ff; }
+.ll.orange { height: 2px; background: #d29922; }
+.ll.red    { border-bottom: 2px dashed #f85149; }
+.ll.gray   { border-bottom: 2px dashed #6b7280; }
+#legend-sep { border-top: 1px solid var(--border); margin: 7px 0 8px; }
+.lc { width: 11px; height: 11px; border-radius: 2px; flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <h1>&#x2756; 系统架构图</h1>
+  <div class="tb-sep"></div>
+  <button class="tb-btn" onclick="resetLayout()">重置布局</button>
+  <button class="tb-btn" onclick="fitView()">适应窗口</button>
+  <button class="tb-btn" onclick="copySVG()">复制 SVG</button>
+  <div class="tb-sep"></div>
+  <button class="tb-btn" onclick="zoom(0.15)">＋</button>
+  <span id="tb-scale">100%</span>
+  <button class="tb-btn" onclick="zoom(-0.15)">－</button>
+  <span id="tb-hint">双击节点标签可编辑 &nbsp;·&nbsp; 拖拽节点 &nbsp;·&nbsp; 滚轮缩放 &nbsp;·&nbsp; 拖拽空白平移</span>
+</div>
+
+<div id="viewport">
+  <div id="diagram">
+    <!-- Layer bands (L0–L5) -->
+    <div class="layer-bg" id="lb0" style="background:rgba(76,29,149,.18);top:28px;height:128px;">
+      <span class="layer-title" onclick="toggleLayer(0)">L0 &nbsp;用户入口 ▾</span>
+    </div>
+    <div class="layer-bg" id="lb1" style="background:rgba(30,58,138,.18);top:174px;height:145px;">
+      <span class="layer-title" onclick="toggleLayer(1)">L1 &nbsp;任务解析 ▾</span>
+    </div>
+    <div class="layer-bg" id="lb2" style="background:rgba(19,78,74,.18);top:337px;height:188px;">
+      <span class="layer-title" onclick="toggleLayer(2)">L2 &nbsp;协商规划 ▾</span>
+    </div>
+    <div class="layer-bg" id="lb3" style="background:rgba(20,83,45,.18);top:543px;height:213px;">
+      <span class="layer-title" onclick="toggleLayer(3)">L3 &nbsp;滚动执行 ▾</span>
+    </div>
+    <div class="layer-bg" id="lb4" style="background:rgba(124,45,18,.18);top:774px;height:140px;">
+      <span class="layer-title" onclick="toggleLayer(4)">L4 &nbsp;物理执行 ▾</span>
+    </div>
+    <div class="layer-bg" id="lb5" style="background:rgba(127,29,29,.18);top:932px;height:155px;">
+      <span class="layer-title" onclick="toggleLayer(5)">L5 &nbsp;裁判评估 ▾</span>
+    </div>
+
+    <!-- SVG arrows -->
+    <svg id="arrows">
+      <defs>
+        <marker id="mk-black"  viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M0 0 L10 5 L0 10z" fill="#c9d1d9"/>
+        </marker>
+        <marker id="mk-blue"   viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M0 0 L10 5 L0 10z" fill="#58a6ff"/>
+        </marker>
+        <marker id="mk-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M0 0 L10 5 L0 10z" fill="#d29922"/>
+        </marker>
+        <marker id="mk-orange-s" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10z" fill="#d29922"/>
+        </marker>
+        <marker id="mk-gray"   viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M0 0 L10 5 L0 10z" fill="#6b7280"/>
+        </marker>
+        <marker id="mk-red"    viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M0 0 L10 5 L0 10z" fill="#f85149"/>
+        </marker>
+      </defs>
+    </svg>
+  </div>
+</div>
+
+<!-- Legend -->
+<div id="legend">
+  <h3>图例</h3>
+  <div class="li"><div class="ll solid"></div><span>主数据流</span></div>
+  <div class="li"><div class="ll blue"></div><span>LLM API 调用</span></div>
+  <div class="li"><div class="ll orange"></div><span>白板读写 ↔</span></div>
+  <div class="li"><div class="ll red"></div><span>裁判事件广播</span></div>
+  <div class="li"><div class="ll gray"></div><span>未实现接口</span></div>
+  <div id="legend-sep"></div>
+  <div style="font-size:9px;color:var(--muted);margin-bottom:6px">层级颜色</div>
+  <div class="li"><div class="lc" style="background:rgba(76,29,149,.6)"></div><span>L0 用户入口</span></div>
+  <div class="li"><div class="lc" style="background:rgba(30,58,138,.6)"></div><span>L1 任务解析</span></div>
+  <div class="li"><div class="lc" style="background:rgba(19,78,74,.6)"></div><span>L2 协商规划</span></div>
+  <div class="li"><div class="lc" style="background:rgba(20,83,45,.6)"></div><span>L3 滚动执行</span></div>
+  <div class="li"><div class="lc" style="background:rgba(124,45,18,.6)"></div><span>L4 物理执行</span></div>
+  <div class="li"><div class="lc" style="background:rgba(127,29,29,.6)"></div><span>L5 裁判评估</span></div>
+</div>
+
+<script>
+// ============================================================
+//  NODE DATA
+// ============================================================
+const NODES = [
+  // ── L0 用户入口 ──────────────────────────────────────────
+  { id:'user',       label:'用户 / 操作员',      sub:'Operator',                     layer:0, x:65,  y:55,  w:118, h:52 },
+  { id:'dashboard',  label:'Web Dashboard',      sub:'dashboard.html\nHTTP 轮询',    layer:0, x:233, y:55,  w:140, h:52 },
+  { id:'statesrv',   label:'AgentStateServer',   sub:'HTTP :8080\nREST API',         layer:0, x:420, y:44,  w:150, h:68 },
+
+  // ── L1 任务解析 ──────────────────────────────────────────
+  { id:'planning',   label:'PlanningModule',     sub:'StartMission()',               layer:1, x:65,  y:200, w:140, h:56, llm:false },
+  { id:'llm1',       label:'LLM #1',             sub:'任务解析\nGenerateStructuredPlan()', layer:1, x:258, y:200, w:140, h:56, llm:true },
+  { id:'gboot',      label:'GroupBootstrap',     sub:'广播分配任务槽位',              layer:1, x:455, y:200, w:138, h:56 },
+
+  // ── L2 协商规划 ──────────────────────────────────────────
+  { id:'llm2',       label:'LLM #2',             sub:'槽位生成\nGenerateSlots()',     layer:2, x:65,  y:365, w:125, h:60, llm:true },
+  { id:'bcast',      label:'任务广播',            sub:'BroadcastToMembers()',         layer:2, x:240, y:365, w:122, h:60 },
+  { id:'select',     label:'成员选择',            sub:'SelectBestCandidates()',       layer:2, x:412, y:365, w:122, h:60 },
+  { id:'llm3',       label:'LLM #3',             sub:'冲突消解\nResolveConflicts()', layer:2, x:584, y:365, w:125, h:60, llm:true },
+  { id:'confirm',    label:'槽位确认',            sub:'ConfirmAssignment()',          layer:2, x:758, y:365, w:118, h:60 },
+  { id:'llm4',       label:'LLM #4',             sub:'步骤分解\nDecomposeSteps()',    layer:2, x:758, y:365, w:118, h:60, llm:true },
+
+  // ── L3 滚动执行 ──────────────────────────────────────────
+  { id:'adm',        label:'ActionDecisionModule',sub:'RunRollingLoop()\n11 步迭代循环', layer:3, x:65,  y:572, w:178, h:72 },
+  { id:'mem',        label:'MemoryModule',        sub:'(未实现)',                    layer:3, x:298, y:578, w:128, h:56, dashed:true },
+  { id:'refmod',     label:'ReflectionModule',    sub:'(未实现)',                    layer:3, x:478, y:578, w:134, h:56, dashed:true },
+
+  // ── L4 物理执行 ──────────────────────────────────────────
+  { id:'executor',   label:'AgentMotionExecutor', sub:'ExecuteAction()',             layer:4, x:65,  y:803, w:162, h:50 },
+  { id:'a_move',     label:'Move',               sub:'',                            layer:4, x:280, y:803, w:68,  h:44 },
+  { id:'a_pick',     label:'PickUp',             sub:'',                            layer:4, x:358, y:803, w:68,  h:44 },
+  { id:'a_put',      label:'PutDown',            sub:'',                            layer:4, x:436, y:803, w:68,  h:44 },
+  { id:'a_int',      label:'Interact',           sub:'',                            layer:4, x:514, y:803, w:68,  h:44 },
+  { id:'a_wait',     label:'Wait',               sub:'',                            layer:4, x:592, y:803, w:60,  h:44 },
+  { id:'a_comm',     label:'Communicate',        sub:'',                            layer:4, x:662, y:803, w:95,  h:44 },
+
+  // ── L5 裁判评估 ──────────────────────────────────────────
+  { id:'mon1',       label:'GroupMonitor',       sub:'Phase 1\n任务完成检查',        layer:5, x:65,  y:963, w:128, h:60 },
+  { id:'mon2',       label:'GroupMonitor',       sub:'Phase 2\n全局状态评估',        layer:5, x:243, y:963, w:128, h:60 },
+  { id:'referee',    label:'RefereeManager',     sub:'.BroadcastEvent()',           layer:5, x:425, y:963, w:140, h:60 },
+  { id:'agentcb',    label:'Agent 回调处理',      sub:'OnRefereeEvent()',            layer:5, x:620, y:963, w:128, h:60 },
+
+  // ── 横向贯穿竖栏 (layer:-1 永不折叠) ─────────────────────
+  { id:'wb',   label:'SharedWhiteboard',
+    sub:'── 5 种条目类型 ──\n• Task  任务槽位\n• Intent  意图\n• Obstacle  障碍\n• Location  位置\n• Message  消息\n\n── 互斥锁 ──\nTryAcquireMutexLock()\nReleaseMutexLock()\n\n── 读写接口 ──\nWriteEntry()\nReadEntry()\nQueryByType()',
+    col:true, layer:-1, x:1022, y:32, w:148, h:1060, bdr:'#92400e', bg:'rgba(146,64,14,.12)' },
+  { id:'comm', label:'CommunicationManager',
+    sub:'── 全局单例 ──\nGetInstance()\n\n── 3 种 Scope ──\n• Global  全局广播\n• Group   组内广播\n• Direct  定向发送\n\n── 距离检查 ──\nIsInRange(dist)\nGetNearbyAgents(r)\n\n── 消息发送 ──\nSendMessage(scope)\nBroadcast(group)',
+    col:true, layer:-1, x:1192, y:32, w:148, h:1060, bdr:'#1e40af', bg:'rgba(30,64,175,.12)' },
+  { id:'srvmon', label:'AgentStateServer\n监控端点',
+    sub:'── REST API ──\nGET  /agents\nGET  /agents/{id}\nGET  /groups\nGET  /whiteboard\nPOST /events\nGET  /health\n\n── 配置 ──\nPort: :8080\n轮询间隔: 1 s\n\n── 数据推送 ──\nBroadcastState()\nPushGroupEvent()',
+    col:true, layer:-1, x:1362, y:32, w:148, h:1060, bdr:'#5b21b6', bg:'rgba(91,33,182,.12)' },
+  { id:'memcol', label:'MemoryModule',
+    sub:'(未实现接口)\n\n── 预留 API ──\nStoreMemory(key,val)\nQueryMemory(filter)\nForgetOld(ttl)\n\n── 存储类型 ──\n• 情景记忆\n• 语义记忆\n• 工作记忆\n\n── 触发条件 ──\n每轮循环写入\n任务完成回顾',
+    col:true, layer:-1, dashed:true, x:1532, y:32, w:138, h:1060, bdr:'#374151', bg:'rgba(55,65,81,.10)' },
+  { id:'refcol', label:'ReflectionModule',
+    sub:'(未实现接口)\n\n── 预留 API ──\nTriggerReflection()\nGetInsights(ctx)\n\n── 触发条件 ──\n• 任务失败\n• 异常事件\n• 周期性触发\n\n── 输出 ──\n策略建议\n自我评估报告',
+    col:true, layer:-1, dashed:true, x:1692, y:32, w:138, h:1060, bdr:'#374151', bg:'rgba(55,65,81,.10)' },
+];
+
+// Fix llm4 overlapping confirm — place it to the right
+(function(){
+  const n = NODES.find(n=>n.id==='llm4');
+  if(n){ n.x=756; n.y=432; } // shift down to avoid overlap in same band
+  const c = NODES.find(n=>n.id==='confirm');
+  if(c){ c.x=628; c.y=432; }
+})();
+
+// ============================================================
+//  ARROW DATA
+// ============================================================
+const ARROWS = [
+  // L0
+  { f:'user',     t:'dashboard', type:'black' },
+  { f:'dashboard',t:'statesrv',  type:'black' },
+  // L0→L1
+  { f:'statesrv', t:'planning',  type:'black', lbl:'任务指令' },
+  // L1
+  { f:'planning', t:'llm1',      type:'blue',  lbl:'API Call' },
+  { f:'llm1',     t:'gboot',     type:'black', lbl:'结构化计划' },
+  // L1→L2
+  { f:'gboot',    t:'bcast',     type:'black', lbl:'协商启动' },
+  // L2
+  { f:'bcast',    t:'select',    type:'black' },
+  { f:'select',   t:'llm3',      type:'blue',  lbl:'API Call' },
+  { f:'llm3',     t:'confirm',   type:'black' },
+  { f:'confirm',  t:'llm4',      type:'black' },
+  // L2→L3 (llm2 → bcast handled above; llm4 → adm)
+  { f:'llm4',     t:'adm',       type:'black', lbl:'任务计划' },
+  // LLM#2 is triggered by gboot — add separate path
+  { f:'gboot',    t:'llm2',      type:'blue',  lbl:'API Call' },
+  { f:'llm2',     t:'bcast',     type:'black' },
+  // L3 internal
+  { f:'adm',      t:'mem',       type:'gray',  lbl:'记忆查询' },
+  { f:'adm',      t:'refmod',    type:'gray',  lbl:'反思触发' },
+  // L3→L4
+  { f:'adm',      t:'executor',  type:'black', lbl:'原子动作' },
+  // L4
+  { f:'executor', t:'a_move',    type:'black' },
+  { f:'executor', t:'a_pick',    type:'black' },
+  { f:'executor', t:'a_put',     type:'black' },
+  { f:'executor', t:'a_int',     type:'black' },
+  { f:'executor', t:'a_wait',    type:'black' },
+  { f:'executor', t:'a_comm',    type:'black' },
+  // L5
+  { f:'mon1',     t:'mon2',      type:'black' },
+  { f:'mon2',     t:'referee',   type:'black' },
+  { f:'referee',  t:'agentcb',   type:'red',   lbl:'BroadcastEvent' },
+  { f:'agentcb',  t:'adm',       type:'red',   lbl:'裁判反馈→L3' },
+  // L4→L5 (executor feeds back into monitoring)
+  { f:'executor', t:'mon1',      type:'black', lbl:'状态上报' },
+  // Cross-cutting: SharedWhiteboard
+  { f:'adm',      t:'wb',        type:'orange', lbl:'R/W', bidir:true },
+  { f:'gboot',    t:'wb',        type:'orange', bidir:true },
+  { f:'llm3',     t:'wb',        type:'orange', bidir:true },
+  // Cross-cutting: CommunicationManager
+  { f:'a_comm',   t:'comm',      type:'black' },
+  // Monitoring
+  { f:'statesrv', t:'srvmon',    type:'black' },
+  // MemoryModule col ↔ adm
+  { f:'adm',      t:'memcol',    type:'gray',  lbl:'未实现' },
+  { f:'adm',      t:'refcol',    type:'gray',  lbl:'未实现' },
+];
+
+// ============================================================
+//  STATE
+// ============================================================
+const nm = {};
+NODES.forEach(n => nm[n.id] = n);
+
+let scale = 0.85, panX = 20, panY = 10;
+const diagram = document.getElementById('diagram');
+const vp      = document.getElementById('viewport');
+const svg     = document.getElementById('arrows');
+const scaleLbl= document.getElementById('tb-scale');
+const collapsed = new Set();
+
+// ============================================================
+//  COORDINATE HELPERS
+// ============================================================
+const TOOLBAR_H = 40;
+
+function toD(screenX, screenY) {
+  return {
+    x: (screenX      - panX) / scale,
+    y: (screenY - TOOLBAR_H - panY) / scale
+  };
+}
+
+function applyXform() {
+  diagram.style.transform = `translate(${panX}px,${panY}px) scale(${scale})`;
+  scaleLbl.textContent = Math.round(scale * 100) + '%';
+}
+
+// ============================================================
+//  RENDER NODES
+// ============================================================
+function renderNodes() {
+  document.querySelectorAll('.node').forEach(el => el.remove());
+  NODES.forEach(n => {
+    if (n.layer >= 0 && collapsed.has(n.layer)) return;
+    const div = document.createElement('div');
+    div.id = 'nd-' + n.id;
+    div.className = 'node' + (n.dashed?' dashed':'') + (n.llm?' llm':'') + (n.col?' col':'');
+    div.style.cssText = `left:${n.x}px;top:${n.y}px;width:${n.w}px;height:${n.h}px;`;
+    if (n.bdr) div.style.borderColor = n.bdr;
+    if (n.bg)  div.style.background  = n.bg;
+
+    const lbl = document.createElement('div');
+    lbl.className = 'node-label';
+    lbl.contentEditable = 'true';
+    lbl.spellcheck = false;
+    lbl.textContent = n.label;
+    div.appendChild(lbl);
+
+    if (n.sub) {
+      const sub = document.createElement('div');
+      sub.className = 'node-sub';
+      sub.contentEditable = 'true';
+      sub.spellcheck = false;
+      sub.textContent = n.sub;
+      div.appendChild(sub);
+    }
+
+    div.addEventListener('mousedown', onNodeMouseDown);
+    div.addEventListener('mouseenter', () => hlNode(n.id, true));
+    div.addEventListener('mouseleave',  () => hlNode(n.id, false));
+    diagram.appendChild(div);
+  });
+}
+
+// ============================================================
+//  ARROW STYLES
+// ============================================================
+const ASTYLE = {
+  black:  { stroke:'#c9d1d9', dash:null,    w:1.5, mk:'mk-black'  },
+  blue:   { stroke:'#58a6ff', dash:'6,3',   w:1.5, mk:'mk-blue'   },
+  orange: { stroke:'#d29922', dash:null,    w:2,   mk:'mk-orange', mks:'mk-orange-s' },
+  gray:   { stroke:'#6b7280', dash:'4,4',   w:1.2, mk:'mk-gray'   },
+  red:    { stroke:'#f85149', dash:'6,3',   w:1.5, mk:'mk-red'    },
+};
+
+// ============================================================
+//  EDGE CALCULATION
+// ============================================================
+function edge(aid, bid) {
+  const a = nm[aid], b = nm[bid];
+  if (!a || !b) return null;
+  const acy = a.y + a.h / 2, acx = a.x + a.w / 2;
+  const bcy = b.y + b.h / 2, bcx = b.x + b.w / 2;
+  const dx = bcx - acx, dy = bcy - acy;
+  let sx, sy, ex, ey;
+  if (Math.abs(dy) >= Math.abs(dx) * 0.6) {
+    sx = acx; ex = bcx;
+    if (dy >= 0) { sy = a.y + a.h; ey = b.y; }
+    else         { sy = a.y;       ey = b.y + b.h; }
+  } else {
+    sy = acy; ey = bcy;
+    if (dx >= 0) { sx = a.x + a.w; ex = b.x; }
+    else         { sx = a.x;       ex = b.x + b.w; }
+  }
+  return { sx, sy, ex, ey };
+}
+
+function pathD(sx, sy, ex, ey) {
+  const adx = Math.abs(ex - sx), ady = Math.abs(ey - sy);
+  if (adx < 5 || ady < 5) return `M${sx} ${sy} L${ex} ${ey}`;
+  const c1x = sx + (ex-sx)*0.4, c1y = sy;
+  const c2x = sx + (ex-sx)*0.6, c2y = ey;
+  return `M${sx} ${sy} C${c1x} ${c1y} ${c2x} ${c2y} ${ex} ${ey}`;
+}
+
+// ============================================================
+//  RENDER ARROWS
+// ============================================================
+function renderArrows() {
+  svg.querySelectorAll('path,text').forEach(el => el.remove());
+  ARROWS.forEach((a, i) => {
+    const fn = nm[a.f], tn = nm[a.t];
+    if (!fn || !tn) return;
+    if (collapsed.has(fn.layer) || collapsed.has(tn.layer)) return;
+    const e = edge(a.f, a.t);
+    if (!e) return;
+    const s = ASTYLE[a.type] || ASTYLE.black;
+    const p = document.createElementNS('http://www.w3.org/2000/svg','path');
+    p.setAttribute('d', pathD(e.sx,e.sy,e.ex,e.ey));
+    p.setAttribute('stroke', s.stroke);
+    p.setAttribute('stroke-width', s.w);
+    p.setAttribute('fill', 'none');
+    if (s.dash)  p.setAttribute('stroke-dasharray', s.dash);
+    p.setAttribute('marker-end', `url(#${s.mk})`);
+    if (a.bidir && s.mks) p.setAttribute('marker-start', `url(#${s.mks})`);
+    p.setAttribute('data-i', i);
+    svg.appendChild(p);
+    if (a.lbl) {
+      const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+      t.setAttribute('x', (e.sx+e.ex)/2);
+      t.setAttribute('y', (e.sy+e.ey)/2 - 5);
+      t.setAttribute('text-anchor','middle');
+      t.setAttribute('fill', s.stroke);
+      t.setAttribute('font-size','9');
+      t.setAttribute('font-family','SF Mono,Consolas,monospace');
+      t.setAttribute('pointer-events','none');
+      t.textContent = a.lbl;
+      svg.appendChild(t);
+    }
+  });
+}
+
+// ============================================================
+//  HOVER HIGHLIGHT
+// ============================================================
+function hlNode(id, on) {
+  const div = document.getElementById('nd-' + id);
+  if (div) div.classList.toggle('hl', on);
+  if (on) {
+    svg.querySelectorAll('path').forEach(p => {
+      const i = parseInt(p.getAttribute('data-i'));
+      const a = ARROWS[i];
+      if (a && (a.f === id || a.t === id)) {
+        p.setAttribute('stroke-width', (ASTYLE[a.type]||ASTYLE.black).w * 2.2);
+        p.style.opacity = '1';
+      } else {
+        p.style.opacity = '0.12';
+      }
+    });
+  } else {
+    svg.querySelectorAll('path').forEach(p => {
+      const i = parseInt(p.getAttribute('data-i'));
+      const a = ARROWS[i];
+      p.setAttribute('stroke-width', (ASTYLE[a?.type]||ASTYLE.black).w);
+      p.style.opacity = '';
+    });
+  }
+}
+
+// ============================================================
+//  DRAG NODES
+// ============================================================
+let drag = null;
+
+function onNodeMouseDown(e) {
+  if (e.target.contentEditable === 'true' || e.target.isContentEditable) return;
+  if (e.button !== 0) return;
+  e.stopPropagation(); e.preventDefault();
+  const id = e.currentTarget.id.replace('nd-','');
+  const n  = nm[id];
+  const d  = toD(e.clientX, e.clientY);
+  drag = { n, el: e.currentTarget, ox: d.x - n.x, oy: d.y - n.y };
+  e.currentTarget.style.zIndex = 80;
+  document.addEventListener('mousemove', onDragMove, {passive:false});
+  document.addEventListener('mouseup',   onDragEnd);
+}
+
+function onDragMove(e) {
+  if (!drag) return;
+  e.preventDefault();
+  const d = toD(e.clientX, e.clientY);
+  drag.n.x = Math.max(0, d.x - drag.ox);
+  drag.n.y = Math.max(0, d.y - drag.oy);
+  drag.el.style.left = drag.n.x + 'px';
+  drag.el.style.top  = drag.n.y + 'px';
+  renderArrows();
+}
+
+function onDragEnd() {
+  if (!drag) return;
+  drag.el.style.zIndex = '';
+  drag = null;
+  document.removeEventListener('mousemove', onDragMove);
+  document.removeEventListener('mouseup',   onDragEnd);
+}
+
+// ============================================================
+//  PAN & ZOOM
+// ============================================================
+let panning = false, panStart = null;
+
+vp.addEventListener('mousedown', e => {
+  if (e.target !== vp && e.target !== diagram) return;
+  if (e.button !== 0) return;
+  panning = true; panStart = { x: e.clientX - panX, y: e.clientY - panY };
+  vp.classList.add('panning');
+});
+document.addEventListener('mousemove', e => {
+  if (!panning) return;
+  panX = e.clientX - panStart.x;
+  panY = e.clientY - panStart.y;
+  applyXform();
+});
+document.addEventListener('mouseup', () => { panning = false; vp.classList.remove('panning'); });
+
+vp.addEventListener('wheel', e => {
+  e.preventDefault();
+  zoom(e.deltaY < 0 ? 0.1 : -0.1);
+}, { passive: false });
+
+function zoom(delta) {
+  scale = Math.max(0.15, Math.min(3, scale + delta));
+  applyXform();
+}
+
+// ============================================================
+//  TOOLBAR ACTIONS
+// ============================================================
+const ORIG = {};
+NODES.forEach(n => { ORIG[n.id] = { x: n.x, y: n.y }; });
+
+function resetLayout() {
+  NODES.forEach(n => { const o = ORIG[n.id]; if (o) { n.x = o.x; n.y = o.y; } });
+  scale = 0.85; panX = 20; panY = 10;
+  collapsed.clear();
+  // Restore layer title chevrons
+  document.querySelectorAll('.layer-title').forEach(el => {
+    el.textContent = el.textContent.replace('▶','▾');
+  });
+  applyXform(); renderNodes(); renderArrows();
+}
+
+function fitView() {
+  const vpW = vp.offsetWidth, vpH = vp.offsetHeight;
+  scale = Math.min(vpW / 1860, vpH / 1160) * 0.96;
+  panX = (vpW - 1860 * scale) / 2;
+  panY = (vpH - 1160 * scale) / 2;
+  applyXform();
+}
+
+function copySVG() {
+  const clone = svg.cloneNode(true);
+  clone.setAttribute('xmlns','http://www.w3.org/2000/svg');
+  clone.setAttribute('width','1860'); clone.setAttribute('height','1160');
+  const txt = new XMLSerializer().serializeToString(clone);
+  navigator.clipboard?.writeText(txt).then(() => alert('SVG 已复制到剪贴板'))
+    .catch(() => { const ta=document.createElement('textarea'); ta.value=txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); alert('SVG 已复制'); });
+}
+
+// ============================================================
+//  COLLAPSE LAYERS
+// ============================================================
+function toggleLayer(idx) {
+  const bg = document.getElementById('lb' + idx);
+  const btn = bg?.querySelector('.layer-title');
+  if (collapsed.has(idx)) {
+    collapsed.delete(idx);
+    if (btn) btn.textContent = btn.textContent.replace('▶','▾');
+  } else {
+    collapsed.add(idx);
+    if (btn) btn.textContent = btn.textContent.replace('▾','▶');
+  }
+  renderNodes(); renderArrows();
+}
+
+// ============================================================
+//  INIT
+// ============================================================
+renderNodes();
+renderArrows();
+applyXform();
+</script>
+</body>
+</html>

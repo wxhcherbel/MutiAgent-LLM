@@ -31,6 +31,7 @@ public partial class AgentStateServer : MonoBehaviour
     private string gridmapJson     = "{}";
     private string historyJson     = "{}";
     private string llmLogsJson     = "[]";
+    private string whiteboardJson  = "{}";
     private bool   mapMetaReady    = false;
     private bool   gridmapReady    = false;
 
@@ -75,6 +76,7 @@ public partial class AgentStateServer : MonoBehaviour
         {
             CaptureSnapshot();
             CaptureLlmLogs();
+            CaptureWhiteboard();
             lastSnapshotTime = Time.time;
         }
     }
@@ -117,6 +119,44 @@ public partial class AgentStateServer : MonoBehaviour
             queue.Enqueue(new float[] { a.transform.position.x, a.transform.position.y, a.transform.position.z });
             while (queue.Count > MAX_HISTORY) queue.Dequeue();
 
+            // 获取 ctx 快照（ActionExecutionContext 全部字段）
+            var ctxSnap = adm?.GetCtxSnapshot();
+
+            // actionQueue → type 名数组
+            string[] aqTypes = Array.Empty<string>();
+            if (ctxSnap?.actionQueue != null)
+            {
+                aqTypes = new string[ctxSnap.actionQueue.Length];
+                for (int j = 0; j < ctxSnap.actionQueue.Length; j++)
+                    aqTypes[j] = ctxSnap.actionQueue[j]?.type.ToString() ?? "?";
+            }
+
+            // stepConstraints → 完整快照数组
+            StructuredConstraintSnapshot[] scSnaps = Array.Empty<StructuredConstraintSnapshot>();
+            if (ctxSnap?.stepConstraints != null)
+            {
+                scSnaps = new StructuredConstraintSnapshot[ctxSnap.stepConstraints.Length];
+                for (int j = 0; j < ctxSnap.stepConstraints.Length; j++)
+                {
+                    var src = ctxSnap.stepConstraints[j];
+                    scSnaps[j] = src == null ? new StructuredConstraintSnapshot() : new StructuredConstraintSnapshot
+                    {
+                        constraintId = src.constraintId,
+                        cType        = src.cType,
+                        channel      = src.channel,
+                        groupScope   = src.groupScope,
+                        subject      = src.subject,
+                        targetObject = src.targetObject,
+                        exclusive    = src.exclusive,
+                        condition    = src.condition,
+                        syncWith     = src.syncWith,
+                        sign         = src.sign,
+                        watchAgent   = src.watchAgent,
+                        reactTo      = src.reactTo,
+                    };
+                }
+            }
+
             var snap = new AgentStateSnapshot
             {
                 agentId       = aid,
@@ -139,7 +179,19 @@ public partial class AgentStateServer : MonoBehaviour
                     ?.ConvertAll(ea => ea?.Properties?.AgentID ?? "?")
                     ?.ToArray() ?? Array.Empty<string>(),
                 perceptionRange = a.Properties.PerceptionRange,
-                timestamp = Time.time
+                timestamp = Time.time,
+                // ctx 全部字段
+                msnId               = ctxSnap?.msnId ?? string.Empty,
+                stepId              = ctxSnap?.stepId ?? string.Empty,
+                stepText            = ctxSnap?.stepText ?? string.Empty,
+                stepConstraints     = scSnaps,
+                ctxStatus           = ctxSnap?.status.ToString() ?? string.Empty,
+                iterationCount      = ctxSnap?.iterationCount ?? 0,
+                currentLocationName = ctxSnap?.currentLocationName ?? string.Empty,
+                executedActions     = ctxSnap?.executedActionsSummary?.ToArray() ?? Array.Empty<string>(),
+                actionQueue         = aqTypes,
+                currentActionIdx    = ctxSnap?.currentActionIdx ?? 0,
+                isRollingMode       = ctxSnap?.isRollingMode ?? false,
             };
             snapshots.Add(snap);
         }
@@ -309,7 +361,8 @@ public partial class AgentStateServer : MonoBehaviour
                     model       = e.model,
                     temperature = e.temperature,
                     maxTokens   = e.max_tokens,
-                    content     = content
+                    content     = content,
+                    tag         = e.callTag ?? string.Empty
                 });
             }
         }
@@ -320,6 +373,45 @@ public partial class AgentStateServer : MonoBehaviour
 
         var json = JsonConvert.SerializeObject(entries);
         lock (snapshotLock) { llmLogsJson = json; }
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // 白板快照采集（主线程）
+    // ─────────────────────────────────────────────────────────
+
+    private void CaptureWhiteboard()
+    {
+        var wb = SharedWhiteboard.Instance;
+        if (wb == null) return;
+
+        var allGroups = wb.GetAllGroups();
+        var entries   = new List<WhiteboardEntrySnapshot>();
+        foreach (var kv in allGroups)
+        {
+            string gid = kv.Key;
+            foreach (var e in kv.Value)
+            {
+                entries.Add(new WhiteboardEntrySnapshot
+                {
+                    groupId      = gid,
+                    agentId      = e.agentId,
+                    constraintId = e.constraintId,
+                    entryType    = e.entryType.ToString(),
+                    progress     = e.progress ?? string.Empty,
+                    status       = e.status,
+                    timestamp    = e.timestamp
+                });
+            }
+        }
+
+        var history = wb.GetWriteHistory();
+        var histSnaps = new WhiteboardWriteRecord[history.Count];
+        for (int i = 0; i < history.Count; i++)
+            histSnaps[i] = history[i];
+
+        var snap = new WhiteboardSnapshot { entries = entries.ToArray(), history = histSnaps };
+        var json = JsonConvert.SerializeObject(snap);
+        lock (snapshotLock) { whiteboardJson = json; }
     }
 
     // ─────────────────────────────────────────────────────────
@@ -427,6 +519,11 @@ public partial class AgentStateServer : MonoBehaviour
 
                     case "/api/llm-logs":
                         { string json; lock (snapshotLock) { json = llmLogsJson; }
+                          body = Encoding.UTF8.GetBytes(json); mime = "application/json"; }
+                        break;
+
+                    case "/api/whiteboard":
+                        { string json; lock (snapshotLock) { json = whiteboardJson; }
                           body = Encoding.UTF8.GetBytes(json); mime = "application/json"; }
                         break;
 

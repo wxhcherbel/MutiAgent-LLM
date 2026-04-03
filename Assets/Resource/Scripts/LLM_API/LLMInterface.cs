@@ -19,11 +19,11 @@ public class LLMInterface : MonoBehaviour
     [Header("LLM Provider")]
     [SerializeField] private LLMProviderConfig providerConfig = new LLMProviderConfig
     {
-        providerName = "Qwen",
+        providerName = "DeepSeek",
         providerKind = LLMProviderKind.OpenAICompatibleChatCompletions,
-        apiUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-        apiKey = "sk-6bad1704eca042d4a19133a7837749af",
-        defaultModel = "qwen3.5-plus",
+        apiUrl = "https://api.deepseek.com/v1/chat/completions",
+        apiKey = "sk-45355382419f41f194e445f052031e47",
+        defaultModel = "deepseek-chat",
         authHeaderName = "Authorization",
         authHeaderScheme = "Bearer",
         contentType = "application/json",
@@ -61,14 +61,6 @@ public class LLMInterface : MonoBehaviour
         sessionStartTime = DateTime.Now;
         sessionId = DateTime.Now.ToString("yyyyMMdd_HHmmss");
 
-        // 优先从环境变量加载 API Key，避免明文写入代码/Inspector
-        string envKey = System.Environment.GetEnvironmentVariable("DASHSCOPE_API_KEY");
-        if (!string.IsNullOrWhiteSpace(envKey))
-        {
-            providerConfig.apiKey = envKey;
-            Debug.Log("[LLMInterface] API key loaded from environment variable DASHSCOPE_API_KEY.");
-        }
-
         string scriptPath = Path.GetDirectoryName(Application.dataPath) + "/Scripts/API/LLM_Logs";
         logDirectoryPath = scriptPath;
 
@@ -81,7 +73,7 @@ public class LLMInterface : MonoBehaviour
         StartCoroutine(AutoSaveCoroutine());
     }
 
-    private void AppendToLog(string message, string type = "", string model = "", float temperature = 0f, int maxTokens = 0)
+    private void AppendToLog(string message, string type = "", string model = "", float temperature = 0f, int maxTokens = 0, string callTag = "")
     {
         fullLog += message + "\n\n---\n\n";
 
@@ -98,7 +90,8 @@ public class LLMInterface : MonoBehaviour
             content = message,
             model = model,
             temperature = temperature,
-            max_tokens = maxTokens
+            max_tokens = maxTokens,
+            callTag = callTag
         };
 
         _logEntries.Add(entry);
@@ -188,7 +181,7 @@ public class LLMInterface : MonoBehaviour
 
         AppendToLog(
             $"send:\n provider: {providerConfig.providerName}\n url: {providerConfig.apiUrl}\n model: {resolvedModel}\n temperature: {options.temperature}\n maxTokens: {options.maxTokens}\n tag: {options.callTag}\n prompt: {options.prompt}",
-            "send", resolvedModel, options.temperature, options.maxTokens);
+            "send", resolvedModel, options.temperature, options.maxTokens, options.callTag);
 
         // ─── 超时+重试循环 ────────────────────────────────────────────
         string responseText = null;
@@ -256,12 +249,12 @@ public class LLMInterface : MonoBehaviour
         {
             resultText = responseText;
             callback?.Invoke(resultText);
-            AppendToLog($"ReceiveResponse [{options.callTag}] ({latencyMs}ms):\n {resultText}", "receive", resolvedModel, options.temperature, options.maxTokens);
+            AppendToLog($"ReceiveResponse [{options.callTag}] ({latencyMs}ms):\n {resultText}", "receive", resolvedModel, options.temperature, options.maxTokens, options.callTag);
         }
         else
         {
             callback?.Invoke(null);
-            AppendToLog($"Error [{options.callTag}] ({latencyMs}ms): {lastError ?? "unknown"}", "error", resolvedModel, options.temperature, options.maxTokens);
+            AppendToLog($"Error [{options.callTag}] ({latencyMs}ms): {lastError ?? "unknown"}", "error", resolvedModel, options.temperature, options.maxTokens, options.callTag);
         }
 
         WriteJsonlMetric(options.callTag, resolvedModel, success, latencyMs, success ? null : lastError);

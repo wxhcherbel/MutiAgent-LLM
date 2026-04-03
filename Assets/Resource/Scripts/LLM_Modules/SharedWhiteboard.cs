@@ -68,6 +68,16 @@ public class SharedWhiteboard : MonoBehaviour
     private readonly Dictionary<string, List<WhiteboardEntry>> _store
         = new Dictionary<string, List<WhiteboardEntry>>();
 
+    // ── C3-1 互斥锁（per-constraintId）──────────────────────────────────────────
+    // key=constraintId, value=当前持锁的 agentId；key 不存在 = 空闲
+    private readonly Dictionary<string, string> _mutexLocks
+        = new Dictionary<string, string>();
+
+    // ── 写入历史（环形缓冲区，上限 100 条）────────────────────────────────
+    private readonly List<WhiteboardWriteRecord> _writeHistory
+        = new List<WhiteboardWriteRecord>(100);
+    private const int MaxWriteHistory = 100;
+
     // ── Unity 生命周期 ─────────────────────────────────────────────────────
 
     private void Awake()
@@ -109,11 +119,28 @@ public class SharedWhiteboard : MonoBehaviour
                 list[i].constraintId == entry.constraintId)
             {
                 list[i] = entry;
+                AppendWriteHistory(groupId, entry);
                 return;
             }
         }
 
         list.Add(entry);
+        AppendWriteHistory(groupId, entry);
+    }
+
+    private void AppendWriteHistory(string groupId, WhiteboardEntry entry)
+    {
+        if (_writeHistory.Count >= MaxWriteHistory)
+            _writeHistory.RemoveAt(0);
+        _writeHistory.Add(new WhiteboardWriteRecord
+        {
+            timestamp    = entry.timestamp,
+            groupId      = groupId,
+            agentId      = entry.agentId,
+            constraintId = entry.constraintId,
+            entryType    = entry.entryType.ToString(),
+            progress     = entry.progress ?? string.Empty
+        });
     }
 
     // ── 读接口区 ────────────────────────────────────────────────────────────
@@ -179,6 +206,14 @@ public class SharedWhiteboard : MonoBehaviour
         return false;
     }
 
+    // ── 快照接口区 ──────────────────────────────────────────────────────────
+
+    /// <summary>返回当前全部条目（按 groupId 分组）。用于仪表板可视化。</summary>
+    public IReadOnlyDictionary<string, List<WhiteboardEntry>> GetAllGroups() => _store;
+
+    /// <summary>返回写入历史（最近 100 条）。用于仪表板时间线。</summary>
+    public IReadOnlyList<WhiteboardWriteRecord> GetWriteHistory() => _writeHistory;
+
     // ── 清理接口区 ──────────────────────────────────────────────────────────
 
     /// <summary>清空指定组的所有白板条目（任务结束时调用）。</summary>
@@ -195,5 +230,29 @@ public class SharedWhiteboard : MonoBehaviour
         int removed = list.RemoveAll(e => e.agentId == agentId && e.constraintId == constraintId);
         if (removed > 0)
             Debug.Log($"[SharedWhiteboard] 清除条目: group={groupId}, agent={agentId}, constraint={constraintId}");
+    }
+
+    /// <summary>
+    /// 尝试为指定约束获取互斥锁。若锁空闲则立即获取并返回 true；已被占用则返回 false。
+    /// </summary>
+    public bool TryAcquireMutexLock(string constraintId, string agentId)
+    {
+        if (_mutexLocks.TryGetValue(constraintId, out var holder) && holder != null)
+            return false;
+        _mutexLocks[constraintId] = agentId;
+        Debug.Log($"[SharedWhiteboard] {agentId} 获取锁: cid={constraintId}");
+        return true;
+    }
+
+    /// <summary>
+    /// 释放指定约束的互斥锁（仅持锁方可释放）。
+    /// </summary>
+    public void ReleaseMutexLock(string constraintId, string agentId)
+    {
+        if (_mutexLocks.TryGetValue(constraintId, out var holder) && holder == agentId)
+        {
+            _mutexLocks.Remove(constraintId);
+            Debug.Log($"[SharedWhiteboard] {agentId} 释放锁: cid={constraintId}");
+        }
     }
 }

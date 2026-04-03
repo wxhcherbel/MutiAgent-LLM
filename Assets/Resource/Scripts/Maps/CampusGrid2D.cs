@@ -283,24 +283,27 @@ public class CampusGrid2D : MonoBehaviour
         return cells;
     }
 
-    public bool TryGetFeatureFirstCell(string featureName, out Vector2Int cell, bool preferWalkable = false, bool ignoreCase = true)
+    public bool TryGetFeatureFirstCell(string featureName, out Vector2Int cell,
+        bool preferWalkable = false, bool ignoreCase = true)
     {
         cell = new Vector2Int(-1, -1);
         if (string.IsNullOrWhiteSpace(featureName)) return false;
-
         if (!TryResolveFeatureSpatialIndex(featureName, out FeatureSpatialIndex idx, ignoreCase)
             || idx == null || idx.occupiedCells == null || idx.occupiedCells.Count == 0)
             return false;
 
-        if (preferWalkable)
+        // 使用质心作为参考，返回外围最近的可行走接近cell
+        FeatureSpatialProfile profile = BuildSpatialProfileFromIndex(idx);
+        Vector2Int[] approachCells = ComputeFeatureApproachCells(idx, profile.centroidCell, 1);
+        if (approachCells.Length > 0)
         {
-            foreach (Vector2Int c in idx.occupiedCells)
-            {
-                if (IsWalkable(c.x, c.y)) { cell = c; return true; }
-            }
+            cell = approachCells[0];
+            return true;
         }
-        cell = idx.occupiedCells[0];
-        return true;
+
+        // 回退：返回质心cell（小要素如道路节点，外围无接近cell时）
+        cell = profile.centroidCell;
+        return cell.x >= 0;
     }
 
     /// <summary>
@@ -575,18 +578,6 @@ public class CampusGrid2D : MonoBehaviour
         return occupiedCells.Length > 0;
     }
 
-
-    public bool TryGetFeatureBoundaryCells(string query, out Vector2Int[] boundaryCells, bool ignoreCase = true)
-    {
-        boundaryCells = Array.Empty<Vector2Int>();
-        if (!TryResolveFeatureSpatialIndex(query, out FeatureSpatialIndex index, ignoreCase) || index == null || index.occupiedCells.Count == 0)
-        {
-            return false;
-        }
-
-        boundaryCells = ComputeFeatureBoundaryCells(index);
-        return boundaryCells.Length > 0;
-    }
 
 
     public bool TryGetFeatureApproachCells(string query, Vector3 referenceWorld, out Vector2Int[] approachCells, int maxCount = 16, bool ignoreCase = true, Vector2Int? anchorBias = null)
@@ -2407,36 +2398,22 @@ public class CampusGrid2D : MonoBehaviour
     {
         if (feature == null) return string.Empty;
 
-        string rawName = !string.IsNullOrWhiteSpace(feature.name) && feature.name.Trim() != "-"
-            ? feature.name.Trim()
-            : NormalizeFeatureKindToken(feature.kind);
-        string baseName = SanitizeFeatureAliasToken(rawName);
-        string kind = NormalizeFeatureKindToken(feature.kind);
+        bool hasName = !string.IsNullOrWhiteSpace(feature.name) && feature.name.Trim() != "-";
+        if (hasName) return feature.name.Trim();
 
+        string kind = NormalizeFeatureKindToken(feature.kind);
         switch (kind)
         {
-            case "building":
-                return (!string.IsNullOrWhiteSpace(feature.name) && feature.name.Trim() != "-")
-                    ? $"{baseName}_{++buildingIndex}"
-                    : $"building_{++buildingIndex}";
-            case "road":
-                return $"{baseName}_{++roadIndex}";
-            case "expressway":
-                return $"{baseName}_{++expresswayIndex}";
-            case "bridge":
-                return $"{baseName}_{++bridgeIndex}";
-            case "water":
-                return $"{baseName}_{++waterIndex}";
-            case "forest":
-                return $"{baseName}_{++forestIndex}";
-            case "sports":
-                return $"{baseName}_{++sportsIndex}";
-            case "parking":
-                return $"{baseName}_{++parkingIndex}";
+            case "building":   return $"building_{++buildingIndex}";
+            case "road":       return $"road_{++roadIndex}";
+            case "expressway": return $"expressway_{++expresswayIndex}";
+            case "bridge":     return $"bridge_{++bridgeIndex}";
+            case "water":      return $"water_{++waterIndex}";
+            case "forest":     return $"forest_{++forestIndex}";
+            case "sports":     return $"sports_{++sportsIndex}";
+            case "parking":    return $"parking_{++parkingIndex}";
             case "green":
-                return $"{baseName}_{++greenIndex}";
-            default:
-                return $"{baseName}_{++greenIndex}";
+            default:           return $"green_{++greenIndex}";
         }
     }
 

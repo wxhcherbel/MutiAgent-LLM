@@ -56,6 +56,41 @@ public class AgentStateSnapshot
 
     /// <summary>快照采样时间。</summary>
     public float timestamp;
+
+    // ── ctx 字段（ActionExecutionContext 全部字段）────────────────────────────
+
+    /// <summary>当前任务 ID。</summary>
+    public string msnId;
+
+    /// <summary>当前步骤 ID。</summary>
+    public string stepId;
+
+    /// <summary>当前步骤文本。</summary>
+    public string stepText;
+
+    /// <summary>步骤关联的结构化约束完整快照列表。</summary>
+    public StructuredConstraintSnapshot[] stepConstraints;
+
+    /// <summary>ctx 内的 ADM 状态。</summary>
+    public string ctxStatus;
+
+    /// <summary>当前滚动迭代次数。</summary>
+    public int iterationCount;
+
+    /// <summary>当前位置名称。</summary>
+    public string currentLocationName;
+
+    /// <summary>已执行动作摘要列表。</summary>
+    public string[] executedActions;
+
+    /// <summary>完整动作队列（type 名列表）。</summary>
+    public string[] actionQueue;
+
+    /// <summary>当前执行的动作下标。</summary>
+    public int currentActionIdx;
+
+    /// <summary>是否处于滚动规划模式。</summary>
+    public bool isRollingMode;
 }
 
 /// <summary>
@@ -153,4 +188,70 @@ public class LlmLogEntry
 
     /// <summary>日志内容摘要。</summary>
     public string content;
+
+    /// <summary>调用阶段标签（如 "LLM#1"、"ADM_Roll_iter2"）。</summary>
+    public string tag;
+}
+
+/// <summary>
+/// StructuredConstraint 的仪表板快照（字段与原始类一一对应）。
+/// </summary>
+[Serializable]
+public class StructuredConstraintSnapshot
+{
+    // 通用
+    public string constraintId;
+    public string cType;
+    public string channel;
+    public int    groupScope;
+    // C1
+    public string subject;
+    public string targetObject;
+    public bool   exclusive;
+    // C2
+    public string   condition;
+    public string[] syncWith;
+    // C3
+    public int    sign;
+    public string watchAgent;
+    public string reactTo;
+}
+
+/// <summary>
+/// 白板条目快照（用于仪表板展示）。
+/// </summary>
+[Serializable]
+public class WhiteboardEntrySnapshot
+{
+    public string groupId;
+    public string agentId;
+    public string constraintId;
+    public string entryType;
+    public string progress;
+    public int status;
+    public float timestamp;
+}
+
+/// <summary>
+/// 白板写入历史记录（用于仪表板时间线）。
+/// </summary>
+[Serializable]
+public class WhiteboardWriteRecord
+{
+    public float timestamp;
+    public string groupId;
+    public string agentId;
+    public string constraintId;
+    public string entryType;
+    public string progress;
+}
+
+/// <summary>
+/// 白板快照（条目 + 写入历史）。
+/// </summary>
+[Serializable]
+public class WhiteboardSnapshot
+{
+    public WhiteboardEntrySnapshot[] entries;
+    public WhiteboardWriteRecord[] history;
 }
