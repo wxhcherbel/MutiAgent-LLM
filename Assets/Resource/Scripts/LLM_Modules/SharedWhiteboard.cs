@@ -10,11 +10,13 @@ using System.Collections.Generic;
 /// </summary>
 public enum WhiteboardEntryType
 {
-    IntentAnnounce, // 宣告意图（准备执行某约束关联的动作）
-    ReadySignal,    // 就绪信号（C3 前置等待条件已满足）
-    DoneSignal,     // 完成信号（本 Agent 完成约束关联的步骤，用于 C2 跨 Agent 同步）
-    StatusUpdate,   // 通用状态更新
-    RefereeNotice,  // 跨队裁判通知（组长从裁判层写入，供本队队员读取）
+    IntentAnnounce,   // 宣告意图（准备执行某约束关联的动作）
+    ReadySignal,      // 就绪信号（C3 前置等待条件已满足）
+    DoneSignal,       // 完成信号（本 Agent 完成约束关联的步骤，用于 C2 跨 Agent 同步）
+    StatusUpdate,     // 通用状态更新
+    RefereeNotice,    // 跨队裁判通知（组长从裁判层写入，供本队队员读取）
+    IncidentAnnounce, // 紧急事件宣告（leader 写入，staleSeconds=120f，供全员感知活跃事件）
+    DebateConsensus,  // MAD 辩论最终共识（leader 写入，供全员读取后按 assignedAgentId 行动）
 }
 
 /// <summary>

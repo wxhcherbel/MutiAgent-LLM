@@ -576,6 +576,86 @@ textarea.ctrl-input { resize: vertical; min-height: 60px; }
 }
 .wb-history-time { color: var(--muted); flex-shrink: 0; min-width: 40px; }
 
+/* ── Incidents / Debate tab ────────────────────────────────────────────────── */
+.inc-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 10px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.inc-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(33,38,45,0.6);
+  flex-wrap: wrap;
+}
+.inc-id   { font-size: 11px; font-weight: bold; color: var(--blue); }
+.inc-desc { font-size: 10px; color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sev-badge {
+  padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; flex-shrink: 0;
+}
+.sev-Critical { background: rgba(248,81,73,0.25); color: var(--red); border: 1px solid var(--red); }
+.sev-High     { background: rgba(210,153,34,0.25); color: var(--orange); border: 1px solid var(--orange); }
+.sev-Medium   { background: rgba(88,166,255,0.2); color: var(--blue); border: 1px solid var(--blue); }
+.sev-Low      { background: rgba(139,148,158,0.2); color: var(--muted); border: 1px solid var(--muted); }
+.status-badge {
+  padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; flex-shrink: 0;
+}
+.status-Open      { color: var(--muted); border: 1px solid var(--border); }
+.status-Debating  { color: var(--orange); border: 1px solid var(--orange); animation: badgePulse 2s ease-in-out infinite; }
+.status-Resolved  { color: var(--green); border: 1px solid var(--green); }
+.status-Abandoned { color: var(--red); border: 1px solid var(--red); }
+.inc-meta { font-size: 10px; color: var(--muted); padding: 4px 10px 0; display:flex; gap:16px; flex-wrap:wrap; }
+.inc-meta span { white-space: nowrap; }
+.inc-rounds { padding: 8px 10px 10px; }
+.inc-round-header {
+  font-size: 10px; color: var(--blue); font-weight: bold;
+  margin: 8px 0 4px;
+  border-left: 3px solid var(--blue); padding-left: 6px;
+}
+.debate-entry {
+  display: flex;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 4px;
+  margin-bottom: 4px;
+  background: rgba(22,27,34,0.7);
+  border: 1px solid var(--border);
+  font-size: 10px;
+}
+.de-role {
+  flex-shrink: 0; width: 58px; padding: 1px 5px; border-radius: 3px; font-size: 9px;
+  font-weight: bold; text-align: center; align-self: flex-start; margin-top: 1px;
+}
+.role-Proposer { background: rgba(88,166,255,0.2);  color: var(--blue); }
+.role-Critic   { background: rgba(210,153,34,0.2);  color: var(--orange); }
+.role-Voter    { background: rgba(63,185,80,0.2);   color: var(--green); }
+.role-Arbiter  { background: rgba(248,81,73,0.2);   color: var(--red); }
+.de-body       { flex: 1; min-width: 0; }
+.de-author     { color: var(--blue); font-weight: bold; margin-bottom: 2px; }
+.de-content    { color: var(--text); line-height: 1.5; word-break: break-word; }
+.de-vote       { color: var(--purple); font-size: 9px; margin-top: 2px; }
+.de-conf       { display: flex; align-items: center; gap: 5px; margin-top: 3px; }
+.conf-bar      { flex: 1; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
+.conf-fill     { height: 100%; border-radius: 2px; }
+.conf-label    { font-size: 9px; color: var(--muted); white-space: nowrap; }
+.inc-resolution {
+  margin: 6px 10px 10px;
+  padding: 6px 8px;
+  background: rgba(63,185,80,0.08);
+  border: 1px solid rgba(63,185,80,0.3);
+  border-radius: 4px;
+  font-size: 10px;
+}
+.inc-res-title { color: var(--green); font-weight: bold; margin-bottom: 3px; }
+.inc-res-body  { color: var(--text); line-height: 1.5; word-break: break-word; }
+.inc-empty { color: var(--muted); font-size: 11px; text-align: center; padding: 30px; }
+
 /* ── Scrollbar ─────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar       { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -629,6 +709,7 @@ textarea.ctrl-input { resize: vertical; min-height: 60px; }
       <button class="tab-btn" onclick="switchTab('comms')">通信</button>
       <button class="tab-btn" onclick="switchTab('llm')" id="tab-btn-llm">LLM 日志</button>
       <button class="tab-btn" onclick="switchTab('whiteboard')">白板</button>
+      <button class="tab-btn" onclick="switchTab('incidents')" id="tab-btn-incidents">辩论 <span id="incident-badge" style="display:none;background:var(--red);color:#fff;border-radius:8px;padding:0 5px;font-size:9px;margin-left:2px">0</span></button>
       <button class="tab-btn" onclick="switchTab('control')">控制</button>
       <button class="tab-btn" onclick="switchTab('debug')">调试</button>
     </div>
@@ -689,6 +770,30 @@ textarea.ctrl-input { resize: vertical; min-height: 60px; }
           <button class="ctrl-btn" style="margin-left:auto;padding:2px 10px;font-size:10px" onclick="fetchWhiteboard()">刷新</button>
         </div>
         <div id="wb-body"></div>
+      </div>
+
+      <!-- Incidents / Debate tab -->
+      <div class="tab-pane" id="tab-incidents">
+        <div id="inc-toolbar" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--card)">
+          <label style="font-size:10px;color:var(--muted)">状态:</label>
+          <select id="inc-status-filter" onchange="renderIncidents()" style="font-size:10px">
+            <option value="">全部</option>
+            <option value="Debating">Debating</option>
+            <option value="Resolved">Resolved</option>
+            <option value="Open">Open</option>
+            <option value="Abandoned">Abandoned</option>
+          </select>
+          <label style="font-size:10px;color:var(--muted)">Severity:</label>
+          <select id="inc-sev-filter" onchange="renderIncidents()" style="font-size:10px">
+            <option value="">全部</option>
+            <option value="Critical">Critical</option>
+            <option value="High">High</option>
+            <option value="Medium">Medium</option>
+            <option value="Low">Low</option>
+          </select>
+          <button class="ctrl-btn" style="margin-left:auto;padding:2px 10px;font-size:10px" onclick="fetchIncidents()">刷新</button>
+        </div>
+        <div id="inc-body" style="flex:1;overflow-y:auto;padding:8px;gap:0"></div>
       </div>
 
       <!-- Control tab -->
@@ -775,14 +880,16 @@ const FEATURE_STYLES = {
   default:  { fill:'rgba(150,150,150,0.15)', stroke:'#888888', strokeW:1,   minR:3 },
 };
 
-const TAB_NAMES = ['agents','comms','llm','whiteboard','control','debug'];
+const TAB_NAMES = ['agents','comms','llm','whiteboard','incidents','control','debug'];
 
 const WB_TYPE_COLORS = {
-  IntentAnnounce: '#58a6ff',
-  ReadySignal:    '#3fb950',
-  DoneSignal:     '#39d353',
-  StatusUpdate:   '#8b949e',
-  RefereeNotice:  '#bc8cff',
+  IntentAnnounce:  '#58a6ff',
+  ReadySignal:     '#3fb950',
+  DoneSignal:      '#39d353',
+  StatusUpdate:    '#8b949e',
+  RefereeNotice:   '#bc8cff',
+  IncidentAnnounce:'#f85149',
+  DebateConsensus: '#3fb950',
 };
 
 const LLM_TAG_COLORS = {
@@ -1276,11 +1383,13 @@ function switchTab(name) {
   if (pane) pane.classList.add('active');
   document.querySelectorAll('.tab-btn').forEach(b => {
     if (b.textContent.trim() === {
-      agents: 'Agents', comms: '通信', llm: 'LLM 日志', whiteboard: '白板', control: '控制', debug: '调试'
+      agents: 'Agents', comms: '通信', llm: 'LLM 日志',
+      whiteboard: '白板', incidents: '辩论', control: '控制', debug: '调试'
     }[name]) b.classList.add('active');
   });
   if (name === 'llm') fetchLlmLogs();
   if (name === 'whiteboard') fetchWhiteboard();
+  if (name === 'incidents') fetchIncidents();
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1771,6 +1880,116 @@ function renderWhiteboard() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Incidents / MAD Debate
+// ══════════════════════════════════════════════════════════════════════════════
+let incidentsData = [];
+
+async function fetchIncidents() {
+  try {
+    const res = await fetch('/api/incidents');
+    incidentsData = await res.json() || [];
+    renderIncidents();
+    // Update badge
+    const debating = incidentsData.filter(i => i.status === 'Debating').length;
+    const badge = document.getElementById('incident-badge');
+    if (debating > 0) {
+      badge.textContent = debating;
+      badge.style.display = 'inline';
+    } else {
+      badge.style.display = 'none';
+    }
+  } catch(e) {
+    console.warn('fetchIncidents failed', e);
+  }
+}
+
+function renderIncidents() {
+  const body = document.getElementById('inc-body');
+  const statusFilter = document.getElementById('inc-status-filter').value;
+  const sevFilter    = document.getElementById('inc-sev-filter').value;
+
+  let data = incidentsData;
+  if (statusFilter) data = data.filter(i => i.status === statusFilter);
+  if (sevFilter)    data = data.filter(i => i.severity === sevFilter);
+
+  if (!data || data.length === 0) {
+    body.innerHTML = '<div class="inc-empty">暂无紧急事件</div>';
+    return;
+  }
+
+  // Sort: Debating first, then by reportedAt desc
+  data = [...data].sort((a, b) => {
+    const order = { Debating:0, Open:1, Resolved:2, Abandoned:3 };
+    const od = (order[a.status]??9) - (order[b.status]??9);
+    if (od !== 0) return od;
+    return (b.reportedAt||0) - (a.reportedAt||0);
+  });
+
+  let html = '';
+  for (const inc of data) {
+    const entries = inc.entries || [];
+    const rounds = [...new Set(entries.map(e => e.debateRound))].sort((a,b)=>a-b);
+
+    html += `<div class="inc-card">
+      <div class="inc-card-header">
+        <span class="inc-id">${escHtml(inc.incidentId || '—')}</span>
+        <span class="sev-badge sev-${escHtml(inc.severity||'')}">${escHtml(inc.severity||'?')}</span>
+        <span class="status-badge status-${escHtml(inc.status||'')}">${escHtml(inc.status||'?')}</span>
+        <span class="inc-desc" title="${escHtml(inc.description||'')}">${escHtml(inc.description||'')}</span>
+      </div>
+      <div class="inc-meta">
+        <span><span style="color:var(--muted)">类型</span> <span style="color:var(--blue)">${escHtml(inc.incidentType||'?')}</span></span>
+        <span><span style="color:var(--muted)">组</span> ${escHtml(inc.groupId||'?')}</span>
+        ${inc.affectedAgentId ? `<span><span style="color:var(--muted)">受影响</span> <span style="color:var(--orange)">${escHtml(inc.affectedAgentId)}</span></span>` : ''}
+        ${inc.affectedTaskId  ? `<span><span style="color:var(--muted)">任务</span> ${escHtml(inc.affectedTaskId)}</span>` : ''}
+        <span><span style="color:var(--muted)">上报者</span> ${escHtml(inc.reporterId||'?')}</span>
+        <span><span style="color:var(--muted)">上报于</span> ${formatTime(inc.reportedAt||0)}</span>
+        ${inc.resolvedAt ? `<span><span style="color:var(--muted)">解决于</span> ${formatTime(inc.resolvedAt)}</span>` : ''}
+      </div>`;
+
+    // Debate rounds
+    if (entries.length > 0) {
+      html += '<div class="inc-rounds">';
+      for (const round of rounds) {
+        const roundEntries = entries.filter(e => e.debateRound === round);
+        html += `<div class="inc-round-header">Round ${round}</div>`;
+        for (const e of roundEntries) {
+          const confPct = Math.round((e.confidence||0) * 100);
+          const confColor = e.confidence > 0.7 ? '#3fb950' : e.confidence > 0.4 ? '#d29922' : '#f85149';
+          html += `<div class="debate-entry">
+            <span class="de-role role-${escHtml(e.role||'')}">${escHtml(e.role||'?')}</span>
+            <div class="de-body">
+              <div class="de-author">${escHtml(e.authorId||'?')} <span style="color:var(--muted);font-size:9px">${formatTime(e.createdAt||0)}</span></div>
+              <div class="de-content">${escHtml(e.content||'')}</div>
+              ${e.voteFor ? `<div class="de-vote">→ 支持: ${escHtml(e.voteFor)}</div>` : ''}
+              <div class="de-conf">
+                <div class="conf-bar"><div class="conf-fill" style="width:${confPct}%;background:${confColor}"></div></div>
+                <span class="conf-label">${confPct}%</span>
+              </div>
+            </div>
+          </div>`;
+        }
+      }
+      html += '</div>';
+    } else {
+      html += '<div style="padding:6px 10px;font-size:10px;color:var(--muted)">等待辩论参与者响应…</div>';
+    }
+
+    // Final resolution
+    if (inc.status === 'Resolved' && inc.finalResolutionSummary) {
+      html += `<div class="inc-resolution">
+        <div class="inc-res-title">✓ 最终决策</div>
+        <div class="inc-res-body">${escHtml(inc.finalResolutionSummary)}</div>
+      </div>`;
+    }
+
+    html += '</div>'; // .inc-card
+  }
+
+  body.innerHTML = html;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Control panel
 // ══════════════════════════════════════════════════════════════════════════════
 function setModelPreset(model) {
@@ -2002,6 +2221,7 @@ async function poll() {
     renderComms();
     if (currentTab === 'debug') renderDebug();
     if (currentTab === 'whiteboard') fetchWhiteboard();
+    if (currentTab === 'incidents') fetchIncidents();
   } catch(e) {
     document.getElementById('conn-badge').textContent = '连接失败';
     document.getElementById('conn-badge').className   = 'badge err';

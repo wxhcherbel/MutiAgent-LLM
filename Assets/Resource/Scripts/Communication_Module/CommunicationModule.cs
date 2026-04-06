@@ -15,6 +15,7 @@ public class CommunicationModule : MonoBehaviour
     // ─── 内部状态 ─────────────────────────────────────────────
     private IntelligentAgent agent;                               // 所属智能体
     private readonly Queue<AgentMessage> incomingMessages = new(); // 收件队列
+    private GroupMonitor _groupMonitor; // 惰性初始化，仅组长 GameObject 上非 null
 
     [Header("通信设置")]
     [SerializeField] private bool enablePeriodicProcessing = true; // 是否在 Update 中自动处理队列
@@ -243,6 +244,37 @@ public class CommunicationModule : MonoBehaviour
                     planningModule != null ? (Action<StartExecPayload>)planningModule.OnStartExec : null);
                 break;
 
+            // ─── 紧急情况 & MAD 辩论协议 ─────────────────────────────────
+            case MessageType.IncidentReport:
+                // 成员 → Leader：上报紧急事件（仅组长 GameObject 上有 GroupMonitor）
+                ForwardPayload<IncidentReport>(message,
+                    r => GetGroupMonitor()?.HandleIncidentReport(r));
+                break;
+
+            case MessageType.IncidentAnnounce:
+                // Leader → 成员：宣告活跃事件（ADM 存储以便在辩论窗口响应）
+                ForwardPayload<IncidentReport>(message,
+                    admModule != null ? (Action<IncidentReport>)admModule.OnIncidentAnnounced : null);
+                break;
+
+            case MessageType.DebateProposal:
+                // Leader → 成员：分配辩论角色，触发其下一个 debate window 调用 LLM
+                ForwardPayload<DebateRoleAssignment>(message,
+                    admModule != null ? (Action<DebateRoleAssignment>)admModule.AssignDebateRole : null);
+                break;
+
+            case MessageType.DebateUpdate:
+                // 成员 → Leader：回传 DebateEntry（仅组长 GameObject 上有 GroupMonitor）
+                ForwardPayload<DebateEntry>(message,
+                    e => GetGroupMonitor()?.OnDebateEntryReceived(e));
+                break;
+
+            case MessageType.DebateResolved:
+                // Leader → 成员：广播最终共识，ADM 按决策行动
+                ForwardPayload<DebateConsensusEntry>(message,
+                    admModule != null ? (Action<DebateConsensusEntry>)admModule.OnDebateResolved : null);
+                break;
+
             default:
                 Debug.Log($"[CommunicationModule] {agent?.Properties?.AgentID} 收到未处理消息: {message.Type}");
                 break;
@@ -253,7 +285,14 @@ public class CommunicationModule : MonoBehaviour
     // 具体消息处理方法
     // ─────────────────────────────────────────────────────────
 
-    
+    /// <summary>惰性获取本 GameObject 上的 GroupMonitor（仅组长有此组件）。</summary>
+    private GroupMonitor GetGroupMonitor()
+    {
+        if (_groupMonitor == null)
+            _groupMonitor = GetComponent<GroupMonitor>();
+        return _groupMonitor;
+    }
+
     // ─────────────────────────────────────────────────────────
     // 辅助工具
     // ─────────────────────────────────────────────────────────

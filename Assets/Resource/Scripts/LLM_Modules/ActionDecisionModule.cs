@@ -42,6 +42,28 @@ public class ActionDecisionModule : MonoBehaviour
     // ─── JSON 提取正则 ────────────────────────────────────────────
     private static readonly Regex JsonBlockRe = new Regex(@"```(?:json)?\s*([\s\S]*?)```");
 
+    // ─── 辩论参与状态 ─────────────────────────────────────────────
+    /// <summary>待处理的辩论角色（key=incidentId）。AssignDebateRole 填入，辩论窗口消费。</summary>
+    private readonly Dictionary<string, PendingDebateInfo> _pendingDebateRoles
+        = new Dictionary<string, PendingDebateInfo>();
+
+    /// <summary>最近收到的辩论共识，由 OnDebateResolved 写入，供 rolling loop 检查。</summary>
+    private DebateConsensusEntry _latestConsensus;
+
+    private class PendingDebateInfo
+    {
+        public DebateRoleAssignment Assignment;
+        public bool Processed;
+    }
+
+    [Serializable]
+    private class DebateEntryRaw
+    {
+        public string content;
+        public float  confidence;
+        public string voteFor;
+    }
+
     // ─────────────────────────────────────────────────────────────
     // Unity 生命周期
     // ─────────────────────────────────────────────────────────────
@@ -168,6 +190,76 @@ public class ActionDecisionModule : MonoBehaviour
     /// <summary>当前 ADM 是否空闲（可接受新步骤）。</summary>
     public bool IsIdle() =>
         status == ADMStatus.Idle || status == ADMStatus.Done || status == ADMStatus.Failed;
+
+    // ─────────────────────────────────────────────────────────────
+    // 辩论协议公共接口（由 CommunicationModule 转发调用）
+    // ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 收到 IncidentAnnounce 消息：仅记录日志，Critical severity 时标记快速路径。
+    /// 实际参与在下一个辩论窗口（11.5 步）或 Update fast-path 触发。
+    /// </summary>
+    public void OnIncidentAnnounced(IncidentReport report)
+    {
+        if (report == null) return;
+        Debug.Log($"[ADM] {agentProperties?.AgentID} 收到事件宣告: {report.incidentId} ({report.incidentType}/{report.severity})");
+
+        // Critical：触发 Update fast-path 中断当前 action（若尚未中断）
+        if (report.severity == IncidentSeverity.Critical)
+            OnCriticalIncident(report);
+    }
+
+    /// <summary>
+    /// 收到 DebateProposal：将辩论角色分配加入待处理队列。
+    /// 在下一个 11.5 辩论窗口（批次自然结束后）消费，最多 1 次 LLM 调用。
+    /// </summary>
+    public void AssignDebateRole(DebateRoleAssignment assignment)
+    {
+        if (assignment == null || string.IsNullOrWhiteSpace(assignment.incidentId)) return;
+
+        if (!_pendingDebateRoles.ContainsKey(assignment.incidentId))
+        {
+            _pendingDebateRoles[assignment.incidentId] = new PendingDebateInfo
+            {
+                Assignment = assignment,
+                Processed  = false,
+            };
+            Debug.Log($"[ADM] {agentProperties?.AgentID} 收到辩论角色: " +
+                      $"{assignment.role} (incident={assignment.incidentId}, round={assignment.debateRound})");
+        }
+    }
+
+    /// <summary>
+    /// 收到 DebateResolved：存储最终共识，rolling loop 下一轮可检查并据此行动。
+    /// </summary>
+    public void OnDebateResolved(DebateConsensusEntry consensus)
+    {
+        if (consensus == null) return;
+        _latestConsensus = consensus;
+        Debug.Log($"[ADM] {agentProperties?.AgentID} 收到辩论共识 {consensus.incidentId}: " +
+                  $"assigned={consensus.assignedAgentId}, resolution={consensus.resolution}");
+
+        // 若当前任务范围已改变，通知 PlanningModule 重规划
+        if (consensus.missionScopeChanged && planningModule != null)
+        {
+            Debug.Log($"[ADM] {agentProperties?.AgentID} 任务范围已变更，触发重规划");
+            planningModule.RequestReplan($"DebateResolved: {consensus.resolution}");
+        }
+    }
+
+    /// <summary>
+    /// Critical severity 快速路径：立即标记当前 action batch 为失败以中断执行。
+    /// 非 Critical 情况不调用此方法，避免不必要的中断。
+    /// </summary>
+    public void OnCriticalIncident(IncidentReport report)
+    {
+        if (report == null || report.severity != IncidentSeverity.Critical) return;
+        if (status == ADMStatus.Running)
+        {
+            Debug.LogWarning($"[ADM] {agentProperties?.AgentID} Critical 事件 {report.incidentId}，中断当前 action batch");
+            SetStatus(ADMStatus.BatchDone); // 触发辩论窗口（下一 rolling 迭代）
+        }
+    }
 
     /// <summary>返回当前 ADM 状态（供外部监控使用）。</summary>
     public ADMStatus GetStatus() => status;
@@ -366,6 +458,12 @@ public class ActionDecisionModule : MonoBehaviour
             }
             if (_oscillationEscapeTtl > 0 && --_oscillationEscapeTtl == 0)
                 _oscillationDetected = false;
+
+            // ── 11.5 辩论参与窗口 ──────────────────────────────────
+            // 非 Critical 情况：action batch 自然结束后才参与，不打断当前 action
+            // 每次最多 1 个 LLM 调用，不延误超过 1 次 rolling 迭代
+            if (HasPendingDebateRole())
+                yield return StartCoroutine(ParticipateInActiveDebates());
 
             ctx.iterationCount++;
             SetStatus(ADMStatus.Interpreting);
@@ -1154,6 +1252,137 @@ public class ActionDecisionModule : MonoBehaviour
         SmallNodeType.Agent => "智能体",
         _ => "未知障碍"
     };
+
+    // ─────────────────────────────────────────────────────────────
+    // 辩论参与私有方法
+    // ─────────────────────────────────────────────────────────────
+
+    private bool HasPendingDebateRole() => _pendingDebateRoles.Count > 0;
+
+    /// <summary>
+    /// 辩论参与窗口（step 11.5）：处理所有待处理的辩论角色，每次最多 1 个 LLM 调用。
+    /// 处理完成后向 leader 发送 DebateUpdate 消息。
+    /// </summary>
+    private IEnumerator ParticipateInActiveDebates()
+    {
+        // 取第一条未处理的辩论分配
+        PendingDebateInfo pending = null;
+        string pendingKey = null;
+        foreach (var kvp in _pendingDebateRoles)
+        {
+            if (!kvp.Value.Processed)
+            {
+                pending    = kvp.Value;
+                pendingKey = kvp.Key;
+                break;
+            }
+        }
+        if (pending == null) yield break;
+
+        pending.Processed = true;
+        var assignment = pending.Assignment;
+
+        Debug.Log($"[ADM] {agentProperties?.AgentID} 参与辩论 {assignment.incidentId} " +
+                  $"as {assignment.role} (round={assignment.debateRound})");
+
+        // 构建 LLM 辩论 prompt
+        string prompt = BuildDebatePrompt(assignment);
+
+        string llmResult = null;
+        yield return StartCoroutine(llmInterface.SendRequest(
+            new LLMRequestOptions
+            {
+                prompt         = prompt,
+                maxTokens      = 350,
+                enableJsonMode = true,
+                callTag        = $"Debate_{assignment.incidentId}_r{assignment.debateRound}",
+            },
+            r => llmResult = r));
+
+        _pendingDebateRoles.Remove(pendingKey);
+
+        if (string.IsNullOrWhiteSpace(llmResult))
+        {
+            Debug.LogWarning($"[ADM] {agentProperties?.AgentID} 辩论 LLM 返回空，跳过");
+            yield break;
+        }
+
+        // 解析并发回 leader
+        DebateEntry entry = ParseDebateEntry(assignment, llmResult);
+        if (entry != null && commModule != null)
+        {
+            commModule.SendStructuredMessage(assignment.leaderId, MessageType.DebateUpdate, entry);
+            Debug.Log($"[ADM] {agentProperties?.AgentID} 辩论回复已发送: {entry.entryId} (conf={entry.confidence:F2})");
+        }
+    }
+
+    private string BuildDebatePrompt(DebateRoleAssignment assignment)
+    {
+        var report = assignment.report;
+        var sb = new StringBuilder();
+        sb.AppendLine("你是多智能体协同系统中的辩论参与者。根据你的角色对紧急事件提出应对方案。仅输出 JSON，不解释。");
+        sb.AppendLine();
+        sb.AppendLine("=== 紧急事件 ===");
+        sb.AppendLine($"类型：{report?.incidentType}  严重程度：{report?.severity}");
+        sb.AppendLine($"受影响 Agent：{report?.affectedAgentId ?? "无"}");
+        sb.AppendLine($"受影响任务：{report?.affectedTaskId ?? "无"}");
+        sb.AppendLine($"描述：{report?.description}");
+        sb.AppendLine();
+        sb.AppendLine("=== 你的身份 ===");
+        sb.AppendLine($"Agent ID：{agentProperties?.AgentID}  Role：{agentProperties?.Role}");
+        sb.AppendLine($"辩论角色：{assignment.role}  当前轮次：{assignment.debateRound}");
+
+        if (!string.IsNullOrWhiteSpace(assignment.existingEntriesSummary))
+        {
+            sb.AppendLine();
+            sb.AppendLine("=== 已有提案/批评 ===");
+            sb.AppendLine(assignment.existingEntriesSummary);
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("=== 输出格式（JSON） ===");
+        sb.AppendLine("{");
+        sb.AppendLine("  \"content\": \"你的提案/批评/投票理由（2-3句，具体说明应对策略，包含执行主体 agentId）\",");
+        sb.AppendLine("  \"confidence\": 0.0到1.0之间的浮点数,");
+
+        if (assignment.role == DebateRole.Voter)
+            sb.AppendLine("  \"voteFor\": \"你支持的提案的 entryId（格式 dbt_xxx_rN_agentId）\"");
+        else
+            sb.AppendLine("  \"voteFor\": \"\"");
+
+        sb.AppendLine("}");
+
+        return sb.ToString();
+    }
+
+    private DebateEntry ParseDebateEntry(DebateRoleAssignment assignment, string llmResult)
+    {
+        try
+        {
+            string json   = ExtractJson(llmResult);
+            var    parsed = JsonConvert.DeserializeObject<DebateEntryRaw>(json);
+            if (parsed == null) return null;
+
+            string entryId = $"dbt_{assignment.incidentId}_r{assignment.debateRound}_{agentProperties?.AgentID}";
+            return new DebateEntry
+            {
+                entryId     = entryId,
+                incidentId  = assignment.incidentId,
+                authorId    = agentProperties?.AgentID ?? string.Empty,
+                debateRound = assignment.debateRound,
+                role        = assignment.role,
+                content     = parsed.content ?? string.Empty,
+                confidence  = Mathf.Clamp01(parsed.confidence),
+                voteFor     = parsed.voteFor ?? string.Empty,
+                createdAt   = Time.time,
+            };
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[ADM] {agentProperties?.AgentID} 辩论条目解析失败: {e.Message}");
+            return null;
+        }
+    }
 
     // ─────────────────────────────────────────────────────────────
     // 工具方法

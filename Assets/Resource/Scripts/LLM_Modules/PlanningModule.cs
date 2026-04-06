@@ -1267,6 +1267,23 @@ public class PlanningModule : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 由 DebateResolved 触发：请求重规划当前任务。
+    /// 将当前状态重置为 Idle，让 IntelligentAgent 的下一次 CheckForDecision 重新发起规划。
+    /// reason 写入日志供追溯，不影响执行逻辑。
+    /// </summary>
+    public void RequestReplan(string reason)
+    {
+        Debug.Log($"[PlanningModule] {props?.AgentID} 收到重规划请求: {reason}");
+        if (state == PlanningState.Active || state == PlanningState.Done)
+        {
+            SetState(PlanningState.Idle);
+            busy = false;
+            agentPlan = null;
+            Debug.Log($"[PlanningModule] {props?.AgentID} 规划已重置，等待重新规划");
+        }
+    }
+
     private IEnumerator TimeLimitCoroutine(float seconds)
     {
         yield return new WaitForSeconds(seconds);

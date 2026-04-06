@@ -255,3 +255,42 @@ public class WhiteboardSnapshot
     public WhiteboardEntrySnapshot[] entries;
     public WhiteboardWriteRecord[] history;
 }
+
+// ── MAD 辩论快照 ─────────────────────────────────────────────────────────────
+
+/// <summary>
+/// 单个辩论条目的仪表板快照（隐藏 incidentId 冗余字段以减小传输量）。
+/// </summary>
+[Serializable]
+public class DebateEntrySnapshot
+{
+    public string entryId;
+    public string authorId;
+    public int    debateRound;
+    public string role;
+    public string content;
+    public float  confidence;
+    public string voteFor;
+    public float  createdAt;
+}
+
+/// <summary>
+/// 单个紧急事件及其辩论记录的完整快照（由 IncidentCoordinator 暴露）。
+/// </summary>
+[Serializable]
+public class IncidentDebateSnapshot
+{
+    public string incidentId;
+    public string incidentType;
+    public string severity;
+    public string status;
+    public string reporterId;
+    public string groupId;
+    public string affectedAgentId;
+    public string affectedTaskId;
+    public string description;
+    public float  reportedAt;
+    public float  resolvedAt;
+    public string finalResolutionSummary;
+    public DebateEntrySnapshot[] entries;
+}

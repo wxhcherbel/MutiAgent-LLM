@@ -5,6 +5,7 @@
 //   [数据结构区] 裁判事件和白板通知的序列化数据类
 //   [通信区]     向裁判层广播本队完成事件；轮询裁判层并将事件写入本队白板
 //   [监控区]     定时检查本队完成状态（规则 → LLM 两阶段判断）
+//   [紧急事件区] 接收 IncidentReport，启动 IncidentCoordinator 运行 MAD 辩论
 // ═══════════════════════════════════════════════════════════════════════════
 using UnityEngine;
 using System;
@@ -24,13 +25,27 @@ public class GroupMonitor : MonoBehaviour
 
     // ─── 私有字段 ─────────────────────────────────────────────────────────────
 
-    private GroupDef       myGroup;
-    private string         groupId;
-    private string         leaderId;
-    private string[]       otherLeaderIds;
-    private LLMInterface   llmInterface;
+    private GroupDef           myGroup;
+    private string             groupId;
+    private string             leaderId;
+    private string[]           otherLeaderIds;
+    private LLMInterface       llmInterface;
+    private CommunicationModule _commModule;
 
     private bool missionBroadcasted;
+
+    // ─── 紧急事件状态 ─────────────────────────────────────────────────────────
+
+    /// <summary>活跃的辩论协调器（key = incidentId）。</summary>
+    private readonly Dictionary<string, IncidentCoordinator> _activeCoordinators
+        = new Dictionary<string, IncidentCoordinator>();
+
+    /// <summary>最近上报的事件（用于去重）：key = "type_affectedAgent_affectedTask"，value = 上报时间。</summary>
+    private readonly Dictionary<string, float> _recentIncidentKeys
+        = new Dictionary<string, float>();
+
+    private static int _incidentCounter = 0;
+    private const float IncidentDedupeWindowSeconds = 30f;
 
     // ─────────────────────────────────────────────────────────────────────────
     // 初始化（由 PlanningModule 调用）
@@ -44,6 +59,7 @@ public class GroupMonitor : MonoBehaviour
         leaderId       = lId;
         otherLeaderIds = otherLeaders ?? Array.Empty<string>();
         llmInterface   = llm;
+        _commModule    = GetComponent<CommunicationModule>();
 
         // 向裁判层注册（使组长可收到 push 事件，轮询另由 PollRefereeLoop 保证）
         if (RefereeManager.Instance != null)
@@ -272,6 +288,111 @@ public class GroupMonitor : MonoBehaviour
     {
         public bool   completed;
         public string reason;
+    }
+
+    // ─── 紧急事件区（MAD 辩论入口）──────────────────────────────────────────
+
+    /// <summary>
+    /// 接收任意成员上报的紧急事件报告（MessageType.IncidentReport）。
+    /// 自动去重（30s 内相同类型+受影响目标不重复开启辩论）并启动 IncidentCoordinator。
+    /// Low severity 事件由 leader 单方记录，不触发辩论。
+    /// </summary>
+    public void HandleIncidentReport(IncidentReport report)
+    {
+        if (report == null) return;
+
+        // 去重检查
+        string dedupeKey = $"{report.incidentType}_{report.affectedAgentId}_{report.affectedTaskId}";
+        if (_recentIncidentKeys.TryGetValue(dedupeKey, out float lastTime) &&
+            Time.time - lastTime < IncidentDedupeWindowSeconds)
+        {
+            Debug.Log($"[GroupMonitor] {leaderId} 事件去重（{IncidentDedupeWindowSeconds}s 内重复）: {dedupeKey}");
+            return;
+        }
+        _recentIncidentKeys[dedupeKey] = Time.time;
+
+        // 补充由 leader 统一生成的字段
+        report.incidentId  = $"inc_{++_incidentCounter:D3}";
+        report.groupId     = groupId;
+        report.severity    = DetermineSeverity(report);
+        report.reportedAt  = Time.time;
+        report.status      = IncidentStatus.Open;
+
+        Debug.Log($"[GroupMonitor] {leaderId} 收到事件 {report.incidentId}: " +
+                  $"{report.incidentType}/{report.severity} from {report.reporterId}");
+
+        // Low severity：leader 记录即可，不触发辩论
+        if (report.severity == IncidentSeverity.Low)
+        {
+            report.status = IncidentStatus.Resolved;
+            report.finalResolutionSummary = "Low severity 事件，leader 记录并忽略";
+            return;
+        }
+
+        // 启动辩论协调器
+        var coordinator = new IncidentCoordinator(
+            this, myGroup, groupId, leaderId, llmInterface, _commModule);
+        _activeCoordinators[report.incidentId] = coordinator;
+        StartCoroutine(coordinator.RunDebate(report));
+    }
+
+    /// <summary>
+    /// IncidentCoordinator 收到 DebateEntry 时回调（由 CommunicationModule 转发）。
+    /// </summary>
+    public void OnDebateEntryReceived(DebateEntry entry)
+    {
+        if (entry == null) return;
+        if (_activeCoordinators.TryGetValue(entry.incidentId, out var coord))
+            coord.AddDebateEntry(entry);
+        else
+            Debug.LogWarning($"[GroupMonitor] {leaderId} 收到 DebateEntry 但找不到协调器: {entry.incidentId}");
+    }
+
+    /// <summary>IncidentCoordinator 辩论完成后回调，清理协调器引用。</summary>
+    public void OnCoordinatorFinished(string incidentId)
+    {
+        _activeCoordinators.Remove(incidentId);
+        Debug.Log($"[GroupMonitor] {leaderId} 辩论协调器已清理: {incidentId}");
+    }
+
+    /// <summary>
+    /// Severity 自动判定规则（无需 LLM）。
+    /// AgentUnavailable / CapacityShortfall → Critical
+    /// AgentImpaired / PlanInvalid → affectedTaskId 非空 ? High : Medium
+    /// </summary>
+    private static IncidentSeverity DetermineSeverity(IncidentReport report)
+    {
+        switch (report.incidentType)
+        {
+            case IncidentType.AgentUnavailable:
+            case IncidentType.CapacityShortfall:
+                return IncidentSeverity.Critical;
+            case IncidentType.AgentImpaired:
+            case IncidentType.PlanInvalid:
+                return string.IsNullOrWhiteSpace(report.affectedTaskId)
+                    ? IncidentSeverity.Medium
+                    : IncidentSeverity.High;
+            default:
+                return IncidentSeverity.Medium;
+        }
+    }
+
+    /// <summary>供仪表板或外部查询当前活跃事件列表。</summary>
+    public IReadOnlyCollection<string> GetActiveIncidentIds() => _activeCoordinators.Keys;
+
+    /// <summary>
+    /// 供 AgentStateServer 采集：返回所有活跃事件的完整辩论快照。
+    /// 在 Unity 主线程调用，无需加锁。
+    /// </summary>
+    public IncidentDebateSnapshot[] GetIncidentSnapshots()
+    {
+        var result = new IncidentDebateSnapshot[_activeCoordinators.Count];
+        int i = 0;
+        foreach (var coord in _activeCoordinators.Values)
+        {
+            result[i++] = coord.GetSnapshot();
+        }
+        return result;
     }
 }
 

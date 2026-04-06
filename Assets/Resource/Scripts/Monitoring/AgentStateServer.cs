@@ -32,6 +32,7 @@ public partial class AgentStateServer : MonoBehaviour
     private string historyJson     = "{}";
     private string llmLogsJson     = "[]";
     private string whiteboardJson  = "{}";
+    private string incidentsJson   = "[]";
     private bool   mapMetaReady    = false;
     private bool   gridmapReady    = false;
 
@@ -77,6 +78,7 @@ public partial class AgentStateServer : MonoBehaviour
             CaptureSnapshot();
             CaptureLlmLogs();
             CaptureWhiteboard();
+            CaptureIncidents();
             lastSnapshotTime = Time.time;
         }
     }
@@ -274,6 +276,24 @@ public partial class AgentStateServer : MonoBehaviour
             messagesJson = msgJson;
             historyJson  = hj;
         }
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // 紧急事件快照采集（主线程）
+    // ─────────────────────────────────────────────────────────
+
+    private void CaptureIncidents()
+    {
+        var monitors = FindObjectsOfType<GroupMonitor>();
+        var all = new List<IncidentDebateSnapshot>();
+        foreach (var m in monitors)
+        {
+            var snaps = m.GetIncidentSnapshots();
+            if (snaps != null)
+                all.AddRange(snaps);
+        }
+        var json = JsonConvert.SerializeObject(all);
+        lock (snapshotLock) { incidentsJson = json; }
     }
 
     // ─────────────────────────────────────────────────────────
@@ -524,6 +544,11 @@ public partial class AgentStateServer : MonoBehaviour
 
                     case "/api/whiteboard":
                         { string json; lock (snapshotLock) { json = whiteboardJson; }
+                          body = Encoding.UTF8.GetBytes(json); mime = "application/json"; }
+                        break;
+
+                    case "/api/incidents":
+                        { string json; lock (snapshotLock) { json = incidentsJson; }
                           body = Encoding.UTF8.GetBytes(json); mime = "application/json"; }
                         break;
 
