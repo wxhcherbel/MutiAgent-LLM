@@ -212,10 +212,16 @@ public class ReflectionModule : MonoBehaviour
         }}";
 
         string response = string.Empty;
-        yield return llmInterface.SendRequest(prompt, result =>
-        {
-            response = result ?? string.Empty;
-        }, temperature: 0.2f, maxTokens: 360);
+        yield return llmInterface.SendRequest(
+            new LLMRequestOptions
+            {
+                prompt      = prompt,
+                temperature = 0.2f,
+                maxTokens   = 360,
+                callTag     = "Reflection",
+                agentId     = GetComponent<IntelligentAgent>()?.Properties?.AgentID,
+            },
+            result => { response = result ?? string.Empty; });
 
         List<ReflectionInsight> insights = ParseInsights(response, request);
         for (int i = 0; i < insights.Count; i++)

@@ -73,7 +73,7 @@ public class LLMInterface : MonoBehaviour
         StartCoroutine(AutoSaveCoroutine());
     }
 
-    private void AppendToLog(string message, string type = "", string model = "", float temperature = 0f, int maxTokens = 0, string callTag = "")
+    private void AppendToLog(string message, string type = "", string model = "", float temperature = 0f, int maxTokens = 0, string callTag = "", string agentId = "")
     {
         fullLog += message + "\n\n---\n\n";
 
@@ -91,7 +91,8 @@ public class LLMInterface : MonoBehaviour
             model = model,
             temperature = temperature,
             max_tokens = maxTokens,
-            callTag = callTag
+            callTag = callTag,
+            agentId = agentId
         };
 
         _logEntries.Add(entry);
@@ -176,12 +177,12 @@ public class LLMInterface : MonoBehaviour
         string jsonData = BuildRequestJson(options, resolvedModel);
         byte[] rawData = System.Text.Encoding.UTF8.GetBytes(jsonData);
 
-        string agentId = AgentProps?.AgentID ?? "Unknown";
+        string agentId = !string.IsNullOrEmpty(options.agentId) ? options.agentId : (AgentProps?.AgentID ?? "Unknown");
         Debug.Log($"{agentId}: Sending request [{options.callTag}]: {jsonData}");
 
         AppendToLog(
             $"send:\n provider: {providerConfig.providerName}\n url: {providerConfig.apiUrl}\n model: {resolvedModel}\n temperature: {options.temperature}\n maxTokens: {options.maxTokens}\n tag: {options.callTag}\n prompt: {options.prompt}",
-            "send", resolvedModel, options.temperature, options.maxTokens, options.callTag);
+            "send", resolvedModel, options.temperature, options.maxTokens, options.callTag, agentId);
 
         // ─── 超时+重试循环 ────────────────────────────────────────────
         string responseText = null;
@@ -249,12 +250,12 @@ public class LLMInterface : MonoBehaviour
         {
             resultText = responseText;
             callback?.Invoke(resultText);
-            AppendToLog($"ReceiveResponse [{options.callTag}] ({latencyMs}ms):\n {resultText}", "receive", resolvedModel, options.temperature, options.maxTokens, options.callTag);
+            AppendToLog($"ReceiveResponse [{options.callTag}] ({latencyMs}ms):\n {resultText}", "receive", resolvedModel, options.temperature, options.maxTokens, options.callTag, agentId);
         }
         else
         {
             callback?.Invoke(null);
-            AppendToLog($"Error [{options.callTag}] ({latencyMs}ms): {lastError ?? "unknown"}", "error", resolvedModel, options.temperature, options.maxTokens, options.callTag);
+            AppendToLog($"Error [{options.callTag}] ({latencyMs}ms): {lastError ?? "unknown"}", "error", resolvedModel, options.temperature, options.maxTokens, options.callTag, agentId);
         }
 
         WriteJsonlMetric(options.callTag, resolvedModel, success, latencyMs, success ? null : lastError);

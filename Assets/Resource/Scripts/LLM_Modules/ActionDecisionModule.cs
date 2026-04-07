@@ -33,36 +33,34 @@ public class ActionDecisionModule : MonoBehaviour
     private const int MaxReplanCount = 5;
 
     // ─── 滚动规划常量 ─────────────────────────────────────────────
-    private const int MaxIterations = 10;
+    /// <summary>
+    /// 单步骤最大 LLM 调用轮次。每轮生成 1-3 个原子动作，共可产出 20-60 个动作。
+    /// 超限说明步骤目标存在根本性问题（导航死路/目标不可达），设为 Failed 而非强制 Done。
+    /// </summary>
+    private const int MaxIterations = 30;
 
     // ─── 震荡检测状态 ─────────────────────────────────────────────
     private bool _oscillationDetected  = false;
     private int  _oscillationEscapeTtl = 0;
 
+    // ─── nextActions 空重试计数 ───────────────────────────────────
+    /// <summary>
+    /// LLM 返回 isDone=false 但 nextActions 为空时的连续重试次数。
+    /// 最多重试 2 次后设为 Failed，防止无限循环。每次步骤开始时归零。
+    /// </summary>
+    private int _emptyActionRetries = 0;
+    private const int MaxEmptyActionRetries = 2;
+
     // ─── JSON 提取正则 ────────────────────────────────────────────
     private static readonly Regex JsonBlockRe = new Regex(@"```(?:json)?\s*([\s\S]*?)```");
 
-    // ─── 辩论参与状态 ─────────────────────────────────────────────
-    /// <summary>待处理的辩论角色（key=incidentId）。AssignDebateRole 填入，辩论窗口消费。</summary>
-    private readonly Dictionary<string, PendingDebateInfo> _pendingDebateRoles
-        = new Dictionary<string, PendingDebateInfo>();
-
-    /// <summary>最近收到的辩论共识，由 OnDebateResolved 写入，供 rolling loop 检查。</summary>
-    private DebateConsensusEntry _latestConsensus;
-
-    private class PendingDebateInfo
-    {
-        public DebateRoleAssignment Assignment;
-        public bool Processed;
-    }
-
-    [Serializable]
-    private class DebateEntryRaw
-    {
-        public string content;
-        public float  confidence;
-        public string voteFor;
-    }
+    // ─── 辩论参与模块 ─────────────────────────────────────────────
+    /// <summary>
+    /// 个体辩论参与模块，封装全部 MAD 个体侧逻辑。
+    /// 在 Start() 中初始化，Rolling Loop Step 11.5 处通过此实例触发辩论参与协程。
+    /// 群组级协调（广播角色、收敛判断、仲裁）由 IncidentCoordinator 负责，与本模块无关。
+    /// </summary>
+    private DebateParticipant _debateParticipant;
 
     // ─────────────────────────────────────────────────────────────
     // Unity 生命周期
@@ -81,6 +79,23 @@ public class ActionDecisionModule : MonoBehaviour
             agentProperties = agent.Properties;
             agentState = agent.CurrentState;
         }
+
+        // 初始化个体辩论参与模块，注入所需依赖和回调
+        _debateParticipant = new DebateParticipant(
+            owner:               this,
+            agentProps:          agentProperties,
+            comm:                commModule,
+            llm:                 llmInterface,
+            isAdmRunning:        () => status == ADMStatus.Running,
+            onCriticalInterrupt: () => SetStatus(ADMStatus.BatchDone),
+            onConsensusReceived: consensus =>
+            {
+                if (consensus.missionScopeChanged && planningModule != null)
+                {
+                    Debug.Log($"[ADM] {agentProperties?.AgentID} 任务范围已变更，触发重规划");
+                    planningModule.RequestReplan($"DebateResolved: {consensus.resolution}");
+                }
+            });
     }
 
     private void Update()
@@ -133,6 +148,7 @@ public class ActionDecisionModule : MonoBehaviour
         };
 
         replanCount = 0;
+        _emptyActionRetries   = 0;
         _oscillationDetected  = false;
         _oscillationEscapeTtl = 0;
         SetStatus(ADMStatus.Idle);
@@ -193,73 +209,20 @@ public class ActionDecisionModule : MonoBehaviour
 
     // ─────────────────────────────────────────────────────────────
     // 辩论协议公共接口（由 CommunicationModule 转发调用）
+    // 具体逻辑已迁移至 DebateParticipant，此处仅做委托转发。
     // ─────────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// 收到 IncidentAnnounce 消息：仅记录日志，Critical severity 时标记快速路径。
-    /// 实际参与在下一个辩论窗口（11.5 步）或 Update fast-path 触发。
-    /// </summary>
-    public void OnIncidentAnnounced(IncidentReport report)
-    {
-        if (report == null) return;
-        Debug.Log($"[ADM] {agentProperties?.AgentID} 收到事件宣告: {report.incidentId} ({report.incidentType}/{report.severity})");
+    /// <summary>收到 IncidentAnnounce 消息，转发给辩论参与模块处理。</summary>
+    public void OnIncidentAnnounced(IncidentReport report)  => _debateParticipant?.OnIncidentAnnounced(report);
 
-        // Critical：触发 Update fast-path 中断当前 action（若尚未中断）
-        if (report.severity == IncidentSeverity.Critical)
-            OnCriticalIncident(report);
-    }
+    /// <summary>收到 DebateProposal 角色分配消息，转发给辩论参与模块入队。</summary>
+    public void AssignDebateRole(DebateRoleAssignment assignment) => _debateParticipant?.AssignDebateRole(assignment);
 
-    /// <summary>
-    /// 收到 DebateProposal：将辩论角色分配加入待处理队列。
-    /// 在下一个 11.5 辩论窗口（批次自然结束后）消费，最多 1 次 LLM 调用。
-    /// </summary>
-    public void AssignDebateRole(DebateRoleAssignment assignment)
-    {
-        if (assignment == null || string.IsNullOrWhiteSpace(assignment.incidentId)) return;
+    /// <summary>收到 DebateResolved 共识消息，转发给辩论参与模块，由其触发重规划回调。</summary>
+    public void OnDebateResolved(DebateConsensusEntry consensus)  => _debateParticipant?.OnDebateResolved(consensus);
 
-        if (!_pendingDebateRoles.ContainsKey(assignment.incidentId))
-        {
-            _pendingDebateRoles[assignment.incidentId] = new PendingDebateInfo
-            {
-                Assignment = assignment,
-                Processed  = false,
-            };
-            Debug.Log($"[ADM] {agentProperties?.AgentID} 收到辩论角色: " +
-                      $"{assignment.role} (incident={assignment.incidentId}, round={assignment.debateRound})");
-        }
-    }
-
-    /// <summary>
-    /// 收到 DebateResolved：存储最终共识，rolling loop 下一轮可检查并据此行动。
-    /// </summary>
-    public void OnDebateResolved(DebateConsensusEntry consensus)
-    {
-        if (consensus == null) return;
-        _latestConsensus = consensus;
-        Debug.Log($"[ADM] {agentProperties?.AgentID} 收到辩论共识 {consensus.incidentId}: " +
-                  $"assigned={consensus.assignedAgentId}, resolution={consensus.resolution}");
-
-        // 若当前任务范围已改变，通知 PlanningModule 重规划
-        if (consensus.missionScopeChanged && planningModule != null)
-        {
-            Debug.Log($"[ADM] {agentProperties?.AgentID} 任务范围已变更，触发重规划");
-            planningModule.RequestReplan($"DebateResolved: {consensus.resolution}");
-        }
-    }
-
-    /// <summary>
-    /// Critical severity 快速路径：立即标记当前 action batch 为失败以中断执行。
-    /// 非 Critical 情况不调用此方法，避免不必要的中断。
-    /// </summary>
-    public void OnCriticalIncident(IncidentReport report)
-    {
-        if (report == null || report.severity != IncidentSeverity.Critical) return;
-        if (status == ADMStatus.Running)
-        {
-            Debug.LogWarning($"[ADM] {agentProperties?.AgentID} Critical 事件 {report.incidentId}，中断当前 action batch");
-            SetStatus(ADMStatus.BatchDone); // 触发辩论窗口（下一 rolling 迭代）
-        }
-    }
+    /// <summary>Critical 事件快速路径，转发给辩论参与模块，由其通过回调中断当前 batch。</summary>
+    public void OnCriticalIncident(IncidentReport report)        => _debateParticipant?.OnCriticalIncident(report);
 
     /// <summary>返回当前 ADM 状态（供外部监控使用）。</summary>
     public ADMStatus GetStatus() => status;
@@ -308,7 +271,7 @@ public class ActionDecisionModule : MonoBehaviour
                 yield return StartCoroutine(AcquireC3MutexLocks(mutexCids));
 
             // ── 1. 读取白板上下文 & 检查 C3 等待条件 ─────────────────
-            var (waitAction, whiteboardCtx) = CheckWhiteboardAndGetContext();
+            var (waitAction, whiteboardCtx, occupiedNodes) = CheckWhiteboardAndGetContext();
             if (waitAction != null)
             {
                 ReleaseC3MutexLocks(mutexCids);
@@ -347,8 +310,9 @@ public class ActionDecisionModule : MonoBehaviour
                 : "(地图不可用)";
 
             // ── 5. 构建滚动规划提示词 ────────────────────────────────
-            List<string> suggestedWaypoints = ComputeTopoWaypointChain(step);
-            string prompt = BuildRollingPrompt(step, whiteboardCtx, relativeMap, suggestedWaypoints);
+            // maxWaypoints=1：每轮只给下一跳，避免 LLM 提前规划多步产生锚定
+            List<string> suggestedWaypoints = ComputeTopoWaypointChain(step, maxWaypoints: 1);
+            string prompt = BuildRollingPrompt(step, whiteboardCtx, relativeMap, suggestedWaypoints, occupiedNodes);
 
             // ── 6. 调用 LLM（锁持有中）──────────────────────────────
             string llmResult = null;
@@ -358,7 +322,8 @@ public class ActionDecisionModule : MonoBehaviour
                     prompt         = prompt,
                     maxTokens      = 900,
                     enableJsonMode = true,
-                    callTag        = $"ADM_Roll_iter{ctx.iterationCount + 1}"
+                    callTag        = $"ADM_Roll_iter{ctx.iterationCount + 1}",
+                    agentId        = agentProperties?.AgentID
                 },
                 r => llmResult = r));
 
@@ -419,15 +384,27 @@ public class ActionDecisionModule : MonoBehaviour
             }
 
             // ── 9. nextActions 为空的保护 ──────────────────────────
+            // LLM 返回 isDone=false 但没有给出动作，说明 LLM 当前轮次判断混乱。
+            // 最多重试 MaxEmptyActionRetries 次（重新走完整 LLM 流程）；
+            // 超限后设 Failed，由 PlanningModule 决定是否重规划，而非错误地标记步骤完成。
             if (planResult.nextActions == null || planResult.nextActions.Length == 0)
             {
-                Debug.LogWarning($"[ADM] {agentProperties?.AgentID} LLM 返回 isDone=false 但 nextActions 为空，强制完成步骤");
                 ReleaseC3MutexLocks(mutexCids);
-                planningModule?.CompleteCurrentStep();
-                SetStatus(ADMStatus.Done);
+                _emptyActionRetries++;
+                if (_emptyActionRetries <= MaxEmptyActionRetries)
+                {
+                    Debug.LogWarning($"[ADM] {agentProperties?.AgentID} LLM 返回 isDone=false 但 nextActions 为空，" +
+                                     $"重试 ({_emptyActionRetries}/{MaxEmptyActionRetries})");
+                    // 不增加 iterationCount，直接重试本轮 LLM 调用
+                    continue;
+                }
+                Debug.LogError($"[ADM] {agentProperties?.AgentID} LLM 连续 {MaxEmptyActionRetries} 次返回空动作，步骤设为 Failed");
+                SetStatus(ADMStatus.Failed);
                 if (agentState != null) agentState.Status = AgentStatus.Idle;
                 yield break;
             }
+            // 成功生成动作，重置重试计数
+            _emptyActionRetries = 0;
 
             // ── 10. 执行当前批次动作 ─────────────────────────────────
             ctx.actionQueue = planResult.nextActions;
@@ -462,17 +439,17 @@ public class ActionDecisionModule : MonoBehaviour
             // ── 11.5 辩论参与窗口 ──────────────────────────────────
             // 非 Critical 情况：action batch 自然结束后才参与，不打断当前 action
             // 每次最多 1 个 LLM 调用，不延误超过 1 次 rolling 迭代
-            if (HasPendingDebateRole())
-                yield return StartCoroutine(ParticipateInActiveDebates());
+            if (_debateParticipant != null && _debateParticipant.HasPendingDebateRole())
+                yield return StartCoroutine(_debateParticipant.ParticipateInActiveDebates());
 
             ctx.iterationCount++;
             SetStatus(ADMStatus.Interpreting);
         }
 
-        // 超出最大迭代次数，强制完成
-        Debug.LogWarning($"[ADM] {agentProperties?.AgentID} 滚动规划超出最大迭代次数 {MaxIterations}，强制完成步骤");
-        planningModule?.CompleteCurrentStep();
-        SetStatus(ADMStatus.Done);
+        // 超出最大迭代次数：步骤目标可能不可达，设为 Failed 让 PlanningModule 处理重规划
+        // 不强制 Done，避免掩盖真实的未完成状态
+        Debug.LogError($"[ADM] {agentProperties?.AgentID} 滚动规划超出最大迭代次数 {MaxIterations}，步骤设为 Failed（目标可能不可达）");
+        SetStatus(ADMStatus.Failed);
         if (agentState != null) agentState.Status = AgentStatus.Idle;
     }
 
@@ -481,77 +458,80 @@ public class ActionDecisionModule : MonoBehaviour
     // ─────────────────────────────────────────────────────────────
 
     private string BuildRollingPrompt(PlanStep step, string whiteboardCtx, string relativeMap,
-                                       List<string> suggestedWaypoints = null)
+                                       List<string> suggestedWaypoints = null,
+                                       List<string> occupiedNodes = null)
     {
-        // 已执行历史
         string historyBlock = ctx.executedActionsSummary != null && ctx.executedActionsSummary.Count > 0
-            ? string.Join("\n", ctx.executedActionsSummary.ConvertAll((s) => "  • " + s))
+            ? string.Join("\n", ctx.executedActionsSummary.ConvertAll(s => "  • " + s))
             : "  （本步骤尚无已执行动作）";
 
-        // 感知快照
-        // string perception = BuildPerceptionSnapshot();
-        // string perceptionBlock = string.IsNullOrWhiteSpace(perception) ? "无感知数据" : perception;
-
-        // 协同约束摘要
         string constraintBlock = BuildConstraintSummary();
 
         return
-            "你是无人机战术执行规划器，负责滚动式地为当前步骤生成下一批原子动作，并判断步骤是否已完成。\n\n" +
-            "═══ 步骤目标 ═══\n" +
-            $"步骤文本：{step.text}\n" +
-            $"导航目标（targetName）：{(string.IsNullOrWhiteSpace(step.targetName) ? "无" : step.targetName)}\n" +
-            $"完成条件（doneCond）：{(string.IsNullOrWhiteSpace(step.doneCond) ? "未指定" : step.doneCond)}\n\n" +
-            "═══ 已执行历史 ═══\n" +
+            "你是无人机战术执行规划器，为当前步骤滚动生成原子动作并判断是否完成。\n\n" +
+
+            "## 步骤目标\n" +
+            $"步骤：{step.text}\n" +
+            $"导航目标：{(string.IsNullOrWhiteSpace(step.targetName) ? "无" : step.targetName)}\n" +
+            $"完成条件：{(string.IsNullOrWhiteSpace(step.doneCond) ? "未指定" : step.doneCond)}\n\n" +
+
+            "## 已执行历史\n" +
             historyBlock + "\n\n" +
-            "═══ 当前状态 ═══\n" +
-            $"当前角色：{ctx.role}\n" +
-            $"当前位置：{ctx.currentLocationName}\n\n" +
-            "═══ 周边地图（以本机为中心，半径300m） ═══\n" +
+
+            "## 当前状态\n" +
+            $"角色：{ctx.role} | 当前位置：{ctx.currentLocationName}\n" +
+            $"导航目标位置：{(string.IsNullOrWhiteSpace(step.targetName) ? "无" : step.targetName)}\n" +
+            $"当前位置是否已到达目标：{(string.IsNullOrWhiteSpace(step.targetName) || step.targetName == ctx.currentLocationName ? "是" : "否（仍需移动）")}\n\n" +
+
+            "## 周边地图（半径300m）\n" +
             relativeMap + "\n\n" +
-            BuildTopoWaypointBlock(suggestedWaypoints) +
-            "═══ 导航规则（重要） ═══\n" +
-            "本地图仅覆盖当前位置半径300m范围内的地物。\n" +
-            "• 若目标在300m范围内（标注\"在本地图范围内\"）：可直接使用目标名作为 MoveTo 的 targetName。\n" +
-            "• 若目标在300m范围外（标注\"超出范围\"）：\n" +
-            "  - 不得直接填写目标名，执行层无法解析范围外地点。\n" +
-            "  - 必须选取标有 ★ 的中间航点（趋向目标方向），逐步靠近。\n" +
-            "  - 导航链示例：当前位置 → 航点C（★） → 航点D（★） → 最终目标\n" +
-            "  - 每轮只需规划到下一个航点，下轮会重新获取更新的地图。\n" +
-            "• targetName 必须是本地图300m范围内列出的地点名称，禁止编造或使用范围外地点名。\n\n" +
+
+            BuildTopoWaypointBlock(suggestedWaypoints, occupiedNodes) +
+
+            "## 导航规则\n" +
+            "地图仅覆盖当前位置300m内地物。\n" +
+            "• 目标在范围内（标注\"在本地图范围内\"）：targetName 直接填目标名。\n" +
+            "• 目标超出范围（标注\"超出范围\"）：targetName 只能填地图内已列出的中间节点；" +
+                "参考 A* 下一跳或 ★ 航点，结合白板 occupied 自主选择，每轮只规划到下一个节点。\n" +
+            "• targetName 禁止编造或使用范围外地名。\n\n" +
+
             BuildTabuBlock() +
             BuildEscapeBlock() +
-            "═══ 白板状态（组内协同） ═══\n" +
+
+            "## 白板状态（组内协同）\n" +
             (string.IsNullOrWhiteSpace(whiteboardCtx) ? "（无白板数据）" : whiteboardCtx) + "\n\n" +
-            "═══ 协同约束 ═══\n" +
+
+            "## 协同约束\n" +
             (string.IsNullOrWhiteSpace(constraintBlock) ? "无约束（本步骤独立执行）" : constraintBlock) + "\n\n" +
-            "═══ 原子动作类型说明 ═══\n" +
-            "• MoveTo：前往指定地点。targetName=目的地（地图中存在），spatialHint=路径偏好，actionParams=飞行参数\n" +
-            "• PatrolAround：在目标地点周围环绕巡逻。targetName=巡逻中心，actionParams=必填，duration=-1=一圈后结束\n" +
-            "• Observe：对目标区域定点观察。targetName=观察目标，actionParams=必填（时长等），duration=-1=条件触发结束\n" +
-            "• Evade：规避障碍物或调整高度。actionParams=必填\n" +
-            "• Wait：原地悬停等待。actionParams=必填等待条件（如\"等待20秒\"\"等待队友到达\"）\n" +
-            "• FormationHold：与指定队友保持相对位置协同移动。targetAgentId=队友ID，actionParams=必填相对偏移\n\n" +
-            "═══ 规划流程（按顺序思考） ═══\n" +
-            "1. 先看已执行历史，判断步骤是否已完成（isDone=true）。\n" +
-            "2. 若未完成，结合当前位置、感知、白板状态，生成下一批 1-3 个动作推进步骤。\n" +
-            "3. 协同约束非空时，动作必须遵守约束要求（如等待信号、保持间距等）。\n\n" +
-            "═══ 输出格式（JSON 对象，非数组） ═══\n" +
+
+            "## 可用动作\n" +
+            "• MoveTo：前往地图内地点，targetName=地点名，spatialHint=路径偏好，actionParams=飞行参数\n" +
+            "• PatrolAround：环绕巡逻，targetName=中心点，duration=-1=一圈后结束，actionParams=巡逻说明\n" +
+            "• Observe：定点观察，targetName=目标，duration=-1=条件触发结束，actionParams=观察时长/条件\n" +
+            "• Evade：规避障碍/调整高度，actionParams=规避方向说明\n" +
+            "• Wait：原地悬停，actionParams=等待条件（如\"等待20秒\"\"等待队友到达\"）\n" +
+            "• FormationHold：编队跟随，targetAgentId=队友ID，actionParams=相对偏移\n\n" +
+
+            "## 步骤完成判断（重要）\n" +
+            "在输出前，请依次核对以下三项，全部满足才可 isDone=true：\n" +
+            "① 若步骤有 targetName，当前位置必须已到达该目标（见\"当前位置是否已到达目标\"）。\n" +
+            "② 若步骤有 doneCond（完成条件），执行历史中必须有满足该条件的动作记录。\n" +
+            "③ 若存在协同约束（如 C2 完成条件、C3 信号等），必须已完成约束要求。\n" +
+            "任意一项不满足，isDone 必须为 false，并继续规划下一步动作。\n\n" +
+
+            "## 输出（JSON 对象，非数组）\n" +
             "{\n" +
-            "  \"thought\": \"对当前局势的简短推理（1-2句），说明为何选择接下来的动作或判断步骤完成\",\n" +
+            "  \"thought\": \"先判断步骤是否完成：对照上方三项逐一分析，再说明下一步意图\",\n" +
             "  \"isDone\": true/false,\n" +
-            "  \"doneReason\": \"说明为何步骤完成或未完成\",\n" +
+            "  \"doneReason\": \"完成或未完成的具体原因（引用当前位置/历史/条件对比）\",\n" +
             "  \"nextActions\": [\n" +
-            "    {\"actionId\":\"aa_N\",\"type\":\"MoveTo\",\"targetName\":\"地点名\",\"targetAgentId\":\"\",\"duration\":0,\"actionParams\":\"参数\",\"spatialHint\":\"\"}\n" +
+            "    {\"actionId\":\"aa_1\",\"type\":\"MoveTo\",\"targetName\":\"地点名\",\"targetAgentId\":\"\",\"duration\":0,\"actionParams\":\"\",\"spatialHint\":\"\"}\n" +
             "  ]\n" +
-            "}\n\n" +
-            "规则：\n" +
-            "1. thought 必填，是推理摘要，不影响执行逻辑，仅用于可追溯性。\n" +
-            "2. isDone=true 时 nextActions 可为空数组 []。\n" +
-            "3. isDone=false 时 nextActions 必须有 1-3 个动作。\n" +
-            "4. targetName 必须是本地图300m范围内存在的地点名称，禁止编造。\n" +
-            "5. 每个动作必须包含全部字段：actionId / type / targetName / targetAgentId / duration / actionParams / spatialHint。\n" +
-            "6. Tabu 规则：禁忌节点列表中的地点本轮不得选作 targetName。\n" +
-            "7. 全局路径建议优先于 ★ 启发；遇到震荡逃逸模式时，规则 6 和全局路径建议的优先级高于一切。\n";
+            "}\n" +
+            "1. thought 必填，必须包含完成判断推理（不影响执行逻辑）。\n" +
+            "2. isDone=true 时 nextActions 填 []；isDone=false 时必须提供 1-3 个动作。\n" +
+            "3. 每个动作必须包含全部字段：actionId / type / targetName / targetAgentId / duration / actionParams / spatialHint。\n" +
+            "4. 协同约束非空时，生成的动作必须遵守约束要求（如等待信号、保持间距等）。\n";
     }
 
     private string BuildConstraintSummary()
@@ -654,10 +634,8 @@ public class ActionDecisionModule : MonoBehaviour
     private string BuildTabuBlock()
     {
         if (ctx?.visitedNodeTabu == null || ctx.visitedNodeTabu.Count == 0) return string.Empty;
-        return "═══ 导航禁忌（防震荡） ═══\n" +
-               "以下地点近期已访问，本轮【禁止】再次作为 targetName，\n" +
-               "除非别无选择（需在 thought 中说明）：\n" +
-               $"  禁止节点：{string.Join(", ", ctx.visitedNodeTabu)}\n\n";
+        return "## 导航禁忌（防震荡）\n" +
+               $"禁止节点（近期已访问，本轮不得选作 targetName）：{string.Join(", ", ctx.visitedNodeTabu)}\n\n";
     }
 
     private string BuildEscapeBlock()
@@ -667,24 +645,30 @@ public class ActionDecisionModule : MonoBehaviour
         string pair = (t != null && t.Count >= 2)
             ? $"[{t[t.Count-2]}] ↔ [{t[t.Count-1]}]"
             : "未知节点对";
-        return "═══ 【紧急】震荡逃逸模式 ═══\n" +
-               $"检测到你在 {pair} 间循环。强制规则（最高优先级）：\n" +
-               "1. 禁忌列表节点本轮绝对不可选。\n" +
-               "2. 必须选一个全新的、未曾访问的节点作为 targetName。\n" +
-               "3. 优先按「全局路径建议」中未访问的节点选取。\n" +
-               $"4. 在 thought 中明确写出逃逸节点名称和理由。\n" +
-               $"剩余逃逸轮次：{_oscillationEscapeTtl}\n\n";
+        return "## ⚠ 震荡逃逸模式（最高优先级）\n" +
+               $"检测到在 {pair} 间循环，剩余逃逸轮次：{_oscillationEscapeTtl}。\n" +
+               "禁忌列表节点本轮绝对不可选；必须选一个未曾访问的节点，优先按 A* 下一跳未访问节点选取，并在 thought 中写明逃逸节点。\n\n";
     }
 
-    private string BuildTopoWaypointBlock(List<string> waypoints)
+    private string BuildTopoWaypointBlock(List<string> waypoints, List<string> occupiedNodes = null)
     {
         if (waypoints == null || waypoints.Count == 0) return string.Empty;
-        return "═══ 全局路径建议（A* 预规划） ═══\n" +
-               "基于全局地图计算的参考航点序列（从近到远）：\n" +
-               $"  {string.Join(" → ", waypoints)}\n" +
-               "• 优先按此顺序选 targetName（跳过不在 300m 内的节点）。\n" +
-               "• 此序列比 ★ 启发更准确，路径分歧时以此为准。\n" +
-               "• 序列节点若在禁忌列表中，跳过它选下一个。\n\n";
+
+        // 标注每个节点的占用状态（供 LLM 自主判断是否采纳）
+        var occupiedSet = occupiedNodes != null
+            ? new HashSet<string>(occupiedNodes, StringComparer.OrdinalIgnoreCase)
+            : null;
+
+        var annotated = new System.Text.StringBuilder();
+        foreach (string wp in waypoints)
+        {
+            bool isOccupied = occupiedSet != null && occupiedSet.Contains(wp);
+            annotated.Append(isOccupied ? $"{wp}（⚠ 白板显示已被他人占用）" : $"{wp}（可用）");
+        }
+
+        return "## A* 下一跳参考（静态地图，仅供参考）\n" +
+               $"  {annotated}\n" +
+               "有冲突时以白板 occupied 为准；节点被占用或在禁忌列表中时，从周边地图选取替代节点。\n\n";
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -712,12 +696,12 @@ public class ActionDecisionModule : MonoBehaviour
     ///                提供队友当前执行意图，供 LLM 协同决策参考。
     /// 空字段不输出；三组均空时返回 string.Empty（调用方显示"无白板数据"）。
     /// </summary>
-    private (AtomicAction waitAction, string whiteboardCtx) CheckWhiteboardAndGetContext()
+    private (AtomicAction waitAction, string whiteboardCtx, List<string> occupiedNodes) CheckWhiteboardAndGetContext()
     {
         if (SharedWhiteboard.Instance == null || ctx.stepConstraints == null)
-            return (null, string.Empty);
+            return (null, string.Empty, null);
         string groupId = planningModule?.GetGroupId();
-        if (string.IsNullOrWhiteSpace(groupId)) return (null, string.Empty);
+        if (string.IsNullOrWhiteSpace(groupId)) return (null, string.Empty, null);
         string myId = agentProperties?.AgentID ?? string.Empty;
 
         // ── Phase 1: C3 sign=+1 等待拦截 ──────────────────────────────────────────
@@ -753,7 +737,7 @@ public class ActionDecisionModule : MonoBehaviour
                     duration      = 5f,
                     actionParams  = $"等待 {c.watchAgent} 就绪（约束 {c.constraintId}）",
                     spatialHint   = string.Empty,
-                }, string.Empty);
+                }, string.Empty, null);
             }
         }
 
@@ -838,16 +822,17 @@ public class ActionDecisionModule : MonoBehaviour
         }
 
         if (occupied.Count == 0 && signals.Count == 0 && intents.Count == 0 && refereeList.Count == 0)
-            return (null, string.Empty);
+            return (null, string.Empty, null);
 
         // 按重要性排序字段（occupied 最关键，放最前）；空字段不序列化
         var result = new Dictionary<string, object>();
-        if (occupied.Count > 0)   result["occupied"] = occupied;
+        if (occupied.Count > 0)    result["occupied"] = occupied;
         if (signals.Count > 0)    result["signals"]  = signals;
         if (intents.Count > 0)    result["intents"]  = intents;
         if (refereeList.Count > 0) result["referee"] = refereeList;
 
-        return (null, JsonConvert.SerializeObject(result));
+        // occupied 单独返回，供 BuildTopoWaypointBlock 交叉标注 A* 节点的占用状态
+        return (null, JsonConvert.SerializeObject(result), occupied.Count > 0 ? occupied : null);
     }
 
 /// <summary>Handle whiteboard writes after the current step completes.</summary>
@@ -1254,137 +1239,6 @@ public class ActionDecisionModule : MonoBehaviour
     };
 
     // ─────────────────────────────────────────────────────────────
-    // 辩论参与私有方法
-    // ─────────────────────────────────────────────────────────────
-
-    private bool HasPendingDebateRole() => _pendingDebateRoles.Count > 0;
-
-    /// <summary>
-    /// 辩论参与窗口（step 11.5）：处理所有待处理的辩论角色，每次最多 1 个 LLM 调用。
-    /// 处理完成后向 leader 发送 DebateUpdate 消息。
-    /// </summary>
-    private IEnumerator ParticipateInActiveDebates()
-    {
-        // 取第一条未处理的辩论分配
-        PendingDebateInfo pending = null;
-        string pendingKey = null;
-        foreach (var kvp in _pendingDebateRoles)
-        {
-            if (!kvp.Value.Processed)
-            {
-                pending    = kvp.Value;
-                pendingKey = kvp.Key;
-                break;
-            }
-        }
-        if (pending == null) yield break;
-
-        pending.Processed = true;
-        var assignment = pending.Assignment;
-
-        Debug.Log($"[ADM] {agentProperties?.AgentID} 参与辩论 {assignment.incidentId} " +
-                  $"as {assignment.role} (round={assignment.debateRound})");
-
-        // 构建 LLM 辩论 prompt
-        string prompt = BuildDebatePrompt(assignment);
-
-        string llmResult = null;
-        yield return StartCoroutine(llmInterface.SendRequest(
-            new LLMRequestOptions
-            {
-                prompt         = prompt,
-                maxTokens      = 350,
-                enableJsonMode = true,
-                callTag        = $"Debate_{assignment.incidentId}_r{assignment.debateRound}",
-            },
-            r => llmResult = r));
-
-        _pendingDebateRoles.Remove(pendingKey);
-
-        if (string.IsNullOrWhiteSpace(llmResult))
-        {
-            Debug.LogWarning($"[ADM] {agentProperties?.AgentID} 辩论 LLM 返回空，跳过");
-            yield break;
-        }
-
-        // 解析并发回 leader
-        DebateEntry entry = ParseDebateEntry(assignment, llmResult);
-        if (entry != null && commModule != null)
-        {
-            commModule.SendStructuredMessage(assignment.leaderId, MessageType.DebateUpdate, entry);
-            Debug.Log($"[ADM] {agentProperties?.AgentID} 辩论回复已发送: {entry.entryId} (conf={entry.confidence:F2})");
-        }
-    }
-
-    private string BuildDebatePrompt(DebateRoleAssignment assignment)
-    {
-        var report = assignment.report;
-        var sb = new StringBuilder();
-        sb.AppendLine("你是多智能体协同系统中的辩论参与者。根据你的角色对紧急事件提出应对方案。仅输出 JSON，不解释。");
-        sb.AppendLine();
-        sb.AppendLine("=== 紧急事件 ===");
-        sb.AppendLine($"类型：{report?.incidentType}  严重程度：{report?.severity}");
-        sb.AppendLine($"受影响 Agent：{report?.affectedAgentId ?? "无"}");
-        sb.AppendLine($"受影响任务：{report?.affectedTaskId ?? "无"}");
-        sb.AppendLine($"描述：{report?.description}");
-        sb.AppendLine();
-        sb.AppendLine("=== 你的身份 ===");
-        sb.AppendLine($"Agent ID：{agentProperties?.AgentID}  Role：{agentProperties?.Role}");
-        sb.AppendLine($"辩论角色：{assignment.role}  当前轮次：{assignment.debateRound}");
-
-        if (!string.IsNullOrWhiteSpace(assignment.existingEntriesSummary))
-        {
-            sb.AppendLine();
-            sb.AppendLine("=== 已有提案/批评 ===");
-            sb.AppendLine(assignment.existingEntriesSummary);
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("=== 输出格式（JSON） ===");
-        sb.AppendLine("{");
-        sb.AppendLine("  \"content\": \"你的提案/批评/投票理由（2-3句，具体说明应对策略，包含执行主体 agentId）\",");
-        sb.AppendLine("  \"confidence\": 0.0到1.0之间的浮点数,");
-
-        if (assignment.role == DebateRole.Voter)
-            sb.AppendLine("  \"voteFor\": \"你支持的提案的 entryId（格式 dbt_xxx_rN_agentId）\"");
-        else
-            sb.AppendLine("  \"voteFor\": \"\"");
-
-        sb.AppendLine("}");
-
-        return sb.ToString();
-    }
-
-    private DebateEntry ParseDebateEntry(DebateRoleAssignment assignment, string llmResult)
-    {
-        try
-        {
-            string json   = ExtractJson(llmResult);
-            var    parsed = JsonConvert.DeserializeObject<DebateEntryRaw>(json);
-            if (parsed == null) return null;
-
-            string entryId = $"dbt_{assignment.incidentId}_r{assignment.debateRound}_{agentProperties?.AgentID}";
-            return new DebateEntry
-            {
-                entryId     = entryId,
-                incidentId  = assignment.incidentId,
-                authorId    = agentProperties?.AgentID ?? string.Empty,
-                debateRound = assignment.debateRound,
-                role        = assignment.role,
-                content     = parsed.content ?? string.Empty,
-                confidence  = Mathf.Clamp01(parsed.confidence),
-                voteFor     = parsed.voteFor ?? string.Empty,
-                createdAt   = Time.time,
-            };
-        }
-        catch (Exception e)
-        {
-            Debug.LogWarning($"[ADM] {agentProperties?.AgentID} 辩论条目解析失败: {e.Message}");
-            return null;
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────
     // 工具方法
     // ─────────────────────────────────────────────────────────────
 
@@ -1407,17 +1261,22 @@ public class ActionDecisionModule : MonoBehaviour
     {
         if (agentState == null || campusGrid == null) return "未知位置";
         Vector3 pos = agentState.Position;
-        if (!campusGrid.TryGetCellFeatureInfoByWorld(pos, out _, out string uid, out string name, out _, out _))
-            return $"({pos.x:F0},{pos.z:F0})";
 
-        // 优先用 runtimeAlias（与地图显示一致），无则用 effectiveName
-        if (!string.IsNullOrWhiteSpace(uid)
-            && campusGrid.featureSpatialProfileByUid != null
-            && campusGrid.featureSpatialProfileByUid.TryGetValue(uid, out var profile)
-            && !string.IsNullOrWhiteSpace(profile.runtimeAlias))
-            return profile.runtimeAlias;
+        if (campusGrid.TryGetCellFeatureInfoByWorld(pos, out _, out string uid, out string name, out _, out _))
+        {
+            // 优先用 runtimeAlias（与地图显示一致）
+            if (!string.IsNullOrWhiteSpace(uid)
+                && campusGrid.featureSpatialProfileByUid != null
+                && campusGrid.featureSpatialProfileByUid.TryGetValue(uid, out var profile)
+                && !string.IsNullOrWhiteSpace(profile.runtimeAlias))
+                return profile.runtimeAlias;
 
-        return !string.IsNullOrWhiteSpace(name) ? name : $"({pos.x:F0},{pos.z:F0})";
+            if (!string.IsNullOrWhiteSpace(name)) return name;
+        }
+
+        // 当前格无特征（开阔地/地图边界外）：搜索半径5格内最近有名字的特征
+        string nearest = campusGrid.TryGetNearestFeatureNameByWorld(pos, searchRadius: 5);
+        return !string.IsNullOrWhiteSpace(nearest) ? $"近{nearest}" : $"({pos.x:F0},{pos.z:F0})";
     }
 
     private void SyncCampusGridReference()

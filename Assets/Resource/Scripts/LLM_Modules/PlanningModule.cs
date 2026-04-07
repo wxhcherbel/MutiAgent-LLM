@@ -187,7 +187,7 @@ public class PlanningModule : MonoBehaviour
 
         string llmResult = null;
         yield return StartCoroutine(llm.SendRequest(
-            new LLMRequestOptions { prompt = prompt, maxTokens = 1200, enableJsonMode = true, callTag = "LLM#1_Parse" },
+            new LLMRequestOptions { prompt = prompt, maxTokens = 1200, enableJsonMode = true, callTag = "LLM#1_Parse", agentId = props?.AgentID },
             r => llmResult = r));
 
         if (string.IsNullOrWhiteSpace(llmResult))
@@ -296,7 +296,7 @@ public class PlanningModule : MonoBehaviour
             "}\n";
         string llmResult = null;
         yield return StartCoroutine(llm.SendRequest(
-            new LLMRequestOptions { prompt = prompt, maxTokens = 1400, enableJsonMode = true, callTag = "LLM#2_SlotGen" },
+            new LLMRequestOptions { prompt = prompt, maxTokens = 1400, enableJsonMode = true, callTag = "LLM#2_SlotGen", agentId = props?.AgentID },
             r => llmResult = r));
 
         if (string.IsNullOrWhiteSpace(llmResult))
@@ -410,7 +410,7 @@ public class PlanningModule : MonoBehaviour
 
         string llmResult = null;
         yield return StartCoroutine(llm.SendRequest(
-            new LLMRequestOptions { prompt = prompt, maxTokens = 150, enableJsonMode = true, callTag = "LLM#3_SlotPick" },
+            new LLMRequestOptions { prompt = prompt, maxTokens = 150, enableJsonMode = true, callTag = "LLM#3_SlotPick", agentId = props?.AgentID },
             r => llmResult = r));
 
         Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] LLM#3 原始回复: {llmResult}");
@@ -540,7 +540,7 @@ public class PlanningModule : MonoBehaviour
 
         string llmResult = null;
         yield return StartCoroutine(llm.SendRequest(
-            new LLMRequestOptions { prompt = prompt, maxTokens = 800, enableJsonMode = true, callTag = "LLM#4_StepGen" },
+            new LLMRequestOptions { prompt = prompt, maxTokens = 800, enableJsonMode = true, callTag = "LLM#4_StepGen", agentId = props?.AgentID },
             r => llmResult = r));
 
         if (string.IsNullOrWhiteSpace(llmResult))

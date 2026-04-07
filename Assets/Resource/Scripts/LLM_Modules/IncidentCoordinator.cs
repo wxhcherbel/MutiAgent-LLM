@@ -299,6 +299,7 @@ public class IncidentCoordinator
                 maxTokens      = 400,
                 enableJsonMode = true,
                 callTag        = $"Arbiter_{report.incidentId}",
+                agentId        = _leaderId,
             },
             r => llmResult = r));
 

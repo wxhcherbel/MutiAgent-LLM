@@ -39,6 +39,9 @@ public class LogEntry
 
     /// <summary>调用阶段标签，例如 "LLM#1"、"ADM_Roll_iter2"。</summary>
     public string callTag;
+
+    /// <summary>发起本次调用的智能体 ID。</summary>
+    public string agentId;
 }
 
 /// <summary>
@@ -133,4 +136,7 @@ public class LLMRequestOptions
 
     /// <summary>可选的调用标签，用于结构化日志（如 "LLM#1"、"ADM_Roll"）。</summary>
     public string callTag = "";
+
+    /// <summary>发起本次请求的智能体 ID，用于日志中的 agent 分类。</summary>
+    public string agentId;
 }

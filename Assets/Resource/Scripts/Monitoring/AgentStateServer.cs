@@ -366,7 +366,7 @@ public partial class AgentStateServer : MonoBehaviour
 
         foreach (var iface in allInterfaces)
         {
-            string agentId = iface.GetComponent<IntelligentAgent>()?.Properties?.AgentID ?? iface.gameObject.name;
+            string ifaceId = iface.GetComponent<IntelligentAgent>()?.Properties?.AgentID ?? iface.gameObject.name;
             var logs = iface.LogEntries;
             foreach (var e in logs)
             {
@@ -375,7 +375,7 @@ public partial class AgentStateServer : MonoBehaviour
                     content = content.Substring(0, 3000) + "…";
                 entries.Add(new LlmLogEntry
                 {
-                    agentId     = agentId,
+                    agentId     = !string.IsNullOrEmpty(e.agentId) ? e.agentId : ifaceId,
                     timestamp   = e.timestamp,
                     type        = e.type,
                     model       = e.model,

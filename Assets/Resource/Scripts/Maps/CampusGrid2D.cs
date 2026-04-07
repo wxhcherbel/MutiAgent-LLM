@@ -1454,7 +1454,8 @@ public class CampusGrid2D : MonoBehaviour
                     cellPriorityGrid[x, z] = featurePriority;
                     blockedGrid[x, z] = shouldBlock;
                     cellTypeGrid[x, z] = t;
-                    AssignCellFeatureIdentity(x, z, f.uid, f.effectiveName);
+                    AssignCellFeatureIdentity(x, z, f.uid,
+                        string.IsNullOrWhiteSpace(f.runtimeAlias) ? f.effectiveName : f.runtimeAlias);
                 }
             }
         }
@@ -2870,6 +2871,30 @@ public class CampusGrid2D : MonoBehaviour
     {
         if (cellFeatureUidGrid != null) cellFeatureUidGrid[x, z] = string.IsNullOrWhiteSpace(uid) ? null : uid.Trim();
         if (cellFeatureNameGrid != null) cellFeatureNameGrid[x, z] = string.IsNullOrWhiteSpace(name) ? null : name.Trim();
+    }
+
+    /// <summary>
+    /// 在 worldPos 附近 searchRadius 格半径内，找到最近有名字的特征格，返回其名称；找不到返回 null。
+    /// </summary>
+    public string TryGetNearestFeatureNameByWorld(Vector3 worldPos, int searchRadius = 5)
+    {
+        if (cellFeatureNameGrid == null) return null;
+        Vector2Int center = WorldToGrid(worldPos);
+        string best = null;
+        int bestDist = int.MaxValue;
+        for (int dx = -searchRadius; dx <= searchRadius; dx++)
+        {
+            for (int dz = -searchRadius; dz <= searchRadius; dz++)
+            {
+                int nx = center.x + dx, nz = center.y + dz;
+                if (!IsInBounds(nx, nz)) continue;
+                string n = cellFeatureNameGrid[nx, nz];
+                if (string.IsNullOrEmpty(n)) continue;
+                int dist = dx * dx + dz * dz;
+                if (dist < bestDist) { bestDist = dist; best = n; }
+            }
+        }
+        return best;
     }
 
     private CampusGridCellType KindToCellType(string kind)
