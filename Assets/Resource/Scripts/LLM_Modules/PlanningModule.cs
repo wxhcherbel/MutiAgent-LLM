@@ -481,62 +481,57 @@ public class PlanningModule : MonoBehaviour
         string constraintsJson = JsonConvert.SerializeObject(slotConstraints);
 
         string prompt =
-            "你是无人机任务拆解器。将计划拆成 JSON 步骤数组。\n\n" +
-            $"计划:{confirmedSlot.desc}\n" +
-            $"当前AgentID:{props?.AgentID}\n" +
-            $"角色:{confirmedSlot.role}\n" +
-            $"可用约束列表(StructuredConstraint JSON):{constraintsJson}\n" +
-            $"完成条件:{confirmedSlot.doneCond}\n" +
-            $"当前位置:{pos},电量:{battery:F0}%\n\n" +
-            "要求:\n" +
-            "1. 只输出 JSON 数组。\n" +
-            "2. 只拆解 desc 中明确出现的动作,禁止补充推断步骤。\n" +
-            "3. text 只能是意图动作(移动/巡逻/侦察/等待等)。\n" +
-            "4. desc 只含一个动作时,输出 1 步。\n" +
-            "5. doneCond:完成条件,没有时填 \" \"。\n" +
-            "6. stepId 格式:step_1、step_2 ...\n" +
-            "6b. targetName:从 text 中提取该步骤唯一的空间目标名（地名/区域名），无空间目标时填 \"\"。\n" +
-            "    方位修饰词（附近/东边等）不提取。\n" +
-            "6c. 【步骤原子化】每步 text 的结构：\n" +
-            "    恰好一个移动动作 + 目标（+ 必要参数），可附加零或多个非移动动作 + 目标（+ 必要参数）。\n" +
-            "    text 格式：主谓宾，只保留动作、目标和必要参数。\n" +
-            "    desc 中含 N 个依次到达的地点时，拆为 N 步，每步一个移动目标。\n" +
-            "7. 重点理解 C2 和 C3 的意义,再把 constraintIds 绑定到正确动作步骤:\n" +
-            "   C1(资源分配)→ 一般不用重点考虑,分槽阶段已处理;若需要,绑定到进入 targetObject 的动作步骤\n" +
-            "   C2(完成同步)→ 绑定到该成员完成后需要参与同步的那个实质动作步骤\n" +
-            "   C3 sign=+1(单向等待)→\n" +
-            "      若当前AgentID != watchAgent,绑定到“执行前需要等待队友就绪”的动作步骤\n" +
-            "      若当前AgentID == watchAgent,绑定到“该步骤完成后要发出 ReadySignal”的动作步骤\n" +
-            "   C3 sign=-1(动态互斥)→ 绑定到可能发生目标竞争的动作步骤(进入共享区域/资源的步骤)\n" +
-            "      参与竞争的是所有绑定了同一 constraintId 的成员,不是看 watchAgent\n" +
-            "8. 同一条约束只分配给一个步骤,不重复绑定。\n\n" +
-            "示例(agent_A 负责南区搜索后同步回传,含 C3 sign=+1 + C2 约束):\n" +
-            "当前AgentID:\"agent_A\"\n" +
-            "desc:\"飞往南区执行地面目标搜索,搜索完成后通过白板同步回传结果\"\n" +
-            "doneCond:\"南区搜索完成且结果已回传\"\n" +
-            "可用约束:\n" +
-            "  c3_wait_cover — C3, sign=+1, watchAgent=agent_A, reactTo=ReadySignal\n" +
-            "    (agent_A == watchAgent → 绑定到\"完成搜索后需要发出 ReadySignal\"的步骤)\n" +
-            "  c2_sync_report — C2, syncWith=[s0,s1]\n" +
-            "    (绑定到实质同步动作步骤:回传搜索结果)\n" +
-            "[\n" +
-            "  {\"stepId\":\"step_1\",\"text\":\"飞往南区执行地面目标搜索\",\"targetName\":\"南区\",\"doneCond\":\"南区搜索完成\",\"constraintIds\":[\"c3_wait_cover\"]},\n" +
-            "  {\"stepId\":\"step_2\",\"text\":\"通过白板同步回传搜索结果\",\"targetName\":\"\",\"doneCond\":\"结果回传完成\",\"constraintIds\":[\"c2_sync_report\"]}\n" +
-            "]\n\n" +
-            "示例2(含多段移动+约束绑定，规则6c 触发):\n" +
-            "当前AgentID:\"agent_B\"\n" +
-            "desc:\"飞往物资补给点领取装备，随后前往指挥所完成任务汇报，最后飞至集结区待命\"\n" +
-            "doneCond:\"到达集结区且已完成汇报\"\n" +
-            "可用约束:\n" +
-            "  c2_sync_assembly — C2, syncWith=[s0,s1], condition=\"两机均到达集结区后统一待命\"\n" +
-            "    (绑定到实质完成动作：到达集结区待命)\n" +
-            "【原子化分析】desc含3个移动目标(物资补给点→指挥所→集结区)，\n" +
-            "    每步结构：一个移动动作+一个目标（+非移动附加动作）→ 拆为3步\n" +
-            "[\n" +
-            "  {\"stepId\":\"step_1\",\"text\":\"飞往物资补给点领取装备\",\"targetName\":\"物资补给点\",\"doneCond\":\"装备领取完成\",\"constraintIds\":[]},\n" +
-            "  {\"stepId\":\"step_2\",\"text\":\"前往指挥所完成任务汇报\",\"targetName\":\"指挥所\",\"doneCond\":\"任务汇报完成\",\"constraintIds\":[]},\n" +
-            "  {\"stepId\":\"step_3\",\"text\":\"飞至集结区待命\",\"targetName\":\"集结区\",\"doneCond\":\"到达集结区\",\"constraintIds\":[\"c2_sync_assembly\"]}\n" +
-            "]\n\n";
+            "你是无人机任务拆解器。你的任务是：在不改变计划原意的前提下，把当前槽位职责拆成可执行步骤，并把约束绑定到最合适的已有步骤上。\n\n" +
+            "## 输入\n" +
+            $"计划: {confirmedSlot.desc}\n" +
+            $"当前AgentID: {props?.AgentID}\n" +
+            $"角色: {confirmedSlot.role}\n" +
+            $"可用约束列表(StructuredConstraint JSON): {constraintsJson}\n" +
+            $"完成条件: {confirmedSlot.doneCond}\n" +
+            $"当前位置: {pos}, 电量: {battery:F0}%\n\n" +
+            "## 步骤拆解要求\n" +
+            "1. 只拆解 desc 中明确出现的动作，禁止补充推断步骤。\n" +
+            "2. text 只能写意图动作，如移动、巡逻、侦察、等待等。\n" +
+            "3. desc 只含一个动作时，输出 1 步。\n" +
+            "4. doneCond 没有时填 \" \"。\n" +
+            "5. stepId 格式固定为 step_1、step_2 ...。\n" +
+            "6. targetName 从 text 中提取该步骤唯一的空间目标名（地名/区域名）；无空间目标时填 \"\"；方位修饰词（附近、东边等）不提取。\n" +
+            "7. 每步 text 采用“主谓宾”式表达，只保留动作、目标和必要参数。\n" +
+            "8. 每步恰好一个主要动作；若 desc 中有多个依次到达的地点，就拆成多步，每步一个移动目标。\n" +
+            "9. constraintIds 没有就填 []。\n\n" +
+            "## 约束绑定要求\n" +
+            "1. 约束只能绑定到已有步骤，不能因为约束额外创造“等待”“检查点”“同步”“占位”等新步骤。\n" +
+            "2. 如果约束涉及的中间目标没有在 desc 中单独出现，就把约束绑定到最相关的已有步骤。\n" +
+            "3. 同一个步骤可以绑定多条约束，但同一条约束不要重复绑定到多个步骤。\n" +
+            "4. C2: 绑定到“本步完成后需要等待其他成员同步完成，才能进入下一步”的步骤。若下一步是一起巡逻、联合进入、共同执行等集体动作，通常绑定到前一个到达/就位步骤。\n" +
+            "5. C3 sign=+1: 当前Agent是 watchAgent 时，绑定到“完成后发出 ReadySignal”的步骤；否则绑定到“开始前等待队友就绪”的步骤。\n" +
+            "6. C3 sign=-1: 绑定到最可能与队友竞争同一目标的步骤；若没有单独的中间目标步骤，就绑定到首个相关移动步骤。\n\n" +
+            "## 思考要求\n" +
+            "请先在 thought 中简要说明：动作顺序是什么；每一步在什么状态下算完成；每条约束为什么绑定到对应步骤。\n" +
+            "thought 要简洁、可追溯，不要空泛。\n\n" +
+            "## 输出格式\n" +
+            "只输出一个 JSON 对象，不要输出任何额外说明。格式如下：\n" +
+            "{\n" +
+            "  \"thought\": \"3-5句简短推理\",\n" +
+            "  \"steps\": [\n" +
+            "    {\"stepId\":\"step_1\",\"text\":\"...\",\"targetName\":\"...\",\"doneCond\":\"...\",\"constraintIds\":[\"...\"]}\n" +
+            "  ]\n" +
+            "}\n\n" +
+            "## 示例（同时包含 C2、C3 sign=+1、C3 sign=-1）\n" +
+            "desc: \"装载传感器后前往中控楼，全部到达后一起巡检\"\n" +
+            "约束语义:\n" +
+            "- c3_wait_beacon: C3 sign=+1，开始前需要等队友完成信标就绪\n" +
+            "- c3_entry_mutex: C3 sign=-1，进入中控楼途中不能和队友选择同一入口\n" +
+            "- c2_sync_inspect: C2，全部到达中控楼后才能一起巡检\n" +
+            "示例输出:\n" +
+            "{\n" +
+            "  \"thought\": \"动作顺序是先装载传感器，再前往中控楼，最后一起巡检。信标就绪约束前往中控楼前的开始条件，因此 C3 sign=+1 绑定到前往中控楼。入口互斥没有单独动作步骤，因此 C3 sign=-1 也绑定到前往中控楼。一起巡检前必须先同步到达，所以 C2 绑定到前往中控楼。\",\n" +
+            "  \"steps\": [\n" +
+            "    {\"stepId\":\"step_1\",\"text\":\"装载传感器\",\"targetName\":\"\",\"doneCond\":\"传感器装载完成\",\"constraintIds\":[]},\n" +
+            "    {\"stepId\":\"step_2\",\"text\":\"前往中控楼\",\"targetName\":\"中控楼\",\"doneCond\":\"到达中控楼\",\"constraintIds\":[\"c3_wait_beacon\",\"c3_entry_mutex\",\"c2_sync_inspect\"]},\n" +
+            "    {\"stepId\":\"step_3\",\"text\":\"一起巡检中控楼\",\"targetName\":\"中控楼\",\"doneCond\":\"巡检完成\",\"constraintIds\":[]}\n" +
+            "  ]\n" +
+            "}\n";
 
         string llmResult = null;
         yield return StartCoroutine(llm.SendRequest(
@@ -552,9 +547,28 @@ public class PlanningModule : MonoBehaviour
         }
         Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] LLM#4 原始回复: {llmResult}");
         PlanStep[] steps = null;
+        string stepThought = string.Empty;
         try
         {
-            steps = JsonConvert.DeserializeObject<PlanStep[]>(ExtractJson(llmResult));
+            string parsedJson = ExtractJson(llmResult);
+            if (!string.IsNullOrWhiteSpace(parsedJson) && parsedJson.TrimStart().StartsWith("{"))
+            {
+                LLM4StepGenResult result = JsonConvert.DeserializeObject<LLM4StepGenResult>(parsedJson);
+                stepThought = result?.thought ?? string.Empty;
+                steps = result?.steps;
+            }
+            else
+            {
+                // 兼容旧格式：LLM 直接返回步骤数组
+                steps = JsonConvert.DeserializeObject<PlanStep[]>(parsedJson);
+            }
+
+            if (!string.IsNullOrWhiteSpace(stepThought))
+                Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] LLM#4 Thought: {stepThought}");
+
+            if (steps == null)
+                throw new Exception("LLM#4 steps 解析结果为 null");
+
             Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] LLM#4 生成步骤: {string.Join(", ", steps.Select(s => s.stepId + ":" + s.text))}");
         }
         catch (Exception e)
@@ -571,6 +585,7 @@ public class PlanningModule : MonoBehaviour
             slotId = confirmedSlot.slotId,
             role   = confirmedSlot.role,
             desc   = confirmedSlot.desc,
+            thought = stepThought,
             steps  = steps,
             curIdx = 0
         };

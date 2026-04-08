@@ -39,10 +39,6 @@ public class ActionDecisionModule : MonoBehaviour
     /// </summary>
     private const int MaxIterations = 30;
 
-    // ─── 震荡检测状态 ─────────────────────────────────────────────
-    private bool _oscillationDetected  = false;
-    private int  _oscillationEscapeTtl = 0;
-
     // ─── nextActions 空重试计数 ───────────────────────────────────
     /// <summary>
     /// LLM 返回 isDone=false 但 nextActions 为空时的连续重试次数。
@@ -143,14 +139,10 @@ public class ActionDecisionModule : MonoBehaviour
             executedActionsSummary  = new List<string>(),
             iterationCount          = 0,
             isRollingMode           = true,
-            visitedNodeTabu         = new List<string>(),
-            tabuWindowSize          = 4,
         };
 
         replanCount = 0;
         _emptyActionRetries   = 0;
-        _oscillationDetected  = false;
-        _oscillationEscapeTtl = 0;
         SetStatus(ADMStatus.Idle);
         activeCoroutine = StartCoroutine(RunRollingLoop(step));
     }
@@ -312,7 +304,7 @@ public class ActionDecisionModule : MonoBehaviour
             // ── 5. 构建滚动规划提示词 ────────────────────────────────
             // maxWaypoints=1：每轮只给下一跳，避免 LLM 提前规划多步产生锚定
             List<string> suggestedWaypoints = ComputeTopoWaypointChain(step, maxWaypoints: 1);
-            string prompt = BuildRollingPrompt(step, whiteboardCtx, relativeMap, suggestedWaypoints, occupiedNodes);
+            string prompt = BuildRollingPrompt(step, whiteboardCtx, relativeMap, suggestedWaypoints, occupiedNodes, stepTargetWorldPos);
 
             // ── 6. 调用 LLM（锁持有中）──────────────────────────────
             string llmResult = null;
@@ -427,15 +419,6 @@ public class ActionDecisionModule : MonoBehaviour
             // ── 11. 更新执行历史，进入下一迭代 ──────────────────────
             UpdateHistory(planResult.nextActions);
 
-            if (!_oscillationDetected && DetectOscillation())
-            {
-                _oscillationDetected  = true;
-                _oscillationEscapeTtl = 3;
-                Debug.LogWarning($"[ADM] {agentProperties?.AgentID} 检测到 A-B-A-B 震荡，启动逃逸模式（{_oscillationEscapeTtl} 轮）");
-            }
-            if (_oscillationEscapeTtl > 0 && --_oscillationEscapeTtl == 0)
-                _oscillationDetected = false;
-
             // ── 11.5 辩论参与窗口 ──────────────────────────────────
             // 非 Critical 情况：action batch 自然结束后才参与，不打断当前 action
             // 每次最多 1 个 LLM 调用，不延误超过 1 次 rolling 迭代
@@ -459,7 +442,8 @@ public class ActionDecisionModule : MonoBehaviour
 
     private string BuildRollingPrompt(PlanStep step, string whiteboardCtx, string relativeMap,
                                        List<string> suggestedWaypoints = null,
-                                       List<string> occupiedNodes = null)
+                                       List<string> occupiedNodes = null,
+                                       Vector3? stepTargetWorldPos = null)
     {
         string historyBlock = ctx.executedActionsSummary != null && ctx.executedActionsSummary.Count > 0
             ? string.Join("\n", ctx.executedActionsSummary.ConvertAll(s => "  • " + s))
@@ -467,8 +451,23 @@ public class ActionDecisionModule : MonoBehaviour
 
         string constraintBlock = BuildConstraintSummary();
 
+        // 目标方向感知：让 LLM 知道目标在哪个方向、多远，而非只知道"未到达"
+        string targetSpatialHint = string.Empty;
+        if (!string.IsNullOrWhiteSpace(step.targetName) && stepTargetWorldPos.HasValue && agentState != null)
+        {
+            string dir = GetCompassDir8(agentState.Position, stepTargetWorldPos.Value);
+            int distM = Mathf.RoundToInt(Vector3.Distance(agentState.Position, stepTargetWorldPos.Value));
+            targetSpatialHint = $"（目标方向：{dir}，直线距离约 {distM}m）";
+        }
+
+        // thought 模板：带标签的结构化推理，强制 LLM 逐步思考
+        string thoughtGuide = ctx.iterationCount >= 3
+            ? "【情境】我在哪/要去哪/走了几步 → 【轨迹分析】历史中是否出现重复节点、整体是否在朝目标方向推进 → 【完成判断】三项核对结果 → 【选择理由】下一节点是否为历史外的新路径、方向是否朝目标"
+            : "【完成判断】三项核对结果 → 【下一步】选择意图及依据";
+
         return
-            "你是无人机战术执行规划器，为当前步骤滚动生成原子动作并判断是否完成。\n\n" +
+            "你是无人机战术执行规划器。每轮决策前，先理解自己的情境（我在哪、要去哪、走了多远、方向对不对），" +
+            "再基于历史行为评估当前路径是否有效，最后给出有明确依据的下一步动作。\n\n" +
 
             "## 步骤目标\n" +
             $"步骤：{step.text}\n" +
@@ -478,10 +477,12 @@ public class ActionDecisionModule : MonoBehaviour
             "## 已执行历史\n" +
             historyBlock + "\n\n" +
 
+            BuildSelfDiagnosisBlock() +
+
             "## 当前状态\n" +
             $"角色：{ctx.role} | 当前位置：{ctx.currentLocationName}\n" +
-            $"导航目标位置：{(string.IsNullOrWhiteSpace(step.targetName) ? "无" : step.targetName)}\n" +
-            $"当前位置是否已到达目标：{(string.IsNullOrWhiteSpace(step.targetName) || step.targetName == ctx.currentLocationName ? "是" : "否（仍需移动）")}\n\n" +
+            $"导航目标：{(string.IsNullOrWhiteSpace(step.targetName) ? "无" : step.targetName)}{targetSpatialHint}\n" +
+            $"当前位置是否已到达目标：{(string.IsNullOrWhiteSpace(step.targetName) || IsNearTarget(step.targetName, ctx.currentLocationName) ? "是" : "否（仍需移动）")}\n\n" +
 
             "## 周边地图（半径300m）\n" +
             relativeMap + "\n\n" +
@@ -491,12 +492,13 @@ public class ActionDecisionModule : MonoBehaviour
             "## 导航规则\n" +
             "地图仅覆盖当前位置300m内地物。\n" +
             "• 目标在范围内（标注\"在本地图范围内\"）：targetName 直接填目标名。\n" +
-            "• 目标超出范围（标注\"超出范围\"）：targetName 只能填地图内已列出的中间节点；" +
-                "参考 A* 下一跳或 ★ 航点，结合白板 occupied 自主选择，每轮只规划到下一个节点。\n" +
+            "• 目标超出范围（标注\"超出范围\"）：targetName 只能填地图内已列出的中间节点，每轮只规划到下一个节点。\n" +
+            "• 选择中间节点时，请按以下优先级推理：\n" +
+            "  ① A* 建议节点可用且方向朝目标 → 首选\n" +
+            "  ② 历史中未出现过、方向朝目标的节点 → 次选\n" +
+            "  ③ 若以上都无，选方向最接近目标的节点，并在 thought 中说明原因\n" +
+            "  每次选择必须有方向依据，不要随机选。\n" +
             "• targetName 禁止编造或使用范围外地名。\n\n" +
-
-            BuildTabuBlock() +
-            BuildEscapeBlock() +
 
             "## 白板状态（组内协同）\n" +
             (string.IsNullOrWhiteSpace(whiteboardCtx) ? "（无白板数据）" : whiteboardCtx) + "\n\n" +
@@ -521,14 +523,14 @@ public class ActionDecisionModule : MonoBehaviour
 
             "## 输出（JSON 对象，非数组）\n" +
             "{\n" +
-            "  \"thought\": \"先判断步骤是否完成：对照上方三项逐一分析，再说明下一步意图\",\n" +
+            $"  \"thought\": \"{thoughtGuide}\",\n" +
             "  \"isDone\": true/false,\n" +
             "  \"doneReason\": \"完成或未完成的具体原因（引用当前位置/历史/条件对比）\",\n" +
             "  \"nextActions\": [\n" +
             "    {\"actionId\":\"aa_1\",\"type\":\"MoveTo\",\"targetName\":\"地点名\",\"targetAgentId\":\"\",\"duration\":0,\"actionParams\":\"\",\"spatialHint\":\"\"}\n" +
             "  ]\n" +
             "}\n" +
-            "1. thought 必填，必须包含完成判断推理（不影响执行逻辑）。\n" +
+            "1. thought 必填，按上方标签格式逐步推理（不影响执行逻辑）。\n" +
             "2. isDone=true 时 nextActions 填 []；isDone=false 时必须提供 1-3 个动作。\n" +
             "3. 每个动作必须包含全部字段：actionId / type / targetName / targetAgentId / duration / actionParams / spatialHint。\n" +
             "4. 协同约束非空时，生成的动作必须遵守约束要求（如等待信号、保持间距等）。\n";
@@ -576,21 +578,40 @@ public class ActionDecisionModule : MonoBehaviour
     }
 
     // ─────────────────────────────────────────────────────────────
-    // 震荡检测 & Tabu helpers
+    // 导航自我诊断 & 到达判定
     // ─────────────────────────────────────────────────────────────
 
-    private bool DetectOscillation()
+    /// <summary>
+    /// 当迭代次数 >= 3 时，向 LLM 提供情境问题，引导它主动诊断循环并决策，
+    /// 而不是通过硬性规则（tabu）约束选择。
+    /// </summary>
+    private string BuildSelfDiagnosisBlock()
     {
-        var t = ctx?.visitedNodeTabu;
-        if (t == null || t.Count < 4) return false;
-        int n = t.Count;
-        return t[n-4] == t[n-2] && t[n-3] == t[n-1] && t[n-4] != t[n-3];
+        if (ctx == null || ctx.iterationCount < 3) return string.Empty;
+        return "## 导航自我诊断（请在 thought 中完成）\n" +
+               $"你已执行了 {ctx.iterationCount} 轮迭代，当前仍未到达目标。请在 thought 中主动分析：\n" +
+               "- 回顾执行历史，移动轨迹是否出现了重复节点或循环模式？\n" +
+               "- 当前位置整体上是否在向目标方向靠近，还是在原地打转？\n" +
+               "- 下一步应往哪个方向移动？历史中有没有未尝试过的节点或路径？\n" +
+               "请基于分析结果给出 nextActions，而非重复之前的选择。\n\n";
+    }
+
+    /// <summary>
+    /// 模糊到达判定：currentLoc 等于或包含 targetName 时视为已到达。
+    /// 解决 "近艺术中心" != "艺术中心" 导致永远判定未到达的问题。
+    /// </summary>
+    private static bool IsNearTarget(string targetName, string currentLoc)
+    {
+        if (string.IsNullOrWhiteSpace(targetName)) return true;
+        if (targetName == currentLoc) return true;
+        if (!string.IsNullOrWhiteSpace(currentLoc) && currentLoc.Contains(targetName)) return true;
+        return false;
     }
 
     private List<string> _topoWaypointCache       = new List<string>();
     private Vector3      _topoWaypointCachePos     = Vector3.positiveInfinity;
     private string       _topoWaypointCacheTarget  = string.Empty;
-    private const float  TopoWaypointCacheRange    = 50f;
+    private const float  TopoWaypointCacheRange    = 20f;
 
     private List<string> ComputeTopoWaypointChain(PlanStep step, int maxWaypoints = 3)
     {
@@ -631,25 +652,6 @@ public class ActionDecisionModule : MonoBehaviour
         return _topoWaypointCache;
     }
 
-    private string BuildTabuBlock()
-    {
-        if (ctx?.visitedNodeTabu == null || ctx.visitedNodeTabu.Count == 0) return string.Empty;
-        return "## 导航禁忌（防震荡）\n" +
-               $"禁止节点（近期已访问，本轮不得选作 targetName）：{string.Join(", ", ctx.visitedNodeTabu)}\n\n";
-    }
-
-    private string BuildEscapeBlock()
-    {
-        if (!_oscillationDetected) return string.Empty;
-        var t = ctx?.visitedNodeTabu;
-        string pair = (t != null && t.Count >= 2)
-            ? $"[{t[t.Count-2]}] ↔ [{t[t.Count-1]}]"
-            : "未知节点对";
-        return "## ⚠ 震荡逃逸模式（最高优先级）\n" +
-               $"检测到在 {pair} 间循环，剩余逃逸轮次：{_oscillationEscapeTtl}。\n" +
-               "禁忌列表节点本轮绝对不可选；必须选一个未曾访问的节点，优先按 A* 下一跳未访问节点选取，并在 thought 中写明逃逸节点。\n\n";
-    }
-
     private string BuildTopoWaypointBlock(List<string> waypoints, List<string> occupiedNodes = null)
     {
         if (waypoints == null || waypoints.Count == 0) return string.Empty;
@@ -668,7 +670,7 @@ public class ActionDecisionModule : MonoBehaviour
 
         return "## A* 下一跳参考（静态地图，仅供参考）\n" +
                $"  {annotated}\n" +
-               "有冲突时以白板 occupied 为准；节点被占用或在禁忌列表中时，从周边地图选取替代节点。\n\n";
+               "请在 thought 中评估此建议：该节点是否曾在历史中频繁出现？移动至此是否更接近目标方向？若不合理，请从地图中选取更优节点并说明理由。\n\n";
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -1154,13 +1156,6 @@ public class ActionDecisionModule : MonoBehaviour
                 line += $" - {a.actionParams}";
             ctx.executedActionsSummary.Add(line);
 
-            if (a.type == AtomicActionType.MoveTo && !string.IsNullOrWhiteSpace(a.targetName))
-            {
-                ctx.visitedNodeTabu.Remove(a.targetName);
-                ctx.visitedNodeTabu.Add(a.targetName);
-                while (ctx.visitedNodeTabu.Count > ctx.tabuWindowSize)
-                    ctx.visitedNodeTabu.RemoveAt(0);
-            }
         }
     }
 

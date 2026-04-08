@@ -92,11 +92,6 @@ public class ActionExecutionContext
     /// <summary>当前滚动迭代次数（防死锁计数）。</summary>
     public int iterationCount;
 
-    /// <summary>最近访问的命名节点（Tabu List），防震荡用。</summary>
-    public List<string> visitedNodeTabu;
-    /// <summary>Tabu 窗口大小（最近 N 个 MoveTo 节点禁止重访）。</summary>
-    public int tabuWindowSize;
-
     /// <summary>
     /// 是否处于滚动模式。
     /// true = CompleteCurrentAction 批次完成时设 BatchDone，由 RunRollingLoop 处理下一轮；

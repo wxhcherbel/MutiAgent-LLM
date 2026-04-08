@@ -124,6 +124,21 @@ public class PlanStep
 }
 
 /// <summary>
+/// LLM#4 的步骤拆解输出。
+/// thought 仅用于日志追踪，不参与后续执行判定；
+/// steps 才是实际执行的步骤数组。
+/// </summary>
+[Serializable]
+public class LLM4StepGenResult
+{
+    /// <summary>LLM#4 对步骤拆解与约束绑定的简短推理。</summary>
+    public string thought;
+
+    /// <summary>最终输出的步骤数组。</summary>
+    public PlanStep[] steps;
+}
+
+/// <summary>
 /// 智能体本地持有的完整计划实例。
 /// </summary>
 [Serializable]
@@ -140,6 +155,9 @@ public class AgentPlan
 
     /// <summary>槽位的原始职责描述。</summary>
     public string desc;
+
+    /// <summary>LLM#4 的步骤拆解推理，仅用于追踪和调试。</summary>
+    public string thought;
 
     /// <summary>该计划拆解出的全部步骤。</summary>
     public PlanStep[] steps;

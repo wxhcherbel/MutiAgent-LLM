@@ -83,16 +83,19 @@ public static class MapTopologySerializer
             sb.AppendLine("────────────────────────────────────────────");
         }
 
-        // ── 5. 统计每个要素 footprint 内的动态小节点（拥挤标注）─────
-        // 同时收集所有动态节点，用于后续 Other 区域归并
+        // ── 5. 统计每个要素 footprint 内的小节点（拥挤标注）────────
+        // 同时收集所有节点，用于后续 Other 区域归并
         const float NEARBY_BUFFER      = 5f;   // footprint 半径额外 buffer（m）
         const float OTHER_MERGE_RADIUS = 50f;  // Other 节点寻找最近要素的最大距离（m）
         const int   PEDESTRIAN_THRESH  = 3;    // 行人密集阈值
         const int   VEHICLE_THRESH     = 2;    // 车辆密集阈值
+        const int   TREE_THRESH        = 5;    // 树木密集阈值
+        const int   RESOURCE_THRESH    = 1;    // 资源点出现阈值
+        const int   OBSTACLE_THRESH    = 1;    // 临时障碍出现阈值
 
-        // 收集局部地图范围内全部动态节点
-        var allDynamicNodes = SmallNodeRegistry.QueryNodes(agentWorldPos, radius,
-            includeStatic: false, includeDynamic: true);
+        // 收集局部地图范围内全部小节点（含静态与动态）
+        var allNearbyNodes = SmallNodeRegistry.QueryNodes(agentWorldPos, radius,
+            includeStatic: true, includeDynamic: true);
 
         // 记录已被某个要素 footprint 覆盖的节点 ID
         var coveredNodeIds = new HashSet<string>();
@@ -102,32 +105,38 @@ public static class MapTopologySerializer
         foreach (var (p, _) in nearby)
         {
             float queryR = Mathf.Max(p.footprintRadius, 10f) + NEARBY_BUFFER;
-            int pedestrians = 0, vehicles = 0;
-            foreach (var n in allDynamicNodes)
+            int pedestrians = 0, vehicles = 0, trees = 0, resources = 0, obstacles = 0;
+            foreach (var n in allNearbyNodes)
             {
                 float d2 = (n.WorldPosition.x - p.centroidWorld.x) * (n.WorldPosition.x - p.centroidWorld.x)
                          + (n.WorldPosition.z - p.centroidWorld.z) * (n.WorldPosition.z - p.centroidWorld.z);
                 if (d2 <= queryR * queryR)
                 {
                     coveredNodeIds.Add(n.NodeId);
-                    if (n.NodeType == SmallNodeType.Pedestrian) pedestrians++;
-                    else if (n.NodeType == SmallNodeType.Vehicle) vehicles++;
+                    if      (n.NodeType == SmallNodeType.Pedestrian)        pedestrians++;
+                    else if (n.NodeType == SmallNodeType.Vehicle)           vehicles++;
+                    else if (n.NodeType == SmallNodeType.Tree)              trees++;
+                    else if (n.NodeType == SmallNodeType.ResourcePoint)     resources++;
+                    else if (n.NodeType == SmallNodeType.TemporaryObstacle) obstacles++;
                 }
             }
 
             string tag = "";
-            if (pedestrians >= PEDESTRIAN_THRESH && vehicles >= VEHICLE_THRESH) tag = "（人车密集）";
-            else if (pedestrians >= PEDESTRIAN_THRESH)                           tag = "（行人多）";
-            else if (vehicles >= VEHICLE_THRESH)                                 tag = "（车辆多）";
+            if (pedestrians >= PEDESTRIAN_THRESH && vehicles >= VEHICLE_THRESH) tag += "（人车密集）";
+            else if (pedestrians >= PEDESTRIAN_THRESH)                           tag += "（行人多）";
+            else if (vehicles >= VEHICLE_THRESH)                                 tag += "（车辆多）";
+            if (trees     >= TREE_THRESH)     tag += "（树木密集）";
+            if (resources >= RESOURCE_THRESH) tag += "（有资源点）";
+            if (obstacles >= OBSTACLE_THRESH) tag += "（有临时障碍）";
             if (tag.Length > 0) congestionTags[p.uid] = tag;
         }
 
         // Other 区域节点最近邻归并：找到未覆盖节点，归入最近要素的外围计数
-        var outerCounts = new Dictionary<string, (int peds, int vehs)>();
-        foreach (var n in allDynamicNodes)
+        var outerCounts = new Dictionary<string, (int peds, int vehs, int trees, int resources, int obstacles)>();
+        foreach (var n in allNearbyNodes)
         {
             if (coveredNodeIds.Contains(n.NodeId)) continue;
-            if (n.NodeType != SmallNodeType.Pedestrian && n.NodeType != SmallNodeType.Vehicle) continue;
+            if (n.NodeType == SmallNodeType.Unknown || n.NodeType == SmallNodeType.Agent || n.NodeType == SmallNodeType.Custom) continue;
 
             float bestDist2 = OTHER_MERGE_RADIUS * OTHER_MERGE_RADIUS;
             string bestUid  = null;
@@ -140,9 +149,11 @@ public static class MapTopologySerializer
             if (bestUid == null) continue;
 
             outerCounts.TryGetValue(bestUid, out var cur);
-            outerCounts[bestUid] = n.NodeType == SmallNodeType.Pedestrian
-                ? (cur.peds + 1, cur.vehs)
-                : (cur.peds, cur.vehs + 1);
+            if      (n.NodeType == SmallNodeType.Pedestrian)        outerCounts[bestUid] = (cur.peds + 1, cur.vehs, cur.trees, cur.resources, cur.obstacles);
+            else if (n.NodeType == SmallNodeType.Vehicle)           outerCounts[bestUid] = (cur.peds, cur.vehs + 1, cur.trees, cur.resources, cur.obstacles);
+            else if (n.NodeType == SmallNodeType.Tree)              outerCounts[bestUid] = (cur.peds, cur.vehs, cur.trees + 1, cur.resources, cur.obstacles);
+            else if (n.NodeType == SmallNodeType.ResourcePoint)     outerCounts[bestUid] = (cur.peds, cur.vehs, cur.trees, cur.resources + 1, cur.obstacles);
+            else if (n.NodeType == SmallNodeType.TemporaryObstacle) outerCounts[bestUid] = (cur.peds, cur.vehs, cur.trees, cur.resources, cur.obstacles + 1);
         }
 
         // ── 6. 要素行 ─────────────────────────────────────────────────
@@ -171,8 +182,11 @@ public static class MapTopologySerializer
             if (outerCounts.TryGetValue(p.uid, out var oc))
             {
                 var outerParts = new List<string>();
-                if (oc.peds > 0) outerParts.Add($"行人{oc.peds}");
-                if (oc.vehs > 0) outerParts.Add($"车辆{oc.vehs}");
+                if (oc.peds      > 0) outerParts.Add($"行人{oc.peds}");
+                if (oc.vehs      > 0) outerParts.Add($"车辆{oc.vehs}");
+                if (oc.trees     > 0) outerParts.Add($"树木{oc.trees}");
+                if (oc.resources > 0) outerParts.Add($"资源点{oc.resources}");
+                if (oc.obstacles > 0) outerParts.Add($"障碍{oc.obstacles}");
                 if (outerParts.Count > 0)
                     congestion += $"（外围+{string.Join("/", outerParts)}）";
             }

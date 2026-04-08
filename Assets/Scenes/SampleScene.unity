@@ -37574,7 +37574,7 @@ MonoBehaviour:
   fallbackRegionLengthM: 120
   rules:
   - nodeType: 1
-    count: 150
+    count: 300
     spawnInFeatureKinds: 0807
     cellJitter01: 0.75
     minSpacingM: 1
@@ -37589,7 +37589,7 @@ MonoBehaviour:
     moveSpeed: 1.6
     retargetInterval: 2
   - nodeType: 2
-    count: 80
+    count: 200
     spawnInFeatureKinds: 03070109
     cellJitter01: 0.75
     minSpacingM: 1
@@ -37604,7 +37604,7 @@ MonoBehaviour:
     moveSpeed: 1.6
     retargetInterval: 2
   - nodeType: 4
-    count: 150
+    count: 300
     spawnInFeatureKinds: 070809
     cellJitter01: 0.75
     minSpacingM: 1
