@@ -140,23 +140,23 @@ public class PlanningModule : MonoBehaviour
             "【C3 行为耦合】两种子类型,只在存在明确的等待/互斥关系时才生成,纯并行不需要 C3:\n" +
             "  sign=+1(单向前置等待):一机必须等另一机到位/就绪后才允许开始行动(非对称依赖)。\n" +
             "    watchAgent=被等待的 agentId(不知道时填 '')  reactTo='ReadySignal'\n" +
-            "  sign=-1(动态互斥)：满足以下全部条件时生成：\n" +
+            "  sign=-1(动态互斥):满足以下全部条件时生成:\n" +
             "    ① 存在多个 agent 和一个同类目标集合（如多个检查点、路径节点、共享设施等）\n" +
             "    ② 每个具体目标同一时刻只允许一个 agent 占用/前往\n" +
-            "    ③ 具体哪个 agent 去哪个目标，规划时无法静态确定（若已确定则用 C1）\n" +
-            "    不需要提前指定目标名，由 ADM 在运行时通过白板读取已占目标后动态选择未占目标。\n" +
+            "    ③ 具体哪个 agent 去哪个目标,规划时无法静态确定（若已确定则用 C1）\n" +
+            "    不需要提前指定目标名,由 ADM 在运行时通过白板读取已占目标后动态选择未占目标。\n" +
             "    参与互斥的成员由绑定到同一 constraintId 的槽位共同决定。\n" +
             "    watchAgent 保持空字符串 ''  reactTo='IntentAnnounce'\n" +
-            "  【重要】C3-1 是组内协同机制：参与互斥的 agent 仍属同一协作团队，relType=Cooperation；\n" +
-            "         互斥/避让行为不代表对抗，不应影响 relType 的判断。\n" +
+            "  【重要】C3-1 是组内协同机制:参与互斥的 agent 仍属同一协作团队,relType=Cooperation；\n" +
+            "         互斥/避让行为不代表对抗,不应影响 relType 的判断。\n" +
             "  channel=whiteboard\n\n" +
             GetConciseTextPromptText() + "\n" +
             "─── 输出前检查（必做）───\n" +
-            "逐类型扫描任务描述：\n" +
-            "· C1：有没有「谁负责什么目标/区域」？\n" +
-            "· C2：有没有「都完成后一起/同步」？\n" +
-            "· C3-1：是否存在目标集合、且每个目标只允许一人占用、且具体分配规划时不确定？→ sign=-1\n" +
-            "· C3+1：是否有一机必须等另一机发出就绪信号后才能行动（单向前置依赖）？→ sign=+1\n" +
+            "逐类型扫描任务描述:\n" +
+            "· C1:有没有「谁负责什么目标/区域」？\n" +
+            "· C2:有没有「都完成后一起/同步」？\n" +
+            "· C3-1:是否存在目标集合、且每个目标只允许一人占用、且具体分配规划时不确定？→ sign=-1\n" +
+            "· C3+1:是否有一机必须等另一机发出就绪信号后才能行动（单向前置依赖）？→ sign=+1\n" +
             "确认无遗漏后再输出 JSON。\n\n" +
 
             "─── 输出要求 ───\n" +
@@ -250,9 +250,9 @@ public class PlanningModule : MonoBehaviour
             "3. desc 只写该成员自己的行动,须覆盖完整分工,不要漏动作。\n" +
             "4. 相同 role 的多个槽,desc 也要体现不同分工。\n" +
             "4b. desc 禁止出现任务描述中未明确命名的目标点/对象。\n" +
-            "    若某目标由运行时动态决定（C3-1 约束涉及的目标），不要在 desc 中提及或命名该中间目标，\n" +
-            "    反例（禁止）：「飞往检查点A，再前往艺术中心」（任务未命名「检查点A」）\n" +
-            "    正例（允许）：「飞往艺术中心，到达后参与巡逻」\n" +
+            "    若某目标由运行时动态决定（C3-1 约束涉及的目标）,不要在 desc 中提及或命名该中间目标,\n" +
+            "    反例（禁止）:「飞往检查点A,再前往艺术中心」（任务未命名「检查点A」）\n" +
+            "    正例（允许）:「飞往艺术中心,到达后参与巡逻」\n" +
             "5. doneCond 没有时填 \" \";constraintIds 没有就填 []。\n\n" +
             "【Constraints 回写规则】\n" +
             "6. 必须保留输入中的每一条 constraintId,不新增,不删除。\n" +
@@ -480,58 +480,57 @@ public class PlanningModule : MonoBehaviour
         }
         string constraintsJson = JsonConvert.SerializeObject(slotConstraints);
 
-        string prompt =
-            "你是无人机任务拆解器。你的任务是：在不改变计划原意的前提下，把当前槽位职责拆成可执行步骤，并把约束绑定到最合适的已有步骤上。\n\n" +
-            "## 输入\n" +
-            $"计划: {confirmedSlot.desc}\n" +
-            $"当前AgentID: {props?.AgentID}\n" +
-            $"角色: {confirmedSlot.role}\n" +
-            $"可用约束列表(StructuredConstraint JSON): {constraintsJson}\n" +
-            $"完成条件: {confirmedSlot.doneCond}\n" +
-            $"当前位置: {pos}, 电量: {battery:F0}%\n\n" +
-            "## 步骤拆解要求\n" +
-            "1. 只拆解 desc 中明确出现的动作，禁止补充推断步骤。\n" +
-            "2. text 只能写意图动作，如移动、巡逻、侦察、等待等。\n" +
-            "3. desc 只含一个动作时，输出 1 步。\n" +
-            "4. doneCond 没有时填 \" \"。\n" +
-            "5. stepId 格式固定为 step_1、step_2 ...。\n" +
-            "6. targetName 从 text 中提取该步骤唯一的空间目标名（地名/区域名）；无空间目标时填 \"\"；方位修饰词（附近、东边等）不提取。\n" +
-            "7. 每步 text 采用“主谓宾”式表达，只保留动作、目标和必要参数。\n" +
-            "8. 每步恰好一个主要动作；若 desc 中有多个依次到达的地点，就拆成多步，每步一个移动目标。\n" +
-            "9. constraintIds 没有就填 []。\n\n" +
-            "## 约束绑定要求\n" +
-            "1. 约束只能绑定到已有步骤，不能因为约束额外创造“等待”“检查点”“同步”“占位”等新步骤。\n" +
-            "2. 如果约束涉及的中间目标没有在 desc 中单独出现，就把约束绑定到最相关的已有步骤。\n" +
-            "3. 同一个步骤可以绑定多条约束，但同一条约束不要重复绑定到多个步骤。\n" +
-            "4. C2: 绑定到“本步完成后需要等待其他成员同步完成，才能进入下一步”的步骤。若下一步是一起巡逻、联合进入、共同执行等集体动作，通常绑定到前一个到达/就位步骤。\n" +
-            "5. C3 sign=+1: 当前Agent是 watchAgent 时，绑定到“完成后发出 ReadySignal”的步骤；否则绑定到“开始前等待队友就绪”的步骤。\n" +
-            "6. C3 sign=-1: 绑定到最可能与队友竞争同一目标的步骤；若没有单独的中间目标步骤，就绑定到首个相关移动步骤。\n\n" +
-            "## 思考要求\n" +
-            "请先在 thought 中简要说明：动作顺序是什么；每一步在什么状态下算完成；每条约束为什么绑定到对应步骤。\n" +
-            "thought 要简洁、可追溯，不要空泛。\n\n" +
-            "## 输出格式\n" +
-            "只输出一个 JSON 对象，不要输出任何额外说明。格式如下：\n" +
-            "{\n" +
-            "  \"thought\": \"3-5句简短推理\",\n" +
-            "  \"steps\": [\n" +
-            "    {\"stepId\":\"step_1\",\"text\":\"...\",\"targetName\":\"...\",\"doneCond\":\"...\",\"constraintIds\":[\"...\"]}\n" +
-            "  ]\n" +
-            "}\n\n" +
-            "## 示例（同时包含 C2、C3 sign=+1、C3 sign=-1）\n" +
-            "desc: \"装载传感器后前往中控楼，全部到达后一起巡检\"\n" +
-            "约束语义:\n" +
-            "- c3_wait_beacon: C3 sign=+1，开始前需要等队友完成信标就绪\n" +
-            "- c3_entry_mutex: C3 sign=-1，进入中控楼途中不能和队友选择同一入口\n" +
-            "- c2_sync_inspect: C2，全部到达中控楼后才能一起巡检\n" +
-            "示例输出:\n" +
-            "{\n" +
-            "  \"thought\": \"动作顺序是先装载传感器，再前往中控楼，最后一起巡检。信标就绪约束前往中控楼前的开始条件，因此 C3 sign=+1 绑定到前往中控楼。入口互斥没有单独动作步骤，因此 C3 sign=-1 也绑定到前往中控楼。一起巡检前必须先同步到达，所以 C2 绑定到前往中控楼。\",\n" +
-            "  \"steps\": [\n" +
-            "    {\"stepId\":\"step_1\",\"text\":\"装载传感器\",\"targetName\":\"\",\"doneCond\":\"传感器装载完成\",\"constraintIds\":[]},\n" +
-            "    {\"stepId\":\"step_2\",\"text\":\"前往中控楼\",\"targetName\":\"中控楼\",\"doneCond\":\"到达中控楼\",\"constraintIds\":[\"c3_wait_beacon\",\"c3_entry_mutex\",\"c2_sync_inspect\"]},\n" +
-            "    {\"stepId\":\"step_3\",\"text\":\"一起巡检中控楼\",\"targetName\":\"中控楼\",\"doneCond\":\"巡检完成\",\"constraintIds\":[]}\n" +
-            "  ]\n" +
-            "}\n";
+        string prompt = 
+        "你是无人机任务规划中枢。请在不改变计划原意的前提下,将整体任务拆分为具体的【执行步骤】,并精准挂载【约束条件】。\n\n" +
+        "## 输入上下文\n" +
+        $"计划(desc): {confirmedSlot.desc}\n" +
+        $"当前AgentID: {props?.AgentID} | 角色: {confirmedSlot.role}\n" +
+        $"完成条件: {confirmedSlot.doneCond}\n" +
+        $"无人机状态: [位置: {pos}, 电量: {battery:F0}%]\n" +
+        $"待分配约束列表: {constraintsJson}\n\n" +
+
+        "## 任务一:步骤拆分与提取标准（正向定义）\n" +
+        "1. 什么是【完整的一步】:\n" +
+        "   - 一个步骤必须包含核心动作以及它的全部上下文描述（如路线、起点、执行方式）。动作及其上下文修饰语是一个不可分割的语义整体。\n" +
+        "   - 移动类任务:以【最终目的地】为划分标准。有几个不同的最终目的地,就拆成几步。\n" +
+        "   - 原地任务:无人机停留在同一空间位置执行的所有连续动作,打包合并为一步。\n" +
+        "2. 字段填充规范:\n" +
+        "   - stepId: 格式为 \"step_1\", \"step_2\"...\n" +
+        "   - text: 完整保留操作及其所有的前置/后置描述（例:“从北门进入厂区东边并开启扫描”）。\n" +
+        "   - targetName: 提取最核心的【主体建筑/区域实体名】（如:控制中心、厂区）。当遇到包含方位或附属结构的复合描述（如“厂区东边”、“大楼入口”）时,必须向上追溯,仅提取其依附的【绝对主实体名】（即提取为“厂区”、“大楼”）。若无明确主体实体一律填 \"\"。\n" +
+        "   - doneCond: 描述该步完成时的预期状态。无则填 \"\"。\n" +
+        "   - constraintIds: 填入分配到该步骤的约束ID数组,没有则填 []。\n\n" +
+
+        "## 任务二:约束条件分配标准\n" +
+        "分析约束的核心业务目的,将其匹配给最契合的那一个步骤:\n" +
+        "1. C2类 (同步完成):分配给需要“集体到位”或“共同集结”的到达步骤。\n" +
+        "2. C3类 (条件依赖 sign=+1):\n" +
+        "   - watchAgent:分配给负责“发出信号/状态”的操作步骤。\n" +
+        "   - 其他角色:分配给需要“等待信号才能开始”的前置步骤。\n" +
+        "3. C3类 (资源互斥 sign=-1):分配给多机共享同一路径或目标、容易产生空间冲突的【移动步骤】。\n\n" +
+
+        "## 输出要求\n" +
+        "仅输出合法的 JSON 对象。在 thought 字段中，直接陈述原始计划的拆分依据、实体地标的提取结果，以及各个约束的匹配理由。\n" +
+        "原始计划为：'等待安全信号后，从营地出发前往哨站附近拍照，然后穿过狭窄通道飞往能源站北侧，到达后等待全体小队汇合一起开启护盾'。\n" +
+        "{\n" +
+        "  \"thought\": \"原始计划包含2个不同目的地，因此拆解为2步。step_1提取绝对地标'哨站'，挂载C3(+1)依赖约束(等待前置信号)；step_2包含位移与原地连续操作，按规则合并为1步，遇到复合描述'能源站北侧'向上追溯提取主实体'能源站'，同时挂载C3(-1)互斥约束(狭窄通道防撞)和C2同步约束(等待集体汇合)。\",\n" +
+        "  \"steps\": [\n" +
+        "    {\n" +
+        "      \"stepId\": \"step_1\",\n" +
+        "      \"text\": \"等待安全信号后，从营地出发前往哨站附近拍照\",\n" +
+        "      \"targetName\": \"哨站\",\n" +
+        "      \"doneCond\": \"拍照完成\",\n" +
+        "      \"constraintIds\": [\"c3_wait_signal\"]\n" +
+        "    },\n" +
+        "    {\n" +
+        "      \"stepId\": \"step_2\",\n" +
+        "      \"text\": \"然后穿过狭窄通道飞往能源站北侧，到达后等待全体小队汇合一起开启护盾\",\n" +
+        "      \"targetName\": \"能源站\",\n" +
+        "      \"doneCond\": \"护盾开启\",\n" +
+        "      \"constraintIds\": [\"c3_channel_mutex\", \"c2_sync_shield\"]\n" +
+        "    }\n" +
+        "  ]\n" +
+        "}";
 
         string llmResult = null;
         yield return StartCoroutine(llm.SendRequest(
@@ -559,7 +558,7 @@ public class PlanningModule : MonoBehaviour
             }
             else
             {
-                // 兼容旧格式：LLM 直接返回步骤数组
+                // 兼容旧格式:LLM 直接返回步骤数组
                 steps = JsonConvert.DeserializeObject<PlanStep[]>(parsedJson);
             }
 
@@ -1207,7 +1206,7 @@ public class PlanningModule : MonoBehaviour
     {
         if (string.IsNullOrWhiteSpace(rawRef)) yield break;
 
-        string[] parts = Regex.Split(rawRef, @"[,，、;；|/]");
+        string[] parts = Regex.Split(rawRef, @"[,,、;；|/]");
         foreach (string part in parts)
         {
             string token = part?.Trim();
@@ -1283,9 +1282,9 @@ public class PlanningModule : MonoBehaviour
     }
 
     /// <summary>
-    /// 由 DebateResolved 触发：请求重规划当前任务。
-    /// 将当前状态重置为 Idle，让 IntelligentAgent 的下一次 CheckForDecision 重新发起规划。
-    /// reason 写入日志供追溯，不影响执行逻辑。
+    /// 由 DebateResolved 触发:请求重规划当前任务。
+    /// 将当前状态重置为 Idle,让 IntelligentAgent 的下一次 CheckForDecision 重新发起规划。
+    /// reason 写入日志供追溯,不影响执行逻辑。
     /// </summary>
     public void RequestReplan(string reason)
     {
@@ -1295,7 +1294,7 @@ public class PlanningModule : MonoBehaviour
             SetState(PlanningState.Idle);
             busy = false;
             agentPlan = null;
-            Debug.Log($"[PlanningModule] {props?.AgentID} 规划已重置，等待重新规划");
+            Debug.Log($"[PlanningModule] {props?.AgentID} 规划已重置,等待重新规划");
         }
     }
 

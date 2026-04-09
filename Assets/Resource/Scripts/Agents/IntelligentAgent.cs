@@ -131,7 +131,7 @@ public class IntelligentAgent : MonoBehaviour
         }
         
         // 模拟电量消耗（根据状态不同消耗速率不同）
-        float powerConsumption = CurrentState.Status == AgentStatus.ExecutingTask ? 0.02f : 0.005f;
+        float powerConsumption = CurrentState.Status == AgentStatus.ExecutingTask ? 0.8f : 0.3f;
         CurrentState.BatteryLevel -= Time.deltaTime * powerConsumption;
         
         if (CurrentState.BatteryLevel <= 0)
