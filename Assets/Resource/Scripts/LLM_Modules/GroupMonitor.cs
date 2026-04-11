@@ -34,6 +34,18 @@ public class GroupMonitor : MonoBehaviour
 
     private bool missionBroadcasted;
 
+    /// <summary>
+    /// 记忆模块（组长自身的，在 Initialize 时从同 GameObject 获取）。
+    /// 任务完成时调用 RememberMissionOutcome() 写入最终结果记忆。
+    /// </summary>
+    private MemoryModule _memoryModule;
+
+    /// <summary>
+    /// 反思模块（组长自身的，在 Initialize 时从同 GameObject 获取）。
+    /// 任务完成时触发 L1 反思（MissionCompleted）；可选启动 L3 阶段性抽象反思。
+    /// </summary>
+    private ReflectionModule _reflectionModule;
+
     // ─── 紧急事件状态 ─────────────────────────────────────────────────────────
 
     /// <summary>活跃的辩论协调器（key = incidentId）。</summary>
@@ -60,6 +72,10 @@ public class GroupMonitor : MonoBehaviour
         otherLeaderIds = otherLeaders ?? Array.Empty<string>();
         llmInterface   = llm;
         _commModule    = GetComponent<CommunicationModule>();
+
+        // 记忆和反思模块（组长侧，用于任务完成时的经验沉淀与反思触发）
+        _memoryModule    = GetComponent<MemoryModule>();
+        _reflectionModule = GetComponent<ReflectionModule>();
 
         // 向裁判层注册（使组长可收到 push 事件，轮询另由 PollRefereeLoop 保证）
         if (RefereeManager.Instance != null)
@@ -255,6 +271,36 @@ public class GroupMonitor : MonoBehaviour
             missionSuccess  = true,
         };
         BroadcastMissionComplete(payload);
+
+        // 将任务完成结果写入记忆（importance=0.94，确保跨任务检索时优先召回）
+        string missionOutcomeSummary = $"任务完成: {myGroup?.mission ?? "未知"}。{reason}";
+        _memoryModule?.RememberMissionOutcome(
+            missionId: groupId,
+            slotId: leaderId,
+            summary: missionOutcomeSummary,
+            success: true,
+            targetRef: myGroup?.mission ?? string.Empty);
+
+        // 触发 L1 任务完成反思（沉淀成功策略，供下一任务规划参考）
+        if (_reflectionModule != null)
+        {
+            StartCoroutine(_reflectionModule.TriggerReflection(
+                new ReflectionRequest
+                {
+                    reason = ReflectionTriggerReason.MissionCompleted,
+                    missionId = groupId,
+                    missionText = myGroup?.mission ?? string.Empty,
+                    slotId = leaderId,
+                    stepText = string.Empty,
+                    targetRef = string.Empty,
+                    summary = missionOutcomeSummary,
+                    maxSourceMemories = 8,
+                    force = false  // 受冷却时间约束，避免高频任务时连续触发反思
+                }));
+
+            // 可选触发 L3 阶段性抽象反思（由 enableL3AbstractReflection 控制）
+            StartCoroutine(_reflectionModule.TriggerL3Reflection(null));
+        }
     }
 
     /// <summary>

@@ -58,6 +58,20 @@ public class ActionDecisionModule : MonoBehaviour
     /// </summary>
     private DebateParticipant _debateParticipant;
 
+    // ─── 记忆与反思模块 ───────────────────────────────────────────
+    /// <summary>
+    /// 记忆模块（同 GameObject），负责存储动作执行记录并为 LLM 提供历史上下文。
+    /// BuildRollingPrompt 调用 BuildActionContext() 注入记忆块；
+    /// UpdateHistory 调用 RememberActionExecution() 记录每批次动作结果。
+    /// </summary>
+    private MemoryModule _memoryModule;
+
+    /// <summary>
+    /// 反思模块（同 GameObject），在动作批次完成或失败后接收通知。
+    /// 连续失败时触发 L1 反思，感知到重要事件时触发 ImportantObservation 反思。
+    /// </summary>
+    private ReflectionModule _reflectionModule;
+
     // ─────────────────────────────────────────────────────────────
     // Unity 生命周期
     // ─────────────────────────────────────────────────────────────
@@ -75,6 +89,10 @@ public class ActionDecisionModule : MonoBehaviour
             agentProperties = agent.Properties;
             agentState = agent.CurrentState;
         }
+
+        // 初始化记忆与反思模块（同 GameObject，失败时降级为无记忆模式）
+        _memoryModule = GetComponent<MemoryModule>();
+        _reflectionModule = GetComponent<ReflectionModule>();
 
         // 初始化个体辩论参与模块，注入所需依赖和回调
         _debateParticipant = new DebateParticipant(
@@ -127,6 +145,7 @@ public class ActionDecisionModule : MonoBehaviour
         ctx = new ActionExecutionContext
         {
             msnId                   = planningModule?.GetCurrentMissionId() ?? string.Empty,
+            slotId                  = planningModule?.GetCurrentSlotId() ?? string.Empty,
             stepId                  = step.stepId,
             stepText                = step.text,
             stepConstraints         = stepConstraints,
@@ -369,6 +388,24 @@ public class ActionDecisionModule : MonoBehaviour
                 // 等待 C2 同步（若有 syncWith）
                 yield return StartCoroutine(WaitForC2Sync());
 
+                // 步骤完成：记录进展记忆（供下一任务规划阶段参考）
+                _memoryModule?.RememberProgress(
+                    missionId: ctx.msnId,
+                    slotId: ctx.stepId,
+                    stepLabel: step.text,
+                    summary: $"步骤完成: {step.text}。{planResult.doneReason}",
+                    targetRef: step.targetName);
+
+                // 重置连续失败计数（步骤成功视为清算点）
+                _reflectionModule?.NotifyActionOutcome(
+                    missionId: ctx.msnId,
+                    missionText: ctx.stepText,
+                    slotId: ctx.slotId,
+                    stepText: step.text,
+                    targetRef: step.targetName,
+                    success: true,
+                    summary: planResult.doneReason);
+
                 planningModule?.CompleteCurrentStep();
                 SetStatus(ADMStatus.Done);
                 if (agentState != null) agentState.Status = AgentStatus.Idle;
@@ -452,18 +489,44 @@ public class ActionDecisionModule : MonoBehaviour
         string constraintBlock = BuildConstraintSummary();
 
         // 目标方向感知：让 LLM 知道目标在哪个方向、多远，而非只知道"未到达"
+        bool isAtTarget = IsNearTarget(step.targetName, ctx.currentLocationName);
         string targetSpatialHint = string.Empty;
-        if (!string.IsNullOrWhiteSpace(step.targetName) && stepTargetWorldPos.HasValue && agentState != null)
+        if (!string.IsNullOrWhiteSpace(step.targetName) && agentState != null)
         {
-            string dir = GetCompassDir8(agentState.Position, stepTargetWorldPos.Value);
-            int distM = Mathf.RoundToInt(Vector3.Distance(agentState.Position, stepTargetWorldPos.Value));
-            targetSpatialHint = $"（目标方向：{dir}，直线距离约 {distM}m）";
+            if (isAtTarget)
+            {
+                targetSpatialHint = "（已在目标附近）";
+            }
+            else if (stepTargetWorldPos.HasValue)
+            {
+                string dir = GetCompassDir8(agentState.Position, stepTargetWorldPos.Value);
+                int distM = Mathf.RoundToInt(Vector3.Distance(agentState.Position, stepTargetWorldPos.Value));
+                targetSpatialHint = $"（目标方向：{dir}，直线距离约 {distM}m）";
+            }
         }
 
         // thought 模板：带标签的结构化推理，强制 LLM 逐步思考
         string thoughtGuide = ctx.iterationCount >= 3
             ? "【情境】我在哪/要去哪/走了几步 → 【轨迹分析】历史中是否出现重复节点、整体是否在朝目标方向推进 → 【完成判断】三项核对结果 → 【选择理由】下一节点是否为历史外的新路径、方向是否朝目标"
             : "【完成判断】三项核对结果 → 【下一步】选择意图及依据";
+
+        // 从 MemoryModule 检索当前步骤相关的历史经验和反思洞察
+        // 失败时降级为空字符串（不影响决策流程，只是少了历史参考）
+        string memoryContext = string.Empty;
+        if (_memoryModule != null)
+        {
+            memoryContext = _memoryModule.BuildActionContext(new ActionMemoryContextRequest
+            {
+                missionText = ctx.stepText,
+                missionId = ctx.msnId,
+                slotId = ctx.slotId,
+                stepText = step.text,
+                targetRef = step.targetName,
+                stepIntentSummary = step.text,
+                maxMemories = 3,
+                maxInsights = 2
+            });
+        }
 
         return
             "你是无人机战术执行规划器。每轮决策前，先理解自己的情境（我在哪、要去哪、走了多远、方向对不对），" +
@@ -474,10 +537,13 @@ public class ActionDecisionModule : MonoBehaviour
             $"导航目标：{(string.IsNullOrWhiteSpace(step.targetName) ? "无" : step.targetName)}\n" +
             $"完成条件：{(string.IsNullOrWhiteSpace(step.doneCond) ? "未指定" : step.doneCond)}\n\n" +
 
+            "## 历史经验与反思规则\n" +
+            (string.IsNullOrWhiteSpace(memoryContext) ? "（首次执行，暂无历史经验）" : memoryContext) + "\n\n" +
+
             "## 已执行历史\n" +
             historyBlock + "\n\n" +
 
-            BuildSelfDiagnosisBlock() +
+            BuildSelfDiagnosisBlock(isAtTarget) +
 
             "## 当前状态\n" +
             $"角色：{ctx.role} | 当前位置：{ctx.currentLocationName}\n" +
@@ -498,7 +564,8 @@ public class ActionDecisionModule : MonoBehaviour
             "  ② 历史中未出现过、方向朝目标的节点 → 次选\n" +
             "  ③ 若以上都无，选方向最接近目标的节点，并在 thought 中说明原因\n" +
             "  每次选择必须有方向依据，不要随机选。\n" +
-            "• targetName 禁止编造或使用范围外地名。\n\n" +
+            "• targetName 禁止编造或使用范围外地名。\n" +
+            "• 当\"已到达目标：是\"时，不要再 MoveTo 同一目标，应立即执行下一步动作（Observe/巡逻/Signal 等）。\n\n" +
 
             "## 白板状态（组内协同）\n" +
             (string.IsNullOrWhiteSpace(whiteboardCtx) ? "（无白板数据）" : whiteboardCtx) + "\n\n" +
@@ -507,12 +574,15 @@ public class ActionDecisionModule : MonoBehaviour
             (string.IsNullOrWhiteSpace(constraintBlock) ? "无约束（本步骤独立执行）" : constraintBlock) + "\n\n" +
 
             "## 可用动作\n" +
-            "• MoveTo：前往地图内地点，targetName=地点名，spatialHint=路径偏好，actionParams=飞行参数\n" +
-            "• PatrolAround：环绕巡逻，targetName=中心点，duration=-1=一圈后结束，actionParams=巡逻说明\n" +
-            "• Observe：定点观察，targetName=目标，duration=-1=条件触发结束，actionParams=观察时长/条件\n" +
-            "• Evade：规避障碍/调整高度，actionParams=规避方向说明\n" +
-            "• Wait：原地悬停，actionParams=等待条件（如\"等待20秒\"\"等待队友到达\"）\n" +
-            "• FormationHold：编队跟随，targetAgentId=队友ID，actionParams=相对偏移\n\n" +
+            "• MoveTo：前往地图内静态地点，targetName=地点名，spatialHint=路径偏好，actionParams=飞行参数\n" +
+            "• Wait：原地悬停等待，duration=等待秒数，actionParams=等待条件说明\n" +
+            "• Observe：定点激活传感器感知环境，duration=观测时长（秒），actionParams=观察说明\n" +
+            "• Track：跟踪动态移动实体，targetAgentId=目标智能体ID，duration=跟踪时长，actionParams=相对方向（前/后/左/右）\n" +
+            "• Signal：向队友广播结构化信息，targetAgentId=接收方ID（\"all\"=全体），actionParams=消息内容\n" +
+            "• Get：在当前位置获取物资或触发交互，targetName=目标名称，duration=交互等待时长（秒）\n" +
+            "• Put：在当前位置放下物资或完成交付，targetName=交付对象名称，duration=交互等待时长（秒）\n" +
+            "• Land：降落至地面，targetName=降落区域（可选）\n" +
+            "• Takeoff：从地面起飞至悬停高度\n\n" +
 
             "## 步骤完成判断（重要）\n" +
             "在输出前，请依次核对以下三项，全部满足才可 isDone=true：\n" +
@@ -585,9 +655,10 @@ public class ActionDecisionModule : MonoBehaviour
     /// 当迭代次数 >= 3 时，向 LLM 提供情境问题，引导它主动诊断循环并决策，
     /// 而不是通过硬性规则（tabu）约束选择。
     /// </summary>
-    private string BuildSelfDiagnosisBlock()
+    private string BuildSelfDiagnosisBlock(bool isAtTarget = false)
     {
         if (ctx == null || ctx.iterationCount < 3) return string.Empty;
+        if (isAtTarget) return string.Empty;
         return "## 导航自我诊断（请在 thought 中完成）\n" +
                $"你已执行了 {ctx.iterationCount} 轮迭代，当前仍未到达目标。请在 thought 中主动分析：\n" +
                "- 回顾执行历史，移动轨迹是否出现了重复节点或循环模式？\n" +
@@ -1144,7 +1215,13 @@ public class ActionDecisionModule : MonoBehaviour
         return result.ToArray();
     }
 
-    /// <summary>将本批次已执行的动作追加到 executedActionsSummary，供下一轮 LLM 判断进度。</summary>
+    /// <summary>
+    /// 将本批次已执行的动作追加到 executedActionsSummary（供下一轮 LLM 判断进度）。
+    /// 批次成功执行（status=BatchDone）时调用，不在 Failed 分支调用。
+    /// 注：成功原子动作不写入长期记忆——当前格式仅为"执行成功"，不携带超出执行确认的有效信息，
+    /// 会稀释检索结果中的失败/反思信号。进度追踪由 executedActionsSummary 承担；
+    /// 任务级成功由 RememberMissionOutcome 记录；失败由 NotifyActionOutcome 路径记录。
+    /// </summary>
     private void UpdateHistory(AtomicAction[] actions)
     {
         if (actions == null || ctx.executedActionsSummary == null) return;
@@ -1155,7 +1232,6 @@ public class ActionDecisionModule : MonoBehaviour
             if (!string.IsNullOrWhiteSpace(a.actionParams))
                 line += $" - {a.actionParams}";
             ctx.executedActionsSummary.Add(line);
-
         }
     }
 

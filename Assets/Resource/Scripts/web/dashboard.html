@@ -656,6 +656,84 @@ textarea.ctrl-input { resize: vertical; min-height: 60px; }
 .inc-res-body  { color: var(--text); line-height: 1.5; word-break: break-word; }
 .inc-empty { color: var(--muted); font-size: 11px; text-align: center; padding: 30px; }
 
+/* ── Memory tab ────────────────────────────────────────────────────────────── */
+#tab-memory { padding: 0; overflow: hidden; }
+#mem-toolbar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 5px 8px; border-bottom: 1px solid var(--border);
+  flex-shrink: 0; background: var(--card);
+}
+#mem-toolbar label { font-size: 10px; color: var(--muted); }
+#mem-toolbar select { font-size: 10px; padding: 1px 4px; }
+#mem-body { flex: 1; overflow-y: auto; padding: 8px; }
+
+/* Kind 颜色映射（小写类名对应 AgentMemoryKind） */
+.mem-kind-observation  { background:rgba(88,166,255,0.12); color:#58a6ff; border:1px solid #58a6ff44; }
+.mem-kind-goal         { background:rgba(63,185,80,0.12);  color:#3fb950; border:1px solid #3fb95044; }
+.mem-kind-plan         { background:rgba(188,140,255,0.12);color:#bc8cff; border:1px solid #bc8cff44; }
+.mem-kind-decision     { background:rgba(210,153,34,0.12); color:#d29922; border:1px solid #d2992244; }
+.mem-kind-outcome      { background:rgba(248,81,73,0.12);  color:#f85149; border:1px solid #f8514944; }
+.mem-kind-coordination { background:rgba(57,211,83,0.12);  color:#39d353; border:1px solid #39d35344; }
+.mem-kind-reflection   { background:rgba(188,140,255,0.2); color:#bc8cff; border:1px solid #bc8cff66; }
+.mem-kind-policy       { background:rgba(88,166,255,0.2);  color:#58a6ff; border:1px solid #58a6ff66; }
+.mem-kind-worldstate   { background:rgba(139,148,158,0.12);color:#8b949e; border:1px solid #8b949e44; }
+.mem-kind-relationship { background:rgba(255,152,0,0.12);  color:#ff9800; border:1px solid #ff980044; }
+
+/* 记忆卡片 */
+.mem-card {
+  background:var(--card); border:1px solid var(--border);
+  border-radius:5px; padding:7px 10px; margin-bottom:5px; flex-shrink:0;
+}
+.mem-card-header { display:flex; align-items:center; gap:5px; margin-bottom:3px; flex-wrap:wrap; }
+.mem-kind-badge  { padding:1px 6px; border-radius:3px; font-size:9px; font-weight:bold; flex-shrink:0; }
+.mem-depth-badge {
+  padding:1px 5px; border-radius:3px; font-size:9px; font-weight:bold;
+  background:rgba(188,140,255,0.18); color:#bc8cff; border:1px solid #bc8cff44; flex-shrink:0;
+}
+.mem-proc-badge  {
+  padding:1px 5px; border-radius:3px; font-size:9px;
+  background:rgba(63,185,80,0.12); color:#3fb950; border:1px solid #3fb95044; flex-shrink:0;
+}
+.mem-status-badge     { padding:1px 5px; border-radius:3px; font-size:9px; flex-shrink:0; }
+.mem-status-Active    { background:rgba(63,185,80,0.1);  color:#3fb950; }
+.mem-status-Completed { background:rgba(88,166,255,0.1); color:#58a6ff; }
+.mem-status-Failed    { background:rgba(248,81,73,0.1);  color:#f85149; }
+.mem-status-Archived  { background:rgba(139,148,158,0.1);color:#8b949e; }
+.mem-age { font-size:9px; color:var(--muted); margin-left:auto; white-space:nowrap; }
+.mem-imp-bar {
+  height:3px; border-radius:2px; margin:3px 0;
+  /* --imp-color 由内联 style 注入 */
+}
+.mem-summary { font-size:11px; color:var(--text); line-height:1.5; word-break:break-word; margin-bottom:2px; }
+.mem-detail  { display:none; margin-top:5px; border-top:1px solid var(--border); padding-top:5px; }
+.mem-detail.open { display:block; }
+.mem-detail-row { display:flex; gap:4px; margin:1px 0; font-size:10px; }
+.mem-detail-lbl { color:var(--muted); flex-shrink:0; min-width:58px; }
+.mem-detail-val { color:var(--text); word-break:break-word; flex:1; }
+.mem-tag-chip {
+  display:inline-block; padding:0 5px; border-radius:3px; font-size:9px;
+  background:var(--border); color:var(--muted); margin:1px 2px;
+}
+
+/* 洞察卡片 */
+.insight-card {
+  background:rgba(188,140,255,0.04);
+  border:1px solid rgba(188,140,255,0.25); border-left:3px solid #bc8cff;
+  border-radius:5px; padding:8px 10px; margin-bottom:6px; flex-shrink:0;
+}
+.insight-header   { display:flex; align-items:center; gap:6px; margin-bottom:4px; flex-wrap:wrap; }
+.insight-depth    {
+  padding:1px 6px; border-radius:3px; font-size:9px; font-weight:bold; flex-shrink:0;
+}
+.insight-title    { font-size:11px; font-weight:bold; color:#bc8cff; flex:1; min-width:0; word-break:break-word; }
+.insight-ttl      { font-size:9px; color:var(--orange); white-space:nowrap; }
+.insight-never    { font-size:9px; color:var(--muted); white-space:nowrap; }
+.insight-expired  { font-size:9px; color:var(--red); white-space:nowrap; }
+.insight-conf-bar { height:3px; border-radius:2px; margin:3px 0; background:var(--border); overflow:hidden; }
+.insight-conf-fill{ height:100%; border-radius:2px; }
+.insight-field    { font-size:10px; margin:4px 0; line-height:1.5; }
+.insight-field-lbl{ color:var(--muted); font-size:9px; margin-bottom:1px; }
+
 /* ── Scrollbar ─────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar       { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -711,6 +789,7 @@ textarea.ctrl-input { resize: vertical; min-height: 60px; }
       <button class="tab-btn" onclick="switchTab('whiteboard')">白板</button>
       <button class="tab-btn" onclick="switchTab('incidents')" id="tab-btn-incidents">辩论 <span id="incident-badge" style="display:none;background:var(--red);color:#fff;border-radius:8px;padding:0 5px;font-size:9px;margin-left:2px">0</span></button>
       <button class="tab-btn" onclick="switchTab('control')">控制</button>
+      <button class="tab-btn" onclick="switchTab('memory')">记忆</button>
       <button class="tab-btn" onclick="switchTab('debug')">调试</button>
     </div>
     <div id="tab-content">
@@ -832,6 +911,40 @@ textarea.ctrl-input { resize: vertical; min-height: 60px; }
         </div>
       </div>
 
+      <!-- Memory tab -->
+      <div class="tab-pane" id="tab-memory">
+        <!-- 顶部工具栏 -->
+        <div id="mem-toolbar">
+          <label>Agent:</label>
+          <select id="mem-agent-filter" onchange="renderMemory()">
+            <option value="">全部</option>
+          </select>
+          <label style="margin-left:4px">类型:</label>
+          <select id="mem-kind-filter" onchange="renderMemory()">
+            <option value="">全部</option>
+            <option>Observation</option><option>Goal</option><option>Plan</option>
+            <option>Decision</option><option>Outcome</option><option>Coordination</option>
+            <option>Reflection</option><option>Policy</option><option>WorldState</option>
+            <option>Relationship</option>
+          </select>
+          <label style="margin-left:4px">
+            <input type="checkbox" id="mem-proc-only" onchange="renderMemory()"> 程序性提示
+          </label>
+          <button class="ctrl-btn" style="margin-left:auto;padding:2px 10px;font-size:10px"
+                  onclick="fetchMemory()">刷新</button>
+        </div>
+        <!-- 子标签：记忆列表 / 反思洞察 -->
+        <div style="display:flex;border-bottom:1px solid var(--border);background:var(--card);flex-shrink:0">
+          <button class="tab-btn active" id="mem-sub-memories"
+                  onclick="switchMemSub('memories')" style="font-size:10px;padding:7px 12px">记忆列表</button>
+          <button class="tab-btn" id="mem-sub-insights"
+                  onclick="switchMemSub('insights')" style="font-size:10px;padding:7px 12px">反思洞察</button>
+          <span id="mem-total-count"
+                style="margin-left:auto;align-self:center;padding-right:10px;font-size:9px;color:var(--muted)"></span>
+        </div>
+        <div id="mem-body"></div>
+      </div>
+
       <!-- Debug tab -->
       <div class="tab-pane" id="tab-debug"></div>
 
@@ -880,7 +993,7 @@ const FEATURE_STYLES = {
   default:  { fill:'rgba(150,150,150,0.15)', stroke:'#888888', strokeW:1,   minR:3 },
 };
 
-const TAB_NAMES = ['agents','comms','llm','whiteboard','incidents','control','debug'];
+const TAB_NAMES = ['agents','comms','llm','whiteboard','incidents','control','memory','debug'];
 
 const WB_TYPE_COLORS = {
   IntentAnnounce:  '#58a6ff',
@@ -924,6 +1037,22 @@ let msgFilter    = '';
 let pingMs       = 0;
 let agentView    = 'agent';   // 'agent' | 'team'
 let currentTab   = 'agents';
+
+// ── 记忆 / 洞察面板状态 ───────────────────────────────────────────────────────
+let memoryData = [];          // AgentMemoryPayload[]
+let memSubTab  = 'memories';  // 'memories' | 'insights'
+
+// ── 地图气泡状态 ──────────────────────────────────────────────────────────────
+const bubbleMap   = new Map(); // agentId → [{key, msg, eventType, shownAt}]
+const BUBBLE_SHOW = 8;         // 秒：不透明持续时间
+const BUBBLE_FADE = 1.5;       // 秒：淡出时间
+const BUBBLE_MAX  = 3;         // 每个 agent 最多显示气泡数
+const BUBBLE_COLORS = {
+  move_start:      '#58a6ff',
+  waypoint_timeout:'#d29922',
+  obstacle_replan: '#bc8cff',
+  arrive:          '#3fb950',
+};
 
 // Expand state persists across polls
 const expandedSet = new Set();
@@ -1245,6 +1374,9 @@ function drawFrame() {
     ctx.fillText(ag.agentId.slice(-2), cx, cy);
   }
 
+  // 气泡绘制（在 zoom/pan 变换坐标系内，随地图缩放平移）
+  drawBubbles();
+
   ctx.restore();
 
   // Overlay: zoom percentage
@@ -1384,12 +1516,13 @@ function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach(b => {
     if (b.textContent.trim() === {
       agents: 'Agents', comms: '通信', llm: 'LLM 日志',
-      whiteboard: '白板', incidents: '辩论', control: '控制', debug: '调试'
+      whiteboard: '白板', incidents: '辩论', control: '控制', memory: '记忆', debug: '调试'
     }[name]) b.classList.add('active');
   });
   if (name === 'llm') fetchLlmLogs();
   if (name === 'whiteboard') fetchWhiteboard();
   if (name === 'incidents') fetchIncidents();
+  if (name === 'memory') fetchMemory();
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2222,6 +2355,9 @@ async function poll() {
     if (currentTab === 'debug') renderDebug();
     if (currentTab === 'whiteboard') fetchWhiteboard();
     if (currentTab === 'incidents') fetchIncidents();
+    if (currentTab === 'memory') renderMemory();
+    // 运动事件独立拉取，不影响主 poll 失败判断
+    fetchMotionEvents();
   } catch(e) {
     document.getElementById('conn-badge').textContent = '连接失败';
     document.getElementById('conn-badge').className   = 'badge err';
@@ -2300,6 +2436,336 @@ window.addEventListener('resize', () => { bgReady = false; if (gridmap) buildBgC
 startDrawLoop();
 fetchMapData();
 poll();
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 运动事件气泡
+// ══════════════════════════════════════════════════════════════════════════════
+
+async function fetchMotionEvents() {
+  try {
+    const res = await fetch('/api/motion-events');
+    const data = await res.json(); // { agentId: MotionEventDto[] }
+    mergeBubbles(data);
+  } catch(e) { /* silent — 不影响主监控 */ }
+}
+
+function mergeBubbles(newEvents) {
+  const now = performance.now() / 1000;
+  for (const [agentId, evts] of Object.entries(newEvents || {})) {
+    if (!evts || !evts.length) continue;
+    if (!bubbleMap.has(agentId)) bubbleMap.set(agentId, []);
+    const existing = bubbleMap.get(agentId);
+    for (const ev of evts) {
+      const key = `${ev.timestamp}-${ev.eventType}`;
+      if (existing.some(b => b.key === key)) continue;
+      existing.unshift({ key, msg: ev.message, eventType: ev.eventType, shownAt: now });
+      while (existing.length > BUBBLE_MAX) existing.pop();
+    }
+  }
+}
+
+/** 圆角矩形路径（兼容不支持 ctx.roundRect 的环境） */
+function bubbleRoundRect(c, x, y, w, h, r) {
+  c.beginPath();
+  c.moveTo(x + r, y);
+  c.lineTo(x + w - r, y);
+  c.arcTo(x + w, y,     x + w, y + r,     r);
+  c.lineTo(x + w, y + h - r);
+  c.arcTo(x + w, y + h, x + w - r, y + h, r);
+  c.lineTo(x + r, y + h);
+  c.arcTo(x,     y + h, x,     y + h - r, r);
+  c.lineTo(x,     y + r);
+  c.arcTo(x,     y,     x + r, y,         r);
+  c.closePath();
+}
+
+/** 在 zoom/pan 坐标系内绘制气泡（在 drawFrame 的 agents 循环后、ctx.restore() 前调用） */
+function drawBubbles() {
+  const now = performance.now() / 1000;
+
+  for (const ag of agents) {
+    const bubbles = bubbleMap.get(ag.agentId);
+    if (!bubbles || !bubbles.length) continue;
+
+    const [cx, cy] = worldToCanvas(ag.position[0], ag.position[2]);
+    let yOffset = -(14 / zoomLevel);
+
+    for (let i = 0; i < bubbles.length; i++) {
+      const b   = bubbles[i];
+      const age = now - b.shownAt;
+
+      // 过期移除
+      if (age > BUBBLE_SHOW + BUBBLE_FADE) { bubbles.splice(i--, 1); continue; }
+
+      const alpha = age < BUBBLE_SHOW
+        ? 1.0
+        : 1.0 - (age - BUBBLE_SHOW) / BUBBLE_FADE;
+
+      const col = BUBBLE_COLORS[b.eventType] || '#8b949e';
+      const fs  = Math.max(7, 10 / zoomLevel);
+      ctx.font  = `${fs}px monospace`;
+
+      const textW = ctx.measureText(b.msg).width;
+      const padX  = 6 / zoomLevel;
+      const padY  = 3 / zoomLevel;
+      const bw    = textW + padX * 2;
+      const bh    = fs + padY * 2;
+
+      // 防止气泡超出 canvas 右边界（基础坐标系）
+      const canvasBaseW = canvas.width / zoomLevel;
+      let bLeft = cx + 10 / zoomLevel;
+      if (bLeft + bw > canvasBaseW - 4 / zoomLevel)
+        bLeft = canvasBaseW - bw - 4 / zoomLevel;
+
+      const bTop = cy + yOffset - bh;
+
+      ctx.globalAlpha = alpha;
+
+      // 连接线（agent 圆心 → 气泡左边中点）
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(bLeft, bTop + bh / 2);
+      ctx.strokeStyle = col + '66';
+      ctx.lineWidth   = 0.8 / zoomLevel;
+      ctx.stroke();
+
+      // 气泡背景
+      ctx.fillStyle = 'rgba(22,27,34,0.92)';
+      bubbleRoundRect(ctx, bLeft, bTop, bw, bh, 3 / zoomLevel);
+      ctx.fill();
+
+      // 气泡边框
+      ctx.strokeStyle = col;
+      ctx.lineWidth   = 0.8 / zoomLevel;
+      bubbleRoundRect(ctx, bLeft, bTop, bw, bh, 3 / zoomLevel);
+      ctx.stroke();
+
+      // 文字
+      ctx.fillStyle    = col;
+      ctx.textAlign    = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(b.msg, bLeft + padX, bTop + bh / 2);
+
+      ctx.globalAlpha = 1;
+      yOffset -= (bh + 3 / zoomLevel);
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 记忆 / 反思洞察面板
+// ══════════════════════════════════════════════════════════════════════════════
+
+async function fetchMemory() {
+  try {
+    const res = await fetch('/api/memory');
+    memoryData = await res.json(); // AgentMemoryPayload[]
+    updateMemAgentFilter();
+    renderMemory();
+  } catch(e) {
+    console.warn('[Memory] fetch failed', e);
+  }
+}
+
+function updateMemAgentFilter() {
+  const sel = document.getElementById('mem-agent-filter');
+  if (!sel) return;
+  const cur = sel.value;
+  const ids = (memoryData || []).map(p => p.agentId).sort();
+  sel.innerHTML = '<option value="">全部</option>' +
+    ids.map(id => `<option value="${escHtml(id)}">${escHtml(id)}</option>`).join('');
+  if (ids.includes(cur)) sel.value = cur;
+}
+
+function switchMemSub(sub) {
+  memSubTab = sub;
+  document.getElementById('mem-sub-memories')?.classList.toggle('active', sub === 'memories');
+  document.getElementById('mem-sub-insights')?.classList.toggle('active', sub === 'insights');
+  renderMemory();
+}
+
+function renderMemory() {
+  const body      = document.getElementById('mem-body');
+  const countEl   = document.getElementById('mem-total-count');
+  if (!body) return;
+
+  const agentF   = document.getElementById('mem-agent-filter')?.value || '';
+  const kindF    = document.getElementById('mem-kind-filter')?.value  || '';
+  const procOnly = document.getElementById('mem-proc-only')?.checked  || false;
+
+  const payloads = agentF
+    ? (memoryData || []).filter(p => p.agentId === agentF)
+    : (memoryData || []);
+
+  if (memSubTab === 'memories') {
+    renderMemoryList(body, payloads, kindF, procOnly, countEl);
+  } else {
+    renderInsightList(body, payloads, agentF, countEl);
+  }
+}
+
+function renderMemoryList(body, payloads, kindF, procOnly, countEl) {
+  const nowSec = Date.now() / 1000;
+  let totalShown = 0, totalAll = 0;
+  let html = '';
+
+  for (const payload of payloads) {
+    totalAll += payload.totalMemoryCount || 0;
+    let mems = payload.memories || [];
+    if (kindF)    mems = mems.filter(m => m.kind === kindF);
+    if (procOnly) mems = mems.filter(m => m.isProceduralHint);
+    if (!mems.length) continue;
+
+    totalShown += mems.length;
+    const col = teamColor(agents.find(a => a.agentId === payload.agentId)?.teamId ?? 0);
+
+    html += `<div style="margin-bottom:10px">
+      <div style="color:${col};font-size:11px;font-weight:bold;margin-bottom:4px;
+                  padding:3px 7px;background:${col}18;border-radius:3px">
+        ${escHtml(payload.agentId)}
+        <span style="color:var(--muted);font-weight:normal;font-size:9px;margin-left:6px">
+          显示 ${mems.length} / 总计 ${payload.totalMemoryCount} 条
+        </span>
+      </div>`;
+
+    for (const m of mems) {
+      const kindCls  = 'mem-kind-' + (m.kind || '').toLowerCase();
+      const depthLbl = m.reflectionDepth === 2 ? 'L3' : m.reflectionDepth === 1 ? 'L2' : '';
+      const impPct   = Math.round((m.importance || 0) * 100);
+      const impColor = m.importance > 0.7 ? 'var(--red)' :
+                       m.importance > 0.4 ? 'var(--orange)' : 'var(--blue)';
+      const ageSec   = nowSec - (m.createdAtUnix || 0);
+      const ageStr   = formatAgeSec(ageSec);
+
+      // 详情内容行（仅非空字段）
+      let detailRows = '';
+      if (m.detail)       detailRows += memRow('详情', escHtml(m.detail));
+      detailRows += memRow('重要性 / 置信度',
+        `${(m.importance||0).toFixed(2)} &nbsp;/&nbsp; ${(m.confidence||0).toFixed(2)}`);
+      detailRows += memRow('强度分 / 访问',
+        `${(m.strengthScore||0).toFixed(2)} &nbsp;/&nbsp; ${m.accessCount||0} 次`);
+      if (m.sourceModule) detailRows += memRow('来源模块', escHtml(m.sourceModule));
+      if (m.missionId)    detailRows += memRow('任务 ID',   escHtml(m.missionId));
+      if (m.targetRef)    detailRows += memRow('目标引用', escHtml(m.targetRef));
+      if (m.outcome)      detailRows += memRow('结果',     escHtml(m.outcome));
+      if (m.tags && m.tags.length)
+        detailRows += memRow('标签',
+          m.tags.map(t => `<span class="mem-tag-chip">${escHtml(t)}</span>`).join(''));
+
+      html += `<div class="mem-card">
+        <div class="mem-card-header">
+          <span class="mem-kind-badge ${kindCls}">${escHtml(m.kind||'?')}</span>
+          ${depthLbl ? `<span class="mem-depth-badge">${depthLbl}</span>` : ''}
+          ${m.isProceduralHint ? '<span class="mem-proc-badge">🔧 程序性</span>' : ''}
+          <span class="mem-status-badge mem-status-${escHtml(m.status||'')}">${escHtml(m.status||'')}</span>
+          <span class="mem-age">${ageStr}</span>
+        </div>
+        <div class="mem-imp-bar" style="width:${impPct}%;background:${impColor}"></div>
+        <div class="mem-summary">${escHtml(m.summary || '（无摘要）')}</div>
+        <button class="expand-btn" onclick="toggleMemDetail(this)">▼ 详情</button>
+        <div class="mem-detail">
+          ${detailRows}
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  body.innerHTML = html ||
+    '<div style="padding:24px;color:var(--muted);text-align:center">暂无记忆数据（等待 Agent 运行或刷新）</div>';
+  if (countEl) countEl.textContent = `显示 ${totalShown} / 总 ${totalAll} 条`;
+}
+
+function memRow(lbl, val) {
+  return `<div class="mem-detail-row">
+    <span class="mem-detail-lbl">${lbl}</span>
+    <span class="mem-detail-val">${val}</span>
+  </div>`;
+}
+
+function renderInsightList(body, payloads, agentF, countEl) {
+  const nowSec = Date.now() / 1000;
+  let total = 0;
+  let html  = '';
+
+  for (const payload of payloads) {
+    const ins = payload.insights || [];
+    if (!ins.length) continue;
+    total += ins.length;
+
+    const col = teamColor(agents.find(a => a.agentId === payload.agentId)?.teamId ?? 0);
+    html += `<div style="margin-bottom:10px">
+      <div style="color:${col};font-size:11px;font-weight:bold;margin-bottom:4px;
+                  padding:3px 7px;background:${col}18;border-radius:3px">
+        ${escHtml(payload.agentId)}
+        <span style="color:var(--muted);font-weight:normal;font-size:9px;margin-left:6px">${ins.length} 条洞察</span>
+      </div>`;
+
+    for (const i of ins) {
+      const depthLbl   = i.insightDepth === 2 ? 'L3 抽象' : 'L2 推断';
+      const depthColor = i.insightDepth === 2 ? 'var(--red)' : '#bc8cff';
+      const confPct    = Math.round((i.confidence || 0) * 100);
+      const confColor  = i.confidence > 0.7 ? 'var(--green)' :
+                         i.confidence > 0.4 ? 'var(--orange)' : 'var(--red)';
+
+      let ttlHtml = '';
+      if (i.remainingSeconds < 0) {
+        ttlHtml = '<span class="insight-never">永久有效</span>';
+      } else if (i.remainingSeconds <= 0) {
+        ttlHtml = '<span class="insight-expired">已过期</span>';
+      } else {
+        ttlHtml = `<span class="insight-ttl">剩 ${formatAgeSec(i.remainingSeconds)}</span>`;
+      }
+
+      html += `<div class="insight-card">
+        <div class="insight-header">
+          <span class="insight-depth" style="background:${depthColor}22;color:${depthColor};border:1px solid ${depthColor}55">${depthLbl}</span>
+          <span class="insight-title">${escHtml(i.title || '（无标题）')}</span>
+          ${ttlHtml}
+        </div>
+        <div class="insight-conf-bar">
+          <div class="insight-conf-fill" style="width:${confPct}%;background:${confColor}"></div>
+        </div>
+        <div class="insight-field">
+          <div class="insight-field-lbl">摘要</div>
+          <div style="color:var(--text)">${escHtml(i.summary || '')}</div>
+        </div>
+        ${i.applyWhen ? `<div class="insight-field">
+          <div class="insight-field-lbl">适用场景</div>
+          <div style="color:var(--orange)">${escHtml(i.applyWhen)}</div>
+        </div>` : ''}
+        ${i.suggestedAdjustment ? `<div class="insight-field">
+          <div class="insight-field-lbl">建议调整</div>
+          <div style="color:var(--green)">${escHtml(i.suggestedAdjustment)}</div>
+        </div>` : ''}
+        ${i.tags && i.tags.length ? `<div style="margin-top:3px">${i.tags.map(t=>`<span class="mem-tag-chip">${escHtml(t)}</span>`).join('')}</div>` : ''}
+        <div style="font-size:9px;color:var(--muted);margin-top:3px">
+          置信度 ${confPct}%${i.missionId ? ' · 任务 ' + escHtml(i.missionId) : ''}
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  body.innerHTML = html ||
+    '<div style="padding:24px;color:var(--muted);text-align:center">暂无反思洞察（L2/L3 反思触发后此处显示）</div>';
+  if (countEl) countEl.textContent = `${total} 条洞察`;
+}
+
+function toggleMemDetail(btn) {
+  const d = btn.nextElementSibling;
+  if (!d) return;
+  const open = d.classList.toggle('open');
+  btn.textContent = open ? '▲ 收起' : '▼ 详情';
+}
+
+function formatAgeSec(sec) {
+  if (sec < 0) return '永久';
+  if (sec < 60)    return Math.floor(sec) + '秒前';
+  if (sec < 3600)  return Math.floor(sec / 60) + '分钟前';
+  if (sec < 86400) return (sec / 3600).toFixed(1) + '小时前';
+  return (sec / 86400).toFixed(1) + '天前';
+}
 </script>
 </body>
 </html>

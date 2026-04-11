@@ -264,7 +264,7 @@ public class PlanningModule : MonoBehaviour
             "  · 同一 constraintId 同时绑定到「等待方」槽位和「被等待方」槽位。\n" +
             "  · watchAgent 改写为被等待方的 slotId。\n" +
             "sign=-1(动态互斥):\n" +
-            "  · 同一 constraintId 绑定到所有可能竞争该共享资源的槽位。\n" +
+            "  · 同一 constraintId 绑定到所有可能竞争该共享资源/地点/区域/路径的槽位。\n" +
             "  · watchAgent 保持空字符串,参与者由绑定范围共同决定。\n\n" +
             GetConciseTextPromptText() + "\n" +
             "输出格式:\n" +
@@ -480,8 +480,28 @@ public class PlanningModule : MonoBehaviour
         }
         string constraintsJson = JsonConvert.SerializeObject(slotConstraints);
 
-        string prompt = 
+        // 从 MemoryModule 检索与当前槽位/角色相关的历史经验和反思规则，注入到规划提示词
+        // 帮助 LLM#4 在步骤拆分时参考"过去类似角色在此目标上踩过的坑和成功策略"
+        string planningMemoryContext = string.Empty;
+        if (memory != null)
+        {
+            planningMemoryContext = memory.BuildPlanningContext(new PlanningMemoryContextRequest
+            {
+                missionText = parsed?.groupMsns != null && parsed.groupMsns.Length > 0 ? parsed.groupMsns[0] : string.Empty,
+                missionId = parsed?.msnId ?? string.Empty,
+                roleName = confirmedSlot.role,
+                slotId = confirmedSlot.slotId,
+                slotLabel = confirmedSlot.role,
+                slotTarget = confirmedSlot.doneCond,
+                maxMemories = 4,
+                maxInsights = 2
+            });
+        }
+
+        string prompt =
         "你是无人机任务规划中枢。请在不改变计划原意的前提下,将整体任务拆分为具体的【执行步骤】,并精准挂载【约束条件】。\n\n" +
+        "## 历史经验与反思规则（来自记忆模块）\n" +
+        (string.IsNullOrWhiteSpace(planningMemoryContext) ? "（无历史经验，首次执行此类任务）" : planningMemoryContext) + "\n\n" +
         "## 输入上下文\n" +
         $"计划(desc): {confirmedSlot.desc}\n" +
         $"当前AgentID: {props?.AgentID} | 角色: {confirmedSlot.role}\n" +
@@ -588,6 +608,20 @@ public class PlanningModule : MonoBehaviour
             steps  = steps,
             curIdx = 0
         };
+
+        // 将 LLM#4 生成的计划快照写入记忆，供后续同类任务规划参考
+        // 记录角色、步骤概要、目标条件，而非全量 JSON（避免占用过多 token）
+        if (memory != null && steps.Length > 0)
+        {
+            string stepsSummary = string.Join(" → ", steps.Select(s => s.text));
+            memory.RememberPlanSnapshot(
+                missionId: parsed.msnId,
+                slotId: confirmedSlot.slotId,
+                stepLabel: confirmedSlot.role,
+                planSummary: $"[{confirmedSlot.role}] 计划步骤: {stepsSummary}",
+                targetRef: confirmedSlot.doneCond,
+                tags: new[] { confirmedSlot.role, parsed.msnId });
+        }
 
         Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] {props.AgentID} 计划就绪,共 {steps.Length} 步");
         SetState(PlanningState.Active);
@@ -963,6 +997,12 @@ public class PlanningModule : MonoBehaviour
     public string GetCurrentMissionId()
     {
         return parsed?.msnId ?? agentPlan?.msnId ?? string.Empty;
+    }
+
+    /// <summary>返回当前已确认的槽位 ID，供 ActionDecisionModule 填入 ActionExecutionContext.slotId。</summary>
+    public string GetCurrentSlotId()
+    {
+        return confirmedSlot?.slotId ?? agentPlan?.slotId ?? string.Empty;
     }
 
     /// <summary>返回当前任务描述,优先使用已确认槽位的描述。</summary>

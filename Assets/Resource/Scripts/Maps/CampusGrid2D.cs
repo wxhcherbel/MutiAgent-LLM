@@ -799,17 +799,19 @@ public class CampusGrid2D : MonoBehaviour
         for (int i = 0; i < boundary.Length; i++)
         {
             Vector2Int b = boundary[i];
-            for (int dx = -1; dx <= 1; dx++)
+            for (int dx = -2; dx <= 2; dx++)
             {
-                for (int dz = -1; dz <= 1; dz++)
+                for (int dz = -2; dz <= 2; dz++)
                 {
                     if (dx == 0 && dz == 0) continue;
 
                     Vector2Int c = new Vector2Int(b.x + dx, b.y + dz);
                     long key = (((long)c.x) << 32) ^ (uint)c.y;
+                    // 跳过建筑内部格（避免把occupied cell当接近格）
+                    if (index.occupiedCellKeys.Contains(key)) continue;
                     if (!IsPathWalkable(c.x, c.y, null) || !seen.Add(key)) continue;
 
-                    // 只保留真正位于实体外部的一圈格，而不是跑到很远的位置。
+                    // 只保留真正位于实体外部的格，而不是跑到很远的位置。
                     Vector2 outward = new Vector2(c.x - center.x, c.y - center.y);
                     if (outward.sqrMagnitude < 0.25f) continue;
                     candidates.Add(c);

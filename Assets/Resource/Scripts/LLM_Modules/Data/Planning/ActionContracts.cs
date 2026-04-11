@@ -57,6 +57,12 @@ public class ActionExecutionContext
     /// <summary>所属任务 ID。</summary>
     public string msnId;
 
+    /// <summary>
+    /// 当前 Agent 认领的槽位 ID（由 PlanningModule.GetCurrentSlotId() 填入）。
+    /// 用于 MemoryModule 的结构化检索定向匹配，区分同一任务内不同角色的经验。
+    /// </summary>
+    public string slotId;
+
     /// <summary>当前步骤 ID。</summary>
     public string stepId;
 

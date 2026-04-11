@@ -4,6 +4,7 @@
 using UnityEngine;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Text;
 using System.Threading;
@@ -35,6 +36,15 @@ public partial class AgentStateServer : MonoBehaviour
     private string incidentsJson   = "[]";
     private bool   mapMetaReady    = false;
     private bool   gridmapReady    = false;
+
+    // ─── Motion Events（静态缓冲，供 AgentMotionExecutor 主线程写入）──────────
+    private static readonly object              motionEventLock   = new object();
+    private static readonly Queue<MotionEventDto> motionEventBuffer = new Queue<MotionEventDto>();
+    private const int MAX_MOTION_EVENTS = 200;
+    private string motionEventsJson = "{}"; // { agentId: MotionEventDto[] }
+
+    // ─── Memory / Reflection 快照 ─────────────────────────────────────────────
+    private string memoryJson = "[]";
 
     // ─── 命令队列（后台线程入队，主线程消费）────────────────────
     private readonly Queue<PendingCommand> commandQueue = new Queue<PendingCommand>();
@@ -79,6 +89,8 @@ public partial class AgentStateServer : MonoBehaviour
             CaptureLlmLogs();
             CaptureWhiteboard();
             CaptureIncidents();
+            CaptureMotionEvents();
+            CaptureMemorySnapshots();
             lastSnapshotTime = Time.time;
         }
     }
@@ -276,6 +288,166 @@ public partial class AgentStateServer : MonoBehaviour
             messagesJson = msgJson;
             historyJson  = hj;
         }
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // Motion Event 静态队列（供 AgentMotionExecutor 主线程写入）
+    // ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 供 AgentMotionExecutor 在协程中调用（Unity 主线程）。
+    /// 将运动事件压入静态缓冲队列，下一次 CaptureMotionEvents() 时序列化。
+    /// AgentStateServer 未初始化时事件也会安全积累。
+    /// </summary>
+    public static void PushMotionEvent(string agentId, string eventType, string message)
+    {
+        var ev = new MotionEventDto
+        {
+            agentId   = agentId,
+            eventType = eventType,
+            message   = message,
+            timestamp = Time.time,
+        };
+        lock (motionEventLock)
+        {
+            motionEventBuffer.Enqueue(ev);
+            while (motionEventBuffer.Count > MAX_MOTION_EVENTS)
+                motionEventBuffer.Dequeue();
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // 运动事件快照采集（主线程）
+    // ─────────────────────────────────────────────────────────
+
+    private void CaptureMotionEvents()
+    {
+        MotionEventDto[] snapshot;
+        lock (motionEventLock)
+        {
+            snapshot = motionEventBuffer.ToArray();
+        }
+
+        // 按 agentId 分组，每个 agent 取最新 5 条
+        var grouped = new Dictionary<string, List<MotionEventDto>>();
+        foreach (var ev in snapshot)
+        {
+            if (!grouped.TryGetValue(ev.agentId, out var list))
+            {
+                list = new List<MotionEventDto>();
+                grouped[ev.agentId] = list;
+            }
+            list.Add(ev);
+        }
+
+        var result = new Dictionary<string, MotionEventDto[]>();
+        foreach (var kv in grouped)
+            result[kv.Key] = kv.Value.OrderByDescending(e => e.timestamp).Take(5).ToArray();
+
+        var json = JsonConvert.SerializeObject(result);
+        lock (snapshotLock) { motionEventsJson = json; }
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // 记忆 / 反思洞察快照采集（主线程）
+    // ─────────────────────────────────────────────────────────
+
+    private void CaptureMemorySnapshots()
+    {
+        var agents   = FindObjectsOfType<IntelligentAgent>();
+        var payloads = new List<AgentMemoryPayload>(agents.Length);
+        var now      = DateTime.UtcNow;
+
+        foreach (var agent in agents)
+        {
+            if (agent == null || agent.Properties == null) continue;
+            var mm = agent.GetComponent<MemoryModule>();
+            if (mm == null) continue;
+
+            string agentId = agent.Properties.AgentID;
+
+            // ── 记忆：程序性提示（按 strengthScore 降序，最多5条）优先 ──────────
+            var procedural = mm.memories
+                .Where(m => m.isProceduralHint)
+                .OrderByDescending(m => m.strengthScore)
+                .Take(5)
+                .ToList();
+            var procIds = new HashSet<string>(procedural.Select(m => m.id));
+
+            // 其余按 createdAt 降序取25条
+            var recent = mm.memories
+                .Where(m => !procIds.Contains(m.id))
+                .OrderByDescending(m => m.createdAt)
+                .Take(25)
+                .ToList();
+
+            // 合并，整体再按 createdAt 降序
+            var combined = procedural.Concat(recent)
+                .OrderByDescending(m => m.createdAt)
+                .ToList();
+
+            var memSnaps = combined.Select(m => new MemorySnapshot
+            {
+                id               = m.id,
+                kind             = m.kind.ToString(),
+                summary          = m.summary,
+                detail           = (m.detail != null && m.detail.Length > 500)
+                                   ? m.detail.Substring(0, 500) + "…"
+                                   : m.detail,
+                status           = m.status.ToString(),
+                importance       = m.importance,
+                confidence       = m.confidence,
+                strengthScore    = m.strengthScore,
+                isProceduralHint = m.isProceduralHint,
+                reflectionDepth  = m.reflectionDepth,
+                sourceModule     = m.sourceModule,
+                missionId        = m.missionId,
+                targetRef        = m.targetRef,
+                outcome          = m.outcome,
+                tags             = m.tags?.ToArray() ?? Array.Empty<string>(),
+                createdAtUnix    = new DateTimeOffset(m.createdAt,   TimeSpan.Zero).ToUnixTimeSeconds(),
+                lastAccessedAtUnix = new DateTimeOffset(m.lastAccessedAt, TimeSpan.Zero).ToUnixTimeSeconds(),
+                accessCount      = m.accessCount,
+            }).ToArray();
+
+            // ── Insights：过滤已过期条目（expiresAt == MinValue 视为永久有效）──
+            var validInsights = mm.reflectionInsights
+                .Where(i => i.expiresAt == DateTime.MinValue || i.expiresAt > now)
+                .OrderByDescending(i => i.createdAt)
+                .ToList();
+
+            var insightSnaps = validInsights.Select(i => new ReflectionInsightSnapshot
+            {
+                id                  = i.id,
+                insightDepth        = i.insightDepth,
+                title               = i.title,
+                summary             = i.summary,
+                applyWhen           = i.applyWhen,
+                suggestedAdjustment = i.suggestedAdjustment,
+                confidence          = i.confidence,
+                missionId           = i.missionId,
+                targetRef           = i.targetRef,
+                tags                = i.tags?.ToArray() ?? Array.Empty<string>(),
+                createdAtUnix       = new DateTimeOffset(i.createdAt, TimeSpan.Zero).ToUnixTimeSeconds(),
+                expiresAtUnix       = i.expiresAt == DateTime.MinValue
+                                      ? 0L
+                                      : new DateTimeOffset(i.expiresAt, TimeSpan.Zero).ToUnixTimeSeconds(),
+                remainingSeconds    = i.expiresAt == DateTime.MinValue
+                                      ? -1f   // -1 表示永不过期
+                                      : (float)(i.expiresAt - now).TotalSeconds,
+            }).ToArray();
+
+            payloads.Add(new AgentMemoryPayload
+            {
+                agentId          = agentId,
+                totalMemoryCount = mm.memories.Count,
+                memories         = memSnaps,
+                insights         = insightSnaps,
+            });
+        }
+
+        var json = JsonConvert.SerializeObject(payloads);
+        lock (snapshotLock) { memoryJson = json; }
     }
 
     // ─────────────────────────────────────────────────────────
@@ -549,6 +721,16 @@ public partial class AgentStateServer : MonoBehaviour
 
                     case "/api/incidents":
                         { string json; lock (snapshotLock) { json = incidentsJson; }
+                          body = Encoding.UTF8.GetBytes(json); mime = "application/json"; }
+                        break;
+
+                    case "/api/motion-events":
+                        { string json; lock (snapshotLock) { json = motionEventsJson; }
+                          body = Encoding.UTF8.GetBytes(json); mime = "application/json"; }
+                        break;
+
+                    case "/api/memory":
+                        { string json; lock (snapshotLock) { json = memoryJson; }
                           body = Encoding.UTF8.GetBytes(json); mime = "application/json"; }
                         break;
 

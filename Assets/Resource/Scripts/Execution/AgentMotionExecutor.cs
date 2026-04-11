@@ -51,6 +51,9 @@ public class AgentMotionExecutor : MonoBehaviour
 
     private AgentDynamicState  agentState;
 
+    // 起飞/降落用：记录初始悬停高度以便 Takeoff 恢复
+    private float              defaultHoverHeight;
+
     // ─────────────────────────────────────────────────────────────
     // Unity 生命周期
     // ─────────────────────────────────────────────────────────────
@@ -73,6 +76,8 @@ public class AgentMotionExecutor : MonoBehaviour
 
         if (props != null && props.MaxSpeed > 0f)
             maxSpeed = props.MaxSpeed;
+
+        defaultHoverHeight = hoverHeight;
     }
 
     private void Update()
@@ -185,20 +190,29 @@ public class AgentMotionExecutor : MonoBehaviour
             case AtomicActionType.MoveTo:
                 yield return StartCoroutine(DoMoveTo(action));
                 break;
-            case AtomicActionType.PatrolAround:
-                yield return StartCoroutine(DoPatrol(action));
-                break;
             case AtomicActionType.Observe:
                 yield return StartCoroutine(DoObserve(action));
                 break;
             case AtomicActionType.Wait:
                 yield return StartCoroutine(DoWait(action));
                 break;
-            case AtomicActionType.FormationHold:
-                yield return StartCoroutine(DoFormation(action));
+            case AtomicActionType.Track:
+                yield return StartCoroutine(DoTrack(action));
                 break;
-            case AtomicActionType.Evade:
-                yield return StartCoroutine(DoEvade(action));
+            case AtomicActionType.Signal:
+                yield return StartCoroutine(DoSignal(action));
+                break;
+            case AtomicActionType.Get:
+                yield return StartCoroutine(DoGet(action));
+                break;
+            case AtomicActionType.Put:
+                yield return StartCoroutine(DoPut(action));
+                break;
+            case AtomicActionType.Land:
+                yield return StartCoroutine(DoLand(action));
+                break;
+            case AtomicActionType.Takeoff:
+                yield return StartCoroutine(DoTakeoff(action));
                 break;
             default:
                 Debug.LogWarning($"[AME] 未知动作类型 {action.type}，跳过");
@@ -221,6 +235,8 @@ public class AgentMotionExecutor : MonoBehaviour
 
         // 1. 查找目标世界坐标
         Debug.Log($"[AME] {props?.AgentID} DoMoveTo 开始: '{action.targetName}'");
+        AgentStateServer.PushMotionEvent(props?.AgentID ?? name, "move_start",
+            $"▷ 前往 {action.targetName}");
         if (!campusGrid.TryGetFeatureApproachCells(action.targetName, transform.position,
                 out Vector2Int[] approachArr, maxCount: 1)
             || approachArr.Length == 0)
@@ -275,7 +291,11 @@ public class AgentMotionExecutor : MonoBehaviour
             if (dist < ARRIVE_THRESHOLD || waypointTimer >= WAYPOINT_TIMEOUT)
             {
                 if (waypointTimer >= WAYPOINT_TIMEOUT)
+                {
                     Debug.LogWarning($"[AME] '{action.targetName}' 航点[{waypointIdx}] 超时跳过（dist={dist:F1}m）");
+                    AgentStateServer.PushMotionEvent(props?.AgentID ?? name, "waypoint_timeout",
+                        $"⚡ 航点[{waypointIdx}]超时(dist={dist:F1}m)");
+                }
                 waypointIdx++;
                 waypointTimer = 0f;
             }
@@ -305,6 +325,8 @@ public class AgentMotionExecutor : MonoBehaviour
                         waypointIdx = 0;
                         pathVisualizer?.ShowPath(currentPath, GetTeamColor());
                         Debug.Log($"[AME] MoveTo '{action.targetName}' 感知到{obstaclePositions.Count}个障碍，触发局部重规划");
+                        AgentStateServer.PushMotionEvent(props?.AgentID ?? name, "obstacle_replan",
+                            $"↻ 感知{obstaclePositions.Count}个障碍，重规划");
                     }
                     replanTimer = REPLAN_COOLDOWN;
                 }
@@ -315,67 +337,8 @@ public class AgentMotionExecutor : MonoBehaviour
 
         pathVisualizer?.ClearPath();
         Debug.Log($"[AME] MoveTo '{action.targetName}' 完成");
-    }
-
-    // ─── PatrolAround ─────────────────────────────────────────────
-
-    private IEnumerator DoPatrol(AtomicAction action)
-    {
-        float duration = action.duration > 0f ? action.duration : 20f;
-
-        if (campusGrid == null || string.IsNullOrWhiteSpace(action.targetName))
-        {
-            yield return new WaitForSeconds(duration);
-            yield break;
-        }
-
-        if (!campusGrid.TryBuildFeatureRingPath(action.targetName, transform.position,
-                out Vector2Int[] ringPath) || ringPath.Length == 0)
-        {
-            Debug.LogWarning($"[AME] PatrolAround: 无法为 '{action.targetName}' 构建环绕路径，降级为悬停");
-            yield return new WaitForSeconds(duration);
-            yield break;
-        }
-
-        List<Vector3> patrolWaypoints = ringPath
-            .Select(c => { var w = campusGrid.GridToWorldCenter(c.x, c.y); w.y = hoverHeight; return w; })
-            .ToList();
-
-        pathVisualizer?.ShowPath(patrolWaypoints, GetTeamColor());
-
-        const float ARRIVE_THRESHOLD = 3f;
-        const float WAYPOINT_TIMEOUT = 12f;
-
-        float elapsed = 0f;
-        int   wpIdx   = 0;
-        float wpTimer = 0f;
-
-        while (elapsed < duration)
-        {
-            if (wpIdx >= patrolWaypoints.Count)
-                wpIdx = 0;
-
-            Vector3 wp = patrolWaypoints[wpIdx];
-            ApplyHorizontalPD(wp);
-            FaceToward(wp);
-
-            float dist = Vector3.Distance(
-                new Vector3(transform.position.x, 0f, transform.position.z),
-                new Vector3(wp.x, 0f, wp.z));
-
-            wpTimer += Time.deltaTime;
-            if (dist < ARRIVE_THRESHOLD || wpTimer >= WAYPOINT_TIMEOUT)
-            {
-                wpIdx++;
-                wpTimer = 0f;
-            }
-
-            elapsed += Time.deltaTime;
-            yield return null;
-        }
-
-        pathVisualizer?.ClearPath();
-        Debug.Log($"[AME] PatrolAround '{action.targetName}' 完成");
+        AgentStateServer.PushMotionEvent(props?.AgentID ?? name, "arrive",
+            $"✓ 到达 {action.targetName}");
     }
 
     // ─── Observe ──────────────────────────────────────────────────
@@ -418,9 +381,9 @@ public class AgentMotionExecutor : MonoBehaviour
         }
     }
 
-    // ─── FormationHold ────────────────────────────────────────────
+    // ─── Track ────────────────────────────────────────────────────
 
-    private IEnumerator DoFormation(AtomicAction action)
+    private IEnumerator DoTrack(AtomicAction action)
     {
         float duration = action.duration > 0f ? action.duration : 10f;
         float elapsed  = 0f;
@@ -432,56 +395,149 @@ public class AgentMotionExecutor : MonoBehaviour
             {
                 if (a.Properties?.AgentID == action.targetAgentId) { target = a; break; }
             }
+            if (target == null)
+                Debug.LogWarning($"[AME] Track: 找不到目标智能体 '{action.targetAgentId}'");
         }
 
-        Vector3 offset = new Vector3(3f, 0f, 0f); // 默认侧方偏移
+        Vector3 localOffset = ParseOffsetFromParams(action.actionParams);
 
         while (elapsed < duration)
         {
             if (target != null)
             {
-                Vector3 formPos = target.transform.position + offset;
-                formPos.y = hoverHeight;
-                ApplyHorizontalPD(formPos);
+                // 偏移跟随目标的局部坐标系，使"前/后/左/右"语义与目标朝向一致
+                Vector3 trackPos = target.transform.position + target.transform.rotation * localOffset;
+                trackPos.y = hoverHeight;
+                ApplyHorizontalPD(trackPos);
                 FaceToward(target.transform.position);
             }
             elapsed += Time.deltaTime;
             yield return null;
         }
+        Debug.Log($"[AME] Track '{action.targetAgentId}' 完成");
     }
 
-    // ─── Evade ────────────────────────────────────────────────────
+    // ─── Signal ───────────────────────────────────────────────────
 
-    private IEnumerator DoEvade(AtomicAction action)
+    private IEnumerator DoSignal(AtomicAction action)
     {
-        Vector3 hVel = new Vector3(rb.velocity.x, 0f, rb.velocity.z);
-        Vector3 evadeDir = hVel.sqrMagnitude > 0.01f
-            ? Vector3.Cross(hVel.normalized, Vector3.up).normalized
-            : transform.right;
+        string content   = string.IsNullOrWhiteSpace(action.actionParams) ? "（Signal）" : action.actionParams;
+        string recipient = string.IsNullOrWhiteSpace(action.targetAgentId) ? "all" : action.targetAgentId;
 
-        Vector3 evadeTarget = transform.position + evadeDir * 3f;
-        evadeTarget.y = hoverHeight;
+        var commModule = GetComponent<CommunicationModule>();
+        if (commModule != null)
+        {
+            if (recipient == "all")
+            {
+                foreach (var a in FindObjectsOfType<IntelligentAgent>())
+                {
+                    string rid = a.Properties?.AgentID;
+                    if (!string.IsNullOrWhiteSpace(rid) && rid != props?.AgentID)
+                        commModule.SendMessage(rid, MessageType.StatusUpdate, content);
+                }
+            }
+            else
+            {
+                commModule.SendMessage(recipient, MessageType.StatusUpdate, content);
+            }
+        }
+        else
+        {
+            Debug.LogWarning("[AME] Signal: 找不到 CommunicationModule，消息未发送");
+        }
+
+        Debug.Log($"[AME] Signal → {recipient}: {content}");
+        yield break; // 立即完成，无持续时间
+    }
+
+    // ─── Get ──────────────────────────────────────────────────────
+
+    private IEnumerator DoGet(AtomicAction action)
+    {
+        float duration = action.duration > 0f ? action.duration : 1f;
+        Vector3 holdPos = transform.position;
+        holdPos.y = hoverHeight;
 
         float elapsed = 0f;
-        while (elapsed < 1.5f)
+        while (elapsed < duration)
         {
-            ApplyHorizontalPD(evadeTarget);
+            ApplyHorizontalPD(holdPos);
             elapsed += Time.deltaTime;
             yield return null;
         }
+        Debug.Log($"[AME] Get '{action.targetName}' 完成");
+    }
+
+    // ─── Put ──────────────────────────────────────────────────────
+
+    private IEnumerator DoPut(AtomicAction action)
+    {
+        float duration = action.duration > 0f ? action.duration : 1f;
+        Vector3 holdPos = transform.position;
+        holdPos.y = hoverHeight;
+
+        float elapsed = 0f;
+        while (elapsed < duration)
+        {
+            ApplyHorizontalPD(holdPos);
+            elapsed += Time.deltaTime;
+            yield return null;
+        }
+        Debug.Log($"[AME] Put '{action.targetName}' 完成");
+    }
+
+    // ─── Land ─────────────────────────────────────────────────────
+
+    private IEnumerator DoLand(AtomicAction action)
+    {
+        const float TARGET_HEIGHT  = 0.2f;
+        const float DESCEND_SPEED  = 2f;   // m/s
+        const float TIMEOUT        = 15f;
+        float elapsed = 0f;
+
+        while (hoverHeight > TARGET_HEIGHT + 0.05f && elapsed < TIMEOUT)
+        {
+            hoverHeight = Mathf.MoveTowards(hoverHeight, TARGET_HEIGHT, DESCEND_SPEED * Time.deltaTime);
+            elapsed += Time.deltaTime;
+            yield return null;
+        }
+        hoverHeight = TARGET_HEIGHT;
+        Debug.Log($"[AME] Land 完成，高度={transform.position.y:F1}m");
+    }
+
+    // ─── Takeoff ──────────────────────────────────────────────────
+
+    private IEnumerator DoTakeoff(AtomicAction action)
+    {
+        const float ASCEND_SPEED = 2f;  // m/s
+        const float TIMEOUT      = 15f;
+        float elapsed = 0f;
+
+        while (Mathf.Abs(hoverHeight - defaultHoverHeight) > 0.1f && elapsed < TIMEOUT)
+        {
+            hoverHeight = Mathf.MoveTowards(hoverHeight, defaultHoverHeight, ASCEND_SPEED * Time.deltaTime);
+            elapsed += Time.deltaTime;
+            yield return null;
+        }
+        hoverHeight = defaultHoverHeight;
+        Debug.Log($"[AME] Takeoff 完成，高度={transform.position.y:F1}m");
     }
 
     // ─────────────────────────────────────────────────────────────
     // 工具
     // ─────────────────────────────────────────────────────────────
 
-    /// <summary>从 actionParams 字符串中提取半径数值（如"环绕半径40米"→40f）。</summary>
-    private static float ParseRadiusFromParams(string actionParams, float defaultRadius)
+    /// <summary>从 actionParams 解析相对偏移方向（局部坐标系）。
+    /// 支持关键词：前、后、左、右；默认右侧 3m。</summary>
+    private static Vector3 ParseOffsetFromParams(string actionParams)
     {
-        if (string.IsNullOrWhiteSpace(actionParams)) return defaultRadius;
-        var m = System.Text.RegularExpressions.Regex.Match(actionParams, @"半径\s*(\d+(?:\.\d+)?)");
-        if (m.Success && float.TryParse(m.Groups[1].Value, out float r) && r > 0f) return r;
-        return defaultRadius;
+        if (string.IsNullOrWhiteSpace(actionParams)) return new Vector3(3f, 0f, 0f);
+        string p = actionParams;
+        if (p.Contains("前")) return new Vector3(0f, 0f, 3f);
+        if (p.Contains("后")) return new Vector3(0f, 0f, -3f);
+        if (p.Contains("左")) return new Vector3(-3f, 0f, 0f);
+        if (p.Contains("右")) return new Vector3(3f, 0f, 0f);
+        return new Vector3(3f, 0f, 0f);
     }
 
     private Color GetTeamColor()

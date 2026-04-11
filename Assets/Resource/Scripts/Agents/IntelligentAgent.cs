@@ -108,7 +108,6 @@ public class IntelligentAgent : MonoBehaviour
         // 初始化各子系统
         CommModule?.Initialize();
         //PerceptionModule?.Initialize();
-        LLMControl?.RecordEvent("Agent initialized", "system", 1.0f);
         
         // 启动决策检查
         lastDecisionTime = Time.time;
@@ -131,7 +130,7 @@ public class IntelligentAgent : MonoBehaviour
         }
         
         // 模拟电量消耗（根据状态不同消耗速率不同）
-        float powerConsumption = CurrentState.Status == AgentStatus.ExecutingTask ? 0.8f : 0.3f;
+        float powerConsumption = CurrentState.Status == AgentStatus.ExecutingTask ? 0.3f : 0.08f;
         CurrentState.BatteryLevel -= Time.deltaTime * powerConsumption;
         
         if (CurrentState.BatteryLevel <= 0)

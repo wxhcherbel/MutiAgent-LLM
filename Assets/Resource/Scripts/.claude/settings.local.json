@@ -25,7 +25,8 @@
       "Bash(powershell -Command \"Get-Content 'E:\\\\基于Unity3D的多智能体控制与协同仿真系统\\\\UnityLLM\\\\LLM\\\\Assets\\\\Resource\\\\Scripts\\\\system-flow-reference.html' | Select-Object -Last 10\")",
       "WebSearch",
       "WebFetch(domain:arxiv.org)",
-      "Bash(sed 's/<[^>]*>//g')"
+      "Bash(sed 's/<[^>]*>//g')",
+      "Bash(wc -l Agents/*.cs LLM_Modules/*.cs Communication_Module/*.cs Enums/*.cs LLM_API/*.cs)"
     ]
   }
 }

@@ -4,11 +4,14 @@
 public enum AtomicActionType
 {
     MoveTo,
-    PatrolAround,
     Observe,
     Wait,
-    FormationHold,
-    Evade,
+    Track,
+    Signal,
+    Get,
+    Put,
+    Land,
+    Takeoff,
 }
 
 /// <summary>

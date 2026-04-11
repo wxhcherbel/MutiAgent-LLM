@@ -99,6 +99,23 @@ public class Memory
 
     /// <summary>是否属于可直接复用的程序性提示。</summary>
     public bool isProceduralHint;
+
+    /// <summary>
+    /// 反思深度层级，标记该记忆在知识层次中的位置：
+    /// 0 = L1 原始记录（来自执行层直接写入，如动作结果、感知事件）；
+    /// 1 = L2 反思推断（由失败/阻塞/阻塞触发的单次反思生成，含跨事件推断）；
+    /// 2 = L3 抽象洞察（由重要性累积触发的跨任务模式归纳，保留时间更长）。
+    /// 检索时可优先选取 depth≥1 的记忆以获取更高层次的指导。
+    /// </summary>
+    public int reflectionDepth = 0;
+
+    /// <summary>
+    /// Ebbinghaus 遗忘曲线强度值，范围 [0, 1]：
+    /// 初始值由 importance 决定（≈ importance），每次被 Recall 命中后 +0.1（上限 1）。
+    /// MemoryModule 在裁剪容量时优先保留 strengthScore 高的记忆，
+    /// 实现"频繁访问的热点记忆越来越稳固，长期未用的冷门记忆自然归档"效果。
+    /// </summary>
+    public float strengthScore = 0.5f;
 }
 
 /// <summary>
@@ -256,4 +273,12 @@ public class ReflectionInsight
 
     /// <summary>支撑该 insight 的来源记忆 ID 列表。</summary>
     public List<string> sourceMemoryIds = new List<string>();
+
+    /// <summary>
+    /// 洞察深度层级，与 Memory.reflectionDepth 对应：
+    /// 1 = L2 单次反思推断（失败/阻塞/重要观察触发，针对特定步骤或目标）；
+    /// 2 = L3 跨任务抽象（重要性累积触发，适用于多任务共同场景，expiresAt 较长）。
+    /// 检索时 insightDepth=2 的洞察具有更广泛的适用性，优先注入规划层上下文。
+    /// </summary>
+    public int insightDepth = 1;
 }

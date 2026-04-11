@@ -294,3 +294,82 @@ public class IncidentDebateSnapshot
     public string finalResolutionSummary;
     public DebateEntrySnapshot[] entries;
 }
+
+// ── 运动事件 ─────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// DoMoveTo 关键事件条目，供仪表板在地图气泡中可视化。
+/// </summary>
+[Serializable]
+public class MotionEventDto
+{
+    /// <summary>发起该事件的智能体 ID。</summary>
+    public string agentId;
+    /// <summary>事件类型："move_start" | "waypoint_timeout" | "obstacle_replan" | "arrive"</summary>
+    public string eventType;
+    /// <summary>含 emoji 前缀的用户可读描述。</summary>
+    public string message;
+    /// <summary>Time.time 游戏时间戳（秒）。</summary>
+    public float  timestamp;
+}
+
+// ── 记忆 / 反思洞察快照 ───────────────────────────────────────────────────────
+
+/// <summary>
+/// 单条记忆的仪表板展示快照（detail 截断到 500 字，其余字段完整保留）。
+/// </summary>
+[Serializable]
+public class MemorySnapshot
+{
+    public string   id;
+    public string   kind;               // AgentMemoryKind.ToString()
+    public string   summary;
+    public string   detail;             // 最多 500 字
+    public string   status;             // AgentMemoryStatus.ToString()
+    public float    importance;
+    public float    confidence;
+    public float    strengthScore;
+    public bool     isProceduralHint;
+    public int      reflectionDepth;    // 0=L1原始, 1=L2推断, 2=L3抽象
+    public string   sourceModule;
+    public string   missionId;
+    public string   targetRef;
+    public string   outcome;
+    public string[] tags;
+    public long     createdAtUnix;      // DateTimeOffset.ToUnixTimeSeconds()
+    public long     lastAccessedAtUnix;
+    public int      accessCount;
+}
+
+/// <summary>
+/// 反思洞察的仪表板展示快照。
+/// </summary>
+[Serializable]
+public class ReflectionInsightSnapshot
+{
+    public string   id;
+    public int      insightDepth;       // 1=L2, 2=L3
+    public string   title;
+    public string   summary;
+    public string   applyWhen;
+    public string   suggestedAdjustment;
+    public float    confidence;
+    public string   missionId;
+    public string   targetRef;
+    public string[] tags;
+    public long     createdAtUnix;
+    public long     expiresAtUnix;
+    public float    remainingSeconds;   // 服务端预算（秒），前端直接展示
+}
+
+/// <summary>
+/// 单个智能体的完整记忆 + 反思洞察快照载体。
+/// </summary>
+[Serializable]
+public class AgentMemoryPayload
+{
+    public string                      agentId;
+    public int                         totalMemoryCount; // 实际总条数（含未传输部分）
+    public MemorySnapshot[]            memories;         // 最多 30 条（程序性优先）
+    public ReflectionInsightSnapshot[] insights;         // 全部有效洞察
+}

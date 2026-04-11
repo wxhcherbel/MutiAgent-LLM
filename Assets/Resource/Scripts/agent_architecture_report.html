@@ -216,6 +216,7 @@
   <a class="toc-sub" href="#s8-4">8.4 无人机协作涌现模型</a>
   <a href="#s9">九、架构演进全图</a>
   <a href="#s_example">⭐ 端到端实战案例</a>
+  <a href="#s_example2">⭐ 自主日常案例（无注入）</a>
   <a href="#s10">十、实施路线图</a>
   <a href="#refs">参考文献</a>
 </nav>
@@ -2371,6 +2372,832 @@ SocialGraph.UpdateRelationship(
         <td><span class="badge-tag purple">新增</span></td>
         <td>封装「三机分向拦截」技能，下次直接复用减少LLM调用</td>
         <td>重复任务重复学习，没有经验积累</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<hr class="divider">
+
+<!-- SECTION EXAMPLE 2: AUTONOMOUS DAILY ROUTINE -->
+<section id="s_example2" class="section">
+  <h2 class="section-title">⭐ 端到端自主案例：普通工作日·三机无指令自治一天</h2>
+  <p style="font-size:14px;margin-bottom:8px;">本案例展示<strong>没有任何人类操作员介入</strong>的情况下，智能体如何像斯坦福小镇居民一样自主唤醒、产生目标、规划执行并从经验中成长——完整覆盖所有现有模块与预期新增模块。</p>
+
+  <!-- 与案例一对比提示 -->
+  <div class="alert info" style="margin-bottom:20px;font-size:13px;">
+    <strong>📌 与案例一的核心区别：</strong>案例一的驱动力是「人类注入任务」，案例二的驱动力是「时间流逝 + 自身性格 + 历史记忆」。任务从系统内部涌现，而非从外部输入。
+  </div>
+
+  <!-- 场景设定 Banner -->
+  <div class="card" style="background:linear-gradient(135deg,#1c4532,#276749,#2f855a);color:white;margin-bottom:24px;">
+    <h4 style="color:#9ae6b4;font-size:14px;margin-bottom:10px;">📋 场景设定</h4>
+    <div class="card-grid cols-3" style="gap:12px;">
+      <div style="background:rgba(255,255,255,0.1);border-radius:8px;padding:12px;">
+        <strong style="color:#68d391;">任务来源</strong>
+        <p style="font-size:12px;margin-top:4px;color:#e2e8f0;">无人类注入。系统时钟到达 06:00，SimulatedTimeModule 触发 OnNewDay，智能体自主产生当日目标</p>
+      </div>
+      <div style="background:rgba(255,255,255,0.1);border-radius:8px;padding:12px;">
+        <strong style="color:#f6ad55;">三机初始状态</strong>
+        <p style="font-size:12px;margin-top:4px;color:#e2e8f0;">
+          UAV-1「责任心型」— 充电站，电量100%，patrol专精<br>
+          UAV-2「协作型」— 操场，电量88%，support专精<br>
+          UAV-3「探索型」— 图书馆，电量91%，discovery专精
+        </p>
+      </div>
+      <div style="background:rgba(255,255,255,0.1);border-radius:8px;padding:12px;">
+        <strong style="color:#fc8181;">今日将发生</strong>
+        <p style="font-size:12px;margin-top:4px;color:#e2e8f0;">UAV-1/2 自主组队巡逻，中途发现东门未关并上报；UAV-3 独立探索发现新捷径；傍晚反思与技能积累</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 0: 夜间L3反思 -->
+  <div class="card" style="border-left:4px solid #4a5568;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#2d3748;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">0</div>
+      <div>
+        <strong style="font-size:14px;color:#2d3748;">05:55 — ReflectionModule（升级）— 夜间 L3 抽象反思</strong>
+        <span class="badge-tag blue" style="margin-left:8px;">升级模块</span>
+      </div>
+    </div>
+    <p style="font-size:13px;color:#4a5568;margin-bottom:10px;">每日 06:00 唤醒前5分钟，ReflectionModule 检测过去24小时内累积重要性 &gt; 阈值，自动触发 L3 抽象反思，生成供明天使用的高层洞察：</p>
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div>
+        <pre style="font-size:11px;padding:10px;">// UAV-1 夜间 L3 反思输出
+{
+  "depth": 3,
+  "insight": "本周北门和东门在
+    07:00~08:30 之间是安全盲区，
+    应优先安排清晨巡逻覆盖这两个区域",
+  "derivedFrom": [
+    "day-3: 北门07:15发现陌生人",
+    "day-5: 东门08:00发现未关"
+  ],
+  "priority": 9.2
+}
+// 写入 MemoryModule，reflectionDepth=3
+// 将在明早 AutonomousGoalGenerator 中被检索</pre>
+      </div>
+      <div>
+        <p style="font-size:12.5px;color:#4a5568;margin-bottom:8px;"><strong>为什么这步在「起床前」运行？</strong></p>
+        <ul class="check-list" style="font-size:12.5px;">
+          <li class="yes">L3 反思需要整合一整天的记忆流，计算量大，放在低活跃期执行不影响实时任务</li>
+          <li class="yes">生成的洞察立即可用于次日早晨的目标生成，形成「昨天经验 → 今天目标」的闭环</li>
+          <li class="yes">现有系统缺少此步骤，智能体每天从零开始，经验无法跨日积累</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 1: SimulatedTimeModule OnNewDay -->
+  <div class="card" style="border-left:4px solid #319795;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#2c7a7b;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">1</div>
+      <div>
+        <strong style="font-size:14px;color:#2c7a7b;">06:00 — SimulatedTimeModule（新增）— 时间感知与唤醒</strong>
+        <span class="badge-tag purple" style="margin-left:8px;">新增模块</span>
+      </div>
+    </div>
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div>
+        <pre style="font-size:11px;padding:10px;">// SimulatedTimeModule.cs
+// 系统仿真时间到达 06:00
+
+OnNewDay?.Invoke(new DayContext {
+  simDate: "2025-09-15",
+  simTime: "06:00",
+  period: TimePeriod.EarlyMorning,
+  seasonalContext: "工作日·秋季开学"
+});
+
+// 广播给所有 IntelligentAgent
+// → 每个 agent.OnReceiveNewDayEvent()
+//   → 触发 AutonomousGoalGenerator</pre>
+      </div>
+      <div>
+        <p style="font-size:12.5px;color:#4a5568;margin-bottom:8px;"><strong>时间感知的作用：</strong></p>
+        <ul class="check-list" style="font-size:12.5px;">
+          <li class="yes"><code>TimePeriod.EarlyMorning</code> 决定今天的行为模板（清晨与深夜的任务权重不同）</li>
+          <li class="yes">「工作日」vs「周末」影响 AutonomousGoalGenerator 的任务候选池（工作日更多安全巡逻，周末更多探索）</li>
+          <li class="yes">当前系统没有时间概念，所有时刻行为一致，无法模拟真实的作息节律</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 2: AutonomousGoalGenerator -->
+  <div class="card" style="border-left:4px solid #805ad5;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#553c9a;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">2</div>
+      <div>
+        <strong style="font-size:14px;color:#553c9a;">06:00–06:10 — AutonomousGoalGenerator（新增）+ PersonalitySystem（新增）+ MemoryModule — 自主目标生成</strong>
+        <span class="badge-tag purple" style="margin-left:8px;">新增模块</span>
+      </div>
+    </div>
+    <p style="font-size:13px;color:#4a5568;margin-bottom:10px;">每架无人机独立调用 LLM，输入「性格档案 + 昨日记忆 + 社会关系 + 当前状态 + 时间上下文」，输出今日自主目标。<strong>这是案例二最核心的「无注入」起点。</strong></p>
+    <div class="card-grid cols-3" style="gap:10px;">
+      <div style="background:#faf5ff;border:1px solid #d6bcfa;border-radius:8px;padding:12px;">
+        <strong style="color:#553c9a;font-size:12px;">UAV-1「责任心型」</strong>
+        <pre style="font-size:10px;padding:8px;margin-top:6px;">// PersonalitySystem
+personality: {
+  conscientiousness: 0.9,
+  agreeableness: 0.6,
+  openness: 0.4
+}
+// MemoryModule 检索 top-3:
+// [1] "北门07:15陌生人事件"(今)
+// [2] "东门未关 重要性8.5"(昨)
+// [3] "上周Scout成功率100%"
+
+// AutonomousGoalGenerator LLM输出:
+goal: "清晨优先巡逻北门+东门，
+  重点检查东门状态；
+  与UAV-2协作提高覆盖效率"
+submittedVia: SubmitAutonomousGoal()</pre>
+      </div>
+      <div style="background:#faf5ff;border:1px solid #d6bcfa;border-radius:8px;padding:12px;">
+        <strong style="color:#553c9a;font-size:12px;">UAV-2「协作型」</strong>
+        <pre style="font-size:10px;padding:8px;margin-top:6px;">// PersonalitySystem
+personality: {
+  conscientiousness: 0.7,
+  agreeableness: 0.95,
+  openness: 0.5
+}
+// SocialRelationshipGraph检索:
+// UAV-1 信任度 0.82 → 优先搭档
+// MemoryModule: "上次与UAV-1
+//   协作巡逻评分9.1"
+
+// AutonomousGoalGenerator LLM输出:
+goal: "协助UAV-1完成校园巡逻，
+  承担支援和记录工作；
+  关注操场和教学区安全"
+submittedVia: SubmitAutonomousGoal()</pre>
+      </div>
+      <div style="background:#faf5ff;border:1px solid #d6bcfa;border-radius:8px;padding:12px;">
+        <strong style="color:#553c9a;font-size:12px;">UAV-3「探索型」</strong>
+        <pre style="font-size:10px;padding:8px;margin-top:6px;">// PersonalitySystem
+personality: {
+  conscientiousness: 0.5,
+  agreeableness: 0.5,
+  openness: 0.95
+}
+// WorldSemanticMap: 图书馆北侧
+//   区域标记为"未完整探索"
+// MemoryModule: "发现新路径时
+//   管理员给予正向反馈 x3"
+
+// AutonomousGoalGenerator LLM输出:
+goal: "独立探索图书馆北侧未知区域，
+  更新语义地图，测试边界感知准确度"
+submittedVia: SubmitAutonomousGoal()</pre>
+      </div>
+    </div>
+    <div class="alert info" style="margin-top:10px;font-size:12.5px;">
+      <strong>关键设计：</strong><code>SubmitAutonomousGoal()</code> 是 PlanningModule 上新增的接口，与人类注入走<strong>完全相同的后续流程</strong>（LLM#1解析 → 分组 → Slot生成 → 认领 → ADM执行）。区别仅在于目标的来源：外部注入 vs 内部涌现。
+    </div>
+  </div>
+
+  <!-- STEP 3: LLM#1 解析自主目标 -->
+  <div class="card" style="border-left:4px solid #2b6cb0;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#2b6cb0;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">3</div>
+      <div>
+        <strong style="font-size:14px;color:#2b6cb0;">06:10 — LLM#1（PlanningModule）— 解析自主目标</strong>
+        <span class="badge-tag blue" style="margin-left:8px;">现有模块</span>
+        <span style="font-size:12px;color:#718096;margin-left:8px;">接口相同，来源不同</span>
+      </div>
+    </div>
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div>
+        <p style="font-size:13px;color:#4a5568;margin-bottom:8px;"><strong>输入：</strong>UAV-1 和 UAV-2 的目标文本（内容重叠 → 触发 Cooperation 分组）</p>
+        <pre style="font-size:11px;padding:10px;">{
+  "source": "AutonomousGoalGenerator",  // 新字段
+  "mission": "UAV-1：北门+东门巡逻；
+    UAV-2：协助巡逻+覆盖操场；
+    UAV-3：图书馆北侧独立探索",
+  "agentIds": ["UAV-1","UAV-2","UAV-3"]
+}</pre>
+      </div>
+      <div>
+        <p style="font-size:13px;color:#4a5568;margin-bottom:8px;"><strong>输出：ParsedMission</strong></p>
+        <pre style="font-size:11px;padding:10px;">{
+  "relType": "Cooperation+Independent",
+  "groupCnt": 2,
+  "groupMsns": [
+    "UAV-1+UAV-2: 协同校园安全巡逻",
+    "UAV-3: 独立地图探索任务"
+  ],
+  "constraints": [
+    {"cType":"C1",
+     "desc":"UAV-1负责北门/东门区域，
+       UAV-2负责操场/教学区域"},
+    {"cType":"C2",
+     "desc":"两机每30分钟同步一次状态"}
+  ]
+}</pre>
+      </div>
+    </div>
+    <div class="alert info" style="margin-top:8px;font-size:12.5px;">
+      <strong>此处的作用：</strong>LLM#1 识别出 UAV-1/2 目标存在自然协作关系（都在校园安全领域），自动将两机合并为 G0 巡逻组；UAV-3 目标独立，划入 G1 探索组。这种「自主分组」是当前系统不具备的能力。
+    </div>
+  </div>
+
+  <!-- STEP 4: 分组 + LLM#2 Slot生成 -->
+  <div class="card" style="border-left:4px solid #48bb78;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#276749;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">4</div>
+      <div>
+        <strong style="font-size:14px;color:#276749;">06:15 — 分组 + LLM#2（SlotGen）— 角色槽位生成</strong>
+        <span class="badge-tag green" style="margin-left:8px;">现有模块</span>
+      </div>
+    </div>
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div>
+        <pre style="font-size:11px;padding:10px;">// G0（巡逻组）槽位定义
+slots: [
+  {
+    slotId: "S0", role: "LeadScout",
+    desc: "主导北门/东门巡逻，
+      重点检查关键点位状态，
+      发现异常立即上报",
+    constraintIds: ["C1_north_east",
+                    "C2_sync_30min"]
+  },
+  {
+    slotId: "S1", role: "SupportPatrol",
+    desc: "覆盖操场/教学区，辅助
+      记录和区域状态更新，
+      接收并响应 LeadScout 的上报",
+    constraintIds: ["C1_playground",
+                    "C2_sync_30min"]
+  }
+]
+
+// G1（探索组）只有1人，直接进入ADM
+// UAV-3: role="Explorer"，无Slot竞争</pre>
+      </div>
+      <div>
+        <p style="font-size:12.5px;color:#4a5568;margin-bottom:8px;"><strong>日常任务的Slot与紧急任务的Slot有何不同？</strong></p>
+        <div style="background:#f0fff4;border-radius:6px;padding:10px;font-size:12px;color:#276749;margin-bottom:8px;">
+          <strong>紧急任务（案例一）：</strong>Scout / Interceptor / Perimeter<br>
+          硬时序约束（C3+/C3-），毫秒级同步，一旦错位任务失败
+        </div>
+        <div style="background:#ebf8ff;border-radius:6px;padding:10px;font-size:12px;color:#2b6cb0;">
+          <strong>日常任务（案例二）：</strong>LeadScout / SupportPatrol<br>
+          软协调约束（C1区域划分 + C2周期同步），容忍偏差，强调持续覆盖
+        </div>
+        <p style="font-size:12px;color:#718096;margin-top:8px;">Slot 机制的设计对两种场景同样适用，体现了槽位系统的通用性。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 5: LLM#3 + Whiteboard Slot认领 -->
+  <div class="card" style="border-left:4px solid #9f7aea;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#6b46c1;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">5</div>
+      <div>
+        <strong style="font-size:14px;color:#6b46c1;">06:20 — LLM#3 + SharedWhiteboard — Slot认领（自主协调）</strong>
+        <span class="badge-tag blue" style="margin-left:8px;">现有模块</span>
+        <span class="badge-tag purple" style="margin-left:4px;">MemoryModule + SocialGraph参与</span>
+      </div>
+    </div>
+    <div class="card-grid cols-2" style="gap:10px;">
+      <div style="background:#ebf8ff;border-radius:8px;padding:12px;">
+        <strong style="color:#2b6cb0;font-size:12px;">UAV-1 的决策过程</strong>
+        <pre style="font-size:10.5px;padding:8px;margin-top:6px;">// MemoryModule 检索：
+"历史LeadScout任务成功率: 94%"
+"东门昨日未关 → 需优先检查"
+
+// SocialRelationshipGraph：
+"UAV-2信任度0.82，协作顺畅"
+
+// LLM#3 决策：
+"选 S0 (LeadScout)"
+"负责北门/东门，擅长区域+记忆支撑"
+
+// 写白板：
+IntentAnnounce {
+  agentId: "UAV-1",
+  slotId: "S0",
+  reason: "北门专精+东门异常记忆"
+}</pre>
+      </div>
+      <div style="background:#ebf8ff;border-radius:8px;padding:12px;">
+        <strong style="color:#2b6cb0;font-size:12px;">UAV-2 的决策过程</strong>
+        <pre style="font-size:10.5px;padding:8px;margin-top:6px;">// 读白板：S0 已被 UAV-1 占领
+// SocialRelationshipGraph：
+"与UAV-1搭档历史评分高"
+
+// MemoryModule 检索：
+"上次支援UAV-1操场巡逻
+  效率评分8.7/10"
+
+// LLM#3 决策：
+"选 S1 (SupportPatrol)"
+"与UAV-1搭档、操场专精匹配"
+
+// 发送 SlotSelect → UAV-1确认
+// UAV-1广播 SlotConfirm + StartExec
+// 两机进入各自 ADM 执行循环</pre>
+      </div>
+    </div>
+    <div class="alert info" style="margin-top:10px;font-size:12.5px;">
+      <strong>与案例一的不同：</strong>案例一的 Slot 认领主要依据「当前状态（电量/位置）」；案例二还叠加了「历史成功率（MemoryModule）」+「社会关系偏好（SocialRelationshipGraph）」，使自主决策更具个性化和学习能力。
+    </div>
+  </div>
+
+  <!-- STEP 6: ADM 响应式巡逻 + 感知事件 -->
+  <div class="card" style="border-left:4px solid #f6ad55;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#c05621;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">6</div>
+      <div>
+        <strong style="font-size:14px;color:#c05621;">08:30 — 响应式ADM（LLM#5）+ PerceptionModule — 执行中感知异常</strong>
+        <span class="badge-tag orange" style="margin-left:8px;">改进模块</span>
+      </div>
+    </div>
+    <p style="font-size:13px;color:#4a5568;margin-bottom:10px;">两机已巡逻北门2小时，正常执行例行 ADM 决策循环。08:30，UAV-1 飞越东门区域，PerceptionModule 捕获到异常：</p>
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div>
+        <pre style="font-size:11px;padding:10px;">// PerceptionModule 感知输出 (0.5s一次)
+{
+  agentId: "UAV-1",
+  timestamp: "08:31:14",
+  observations: [
+    {
+      type: "AnomalyDetected",
+      desc: "东门铁门呈开启状态",
+      location: "east_gate",
+      importance: 8.5    // 高重要性
+    }
+  ]
+}
+// → 自动写入 MemoryModule
+//   (与昨日"东门未关"记忆关联,
+//    检索相关性得分↑)</pre>
+      </div>
+      <div>
+        <pre style="font-size:11px;padding:10px;">// ADM 下一决策周期自动获取感知
+// LLM#5 输入包含此感知:
+{
+  role: "LeadScout",
+  perception: "东门开启 (异常)",
+  memory_hit: "昨日同地点同类事件",
+  whiteboard: "当前无紧急任务"
+}
+
+// LLM#5 输出 (无需人类触发):
+nextActions: [
+  Observe("东门详细状态"),
+  ReportAnomaly("东门未关",
+    "east_gate", priority=HIGH),
+  WriteWhiteboard({
+    type: StatusUpdate,
+    desc: "东门异常，已上报",
+    constraintId: "C1_east_gate"
+  })
+]</pre>
+      </div>
+    </div>
+    <div class="alert warning" style="margin-top:8px;font-size:12.5px;">
+      <strong>这正是「执行层涌现」的体现：</strong>UAV-1 的 LeadScout 任务中<strong>没有</strong>「检查东门」这条预定步骤，但基于感知 + 记忆 + ADM 响应式决策，UAV-1 自主识别出异常并处理——不需要人类告知，也不需要重新规划。
+    </div>
+  </div>
+
+  <!-- STEP 7: WorldSemanticMap + SkillLibrary -->
+  <div class="card" style="border-left:4px solid #319795;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#2c7a7b;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">7</div>
+      <div>
+        <strong style="font-size:14px;color:#2c7a7b;">11:00 — WorldSemanticMap（新增）+ SkillLibrary（新增）— 地图更新与技能复用</strong>
+        <span class="badge-tag purple" style="margin-left:8px;">新增模块</span>
+      </div>
+    </div>
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div>
+        <strong style="font-size:13px;color:#2c7a7b;">UAV-3 的探索成果 → WorldSemanticMap</strong>
+        <pre style="font-size:10.5px;padding:10px;margin-top:8px;">// UAV-3 在图书馆北侧探索期间
+// 发现一条未记录的人行便道
+
+// WorldSemanticMap.UpdateNode():
+{
+  nodeId: "lib_north_path_01",
+  semanticLabel: "图书馆北侧捷径",
+  connectsTo: ["library_main",
+               "dormitory_area"],
+  traversalTime: 45,  // 秒
+  discoveredBy: "UAV-3",
+  note: "可减少图书馆→宿舍
+    区域间30%的飞行时间"
+}
+
+// 此更新立即对所有UAV可见
+// UAV-1/2 下次巡逻可利用此捷径</pre>
+      </div>
+      <div>
+        <strong style="font-size:13px;color:#2c7a7b;">G0 巡逻组 → SkillLibrary 复用</strong>
+        <pre style="font-size:10.5px;padding:10px;margin-top:8px;">// 巡逻组午前已完成一轮巡逻
+// SkillLibrary.Search():
+query: "两机协同校园安全巡逻"
+
+// 命中已有技能:
+{
+  name: "routine_campus_patrol",
+  desc: "双机分区巡逻，
+    周期同步状态，
+    LeadScout负责关键点检查",
+  successRate: 0.91,
+  avgDuration: "2h",
+  lastUsed: "3天前"
+}
+
+// 直接加载技能模板
+// ADM 使用技能中的步骤框架
+// 减少 LLM#5 调用次数约40%</pre>
+      </div>
+    </div>
+    <div class="alert info" style="margin-top:8px;font-size:12.5px;">
+      <strong>两个新增模块的协同：</strong>WorldSemanticMap 让 UAV-3 的探索成果惠及全体（共享世界模型），SkillLibrary 让 UAV-1/2 的成功经验提高执行效率（技能复用）。这两者都需要先有 MemoryModule + Reflection 的积累才能生效。
+    </div>
+  </div>
+
+  <!-- STEP 8: GroupMonitor + ReflectionModule 触发 -->
+  <div class="card" style="border-left:4px solid #d69e2e;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#b7791f;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">8</div>
+      <div>
+        <strong style="font-size:14px;color:#b7791f;">17:00 — GroupMonitor + ReflectionModule（升级）— 阶段性反思</strong>
+        <span class="badge-tag blue" style="margin-left:8px;">现有 + 升级</span>
+      </div>
+    </div>
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div>
+        <p style="font-size:13px;color:#4a5568;margin-bottom:8px;"><strong>GroupMonitor 状态评估：</strong></p>
+        <pre style="font-size:11px;padding:10px;">// GroupMonitor 收集全天白板信号
+{
+  "G0_巡逻组状态": {
+    completedCycles: 3,
+    anomaliesFound: 1,   // 东门未关
+    anomaliesResolved: 1,
+    coverageRate: "94%",
+    syncCompliance: "100%"
+  },
+  "G1_探索组状态": {
+    newNodesDiscovered: 1,
+    mapCoverageIncrease: "+3.2%",
+    perceptionAccuracy: "98.7%"
+  }
+}
+// LLM评估: 日常任务完成度 ✅
+// 触发: TaskStatus.DailyComplete</pre>
+      </div>
+      <div>
+        <p style="font-size:13px;color:#4a5568;margin-bottom:8px;"><strong>ReflectionModule L2 触发（重要性积累 &gt; 阈值）：</strong></p>
+        <pre style="font-size:11px;padding:10px;">// 今日事件重要性累积:
+// 东门异常(8.5) + 3次巡逻完成
+// (6.0×3) + 捷径发现(7.2) = 33.7
+// 阈值 30 → 触发 L2 反思
+
+// UAV-1 L2 反思输出:
+{
+  "depth": 2,
+  "insight": "东门在清晨连续两天
+    出现未关情况，建议将东门检查
+    纳入每日固定巡逻节点（优先级↑）",
+  "actionSuggestion": "明日
+    AutonomousGoalGenerator将此
+    insight纳入目标生成权重"
+}
+// 写入 MemoryModule，depth=2</pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 9: SocialRelationshipGraph + CommunicationModule -->
+  <div class="card" style="border-left:4px solid #ed64a6;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#b83280;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">9</div>
+      <div>
+        <strong style="font-size:14px;color:#b83280;">18:00 — SocialRelationshipGraph（新增）+ CommunicationModule — 关系强化与对话记忆</strong>
+        <span class="badge-tag purple" style="margin-left:8px;">新增模块</span>
+      </div>
+    </div>
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div>
+        <pre style="font-size:11px;padding:10px;">// 任务结束后 CommunicationModule
+// UAV-1 → UAV-2 自然语言对话：
+Message {
+  type: DirectAgent,
+  from: "UAV-1",
+  to: "UAV-2",
+  content: "今天东门发现异常，
+    你在操场方向有看到什么吗？
+    下次可以加一个操场-东门
+    的联合检查点"
+}
+
+// UAV-2 回复：
+Message {
+  content: "同意，今天操场正常。
+    明天我可以在08:00顺路检查
+    东门外围，你继续主检。"
+}
+
+// 对话内容写入双方记忆流
+// importance = 6.5（协作规划意义高）</pre>
+      </div>
+      <div>
+        <p style="font-size:13px;color:#4a5568;margin-bottom:8px;"><strong>SocialRelationshipGraph 更新：</strong></p>
+        <pre style="font-size:11px;padding:10px;">// 今日协作评分 → 更新关系图谱
+SocialRelationshipGraph.Update({
+  agentA: "UAV-1",
+  agentB: "UAV-2",
+  event: "successful_joint_patrol",
+  trustDelta: +0.05,  // 信任度提升
+  familiarityDelta: +0.08,
+  cooperationScore: 9.1
+})
+
+// 更新后关系状态：
+{
+  UAV1_UAV2: {
+    trust: 0.87,      // 0.82 → 0.87
+    familiarity: 0.74,
+    preferredRole:
+      "UAV-1:Lead, UAV-2:Support",
+    sharedGoals: ["campus_safety"]
+  }
+}
+// 明日 SlotSelection 中
+// 此关系将直接影响搭档偏好</pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 10: 夜间记忆与L3反思 -->
+  <div class="card" style="border-left:4px solid #4a5568;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#2d3748;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">10</div>
+      <div>
+        <strong style="font-size:14px;color:#2d3748;">23:55 — MemoryModule（升级）+ ReflectionModule L3 — 夜间沉淀，闭环形成</strong>
+        <span class="badge-tag blue" style="margin-left:8px;">升级模块</span>
+      </div>
+    </div>
+    <p style="font-size:13px;color:#4a5568;margin-bottom:10px;">一天结束，系统进入夜间低活跃期。MemoryModule 整理全天记忆流，ReflectionModule 准备次日 L3 抽象反思（对应 Step 0 的「下一天」），形成<strong>自主成长闭环</strong>：</p>
+    <div class="card-grid cols-3" style="gap:10px;">
+      <div style="background:#f7fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;">
+        <strong style="color:#2d3748;font-size:12px;">MemoryModule 今日写入汇总</strong>
+        <pre style="font-size:10px;padding:8px;margin-top:6px;">今日新增记忆:
+- 东门08:31开启异常 (imp=8.5)
+- 捷径lib_north_path_01(imp=7.2)
+- UAV-2协作对话(imp=6.5)
+- 3次例行巡逻完成(imp=6.0×3)
+- L2反思：加强东门巡逻(imp=9.0)
+
+总计: 12条新记忆
+旧记忆衰减: recency decay ×0.97
+检索索引更新完毕</pre>
+      </div>
+      <div style="background:#f7fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;">
+        <strong style="color:#2d3748;font-size:12px;">ReflectionModule L3（凌晨准备）</strong>
+        <pre style="font-size:10px;padding:8px;margin-top:6px;">// 输入: 今日所有imp>6.0的记忆
+// LLM生成L3抽象洞察:
+
+insight_L3: "东门安全薄弱点
+  已连续2日发现，形成稳定
+  模式。建议调整角色偏好：
+  UAV-1长期主导东门检查，
+  纳入LeadScout默认路径规划"
+
+// 写入 MemoryModule, depth=3
+// 将在明天06:00被
+// AutonomousGoalGenerator 检索
+// → 形成自主成长的完整闭环 ✅</pre>
+      </div>
+      <div style="background:#f0fff4;border:1px solid #9ae6b4;border-radius:8px;padding:12px;">
+        <strong style="color:#276749;font-size:12px;">明天早上的变化（演示闭环）</strong>
+        <ul style="font-size:10.5px;padding-left:14px;margin-top:8px;color:#4a5568;">
+          <li>AutonomousGoalGenerator 检索到「东门安全薄弱」L3洞察，自动将东门检查列入高优先级目标</li>
+          <li>UAV-1 的 Slot 偏好因 SocialGraph 更新，更倾向与 UAV-2 搭档</li>
+          <li>巡逻技能模板中加入东门专项检查节点</li>
+          <li>WorldSemanticMap 新捷径可被所有机使用，缩短路径15%</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- 系统自主性对比图 -->
+  <h3 class="sub-title" style="margin-top:28px;">🔄 自主成长闭环示意</h3>
+  <div style="background:#1a202c;border-radius:10px;padding:20px;margin-bottom:24px;overflow-x:auto;">
+    <svg viewBox="0 0 900 220" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:900px;">
+      <defs>
+        <marker id="arrowG" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#68d391"/>
+        </marker>
+      </defs>
+      <!-- Nodes -->
+      <rect x="10" y="80" width="130" height="50" rx="8" fill="#276749" stroke="#68d391" stroke-width="1.5"/>
+      <text x="75" y="102" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">SimulatedTime</text>
+      <text x="75" y="118" text-anchor="middle" font-size="10" fill="#9ae6b4">OnNewDay 触发</text>
+
+      <rect x="170" y="80" width="150" height="50" rx="8" fill="#553c9a" stroke="#d6bcfa" stroke-width="1.5"/>
+      <text x="245" y="99" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">AutonomousGoal</text>
+      <text x="245" y="115" text-anchor="middle" font-size="10" fill="#e9d8fd">Generator</text>
+      <text x="245" y="129" text-anchor="middle" font-size="9" fill="#b794f4">性格+记忆+社会关系</text>
+
+      <rect x="350" y="60" width="130" height="50" rx="8" fill="#2b6cb0" stroke="#63b3ed" stroke-width="1.5"/>
+      <text x="415" y="82" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">PlanningModule</text>
+      <text x="415" y="98" text-anchor="middle" font-size="10" fill="#bee3f8">LLM#1~3 + Slot</text>
+      <text x="415" y="112" text-anchor="middle" font-size="9" fill="#90cdf4">分组·槽位·认领</text>
+
+      <rect x="510" y="60" width="130" height="50" rx="8" fill="#c05621" stroke="#f6ad55" stroke-width="1.5"/>
+      <text x="575" y="82" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">ADM 执行循环</text>
+      <text x="575" y="98" text-anchor="middle" font-size="10" fill="#fbd38d">LLM#5 响应式</text>
+      <text x="575" y="112" text-anchor="middle" font-size="9" fill="#f6ad55">感知→决策→行动</text>
+
+      <rect x="670" y="60" width="130" height="50" rx="8" fill="#2c7a7b" stroke="#81e6d9" stroke-width="1.5"/>
+      <text x="735" y="82" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">Memory + Reflect</text>
+      <text x="735" y="98" text-anchor="middle" font-size="10" fill="#b2f5ea">记忆写入+反思</text>
+      <text x="735" y="112" text-anchor="middle" font-size="9" fill="#81e6d9">L1→L2→L3洞察</text>
+
+      <!-- Bottom row -->
+      <rect x="350" y="145" width="130" height="45" rx="8" fill="#b7791f" stroke="#f6e05e" stroke-width="1.5"/>
+      <text x="415" y="165" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">SkillLibrary</text>
+      <text x="415" y="181" text-anchor="middle" font-size="10" fill="#fefcbf">技能积累与复用</text>
+
+      <rect x="510" y="145" width="130" height="45" rx="8" fill="#702459" stroke="#f687b3" stroke-width="1.5"/>
+      <text x="575" y="165" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">SocialGraph</text>
+      <text x="575" y="181" text-anchor="middle" font-size="10" fill="#fed7e2">关系强化与偏好</text>
+
+      <!-- Arrows main flow -->
+      <line x1="140" y1="105" x2="168" y2="105" stroke="#68d391" stroke-width="2" marker-end="url(#arrowG)"/>
+      <line x1="320" y1="105" x2="348" y2="90" stroke="#68d391" stroke-width="2" marker-end="url(#arrowG)"/>
+      <line x1="480" y1="85" x2="508" y2="85" stroke="#68d391" stroke-width="2" marker-end="url(#arrowG)"/>
+      <line x1="640" y1="85" x2="668" y2="85" stroke="#68d391" stroke-width="2" marker-end="url(#arrowG)"/>
+      <!-- Feedback loop: Memory → AutonomousGoal (curved top) -->
+      <path d="M 735 60 Q 735 20 245 20 Q 170 20 245 78" stroke="#68d391" stroke-width="1.5" fill="none" stroke-dasharray="5,3" marker-end="url(#arrowG)"/>
+      <text x="490" y="14" text-anchor="middle" font-size="10" fill="#68d391">夜间反思 → 明日目标</text>
+      <!-- SkillLibrary → ADM -->
+      <line x1="480" y1="167" x2="510" y2="167" stroke="#f6e05e" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#arrowG)"/>
+      <line x1="575" y1="145" x2="575" y2="110" stroke="#f6e05e" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#arrowG)"/>
+      <!-- SocialGraph → AutonomousGoal -->
+      <line x1="575" y1="190" x2="245" y2="190" stroke="#f687b3" stroke-width="1.5" stroke-dasharray="4,2"/>
+      <line x1="245" y1="190" x2="245" y2="130" stroke="#f687b3" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#arrowG)"/>
+      <!-- ADM → Memory -->
+      <line x1="640" y1="100" x2="670" y2="100" stroke="#68d391" stroke-width="2" marker-end="url(#arrowG)"/>
+      <!-- Memory → SkillLibrary -->
+      <line x1="735" y1="110" x2="480" y2="155" stroke="#81e6d9" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#arrowG)"/>
+    </svg>
+  </div>
+
+  <!-- SUMMARY TABLE -->
+  <h3 class="sub-title">📊 案例中各模块的角色汇总（普通一天·自主模式）</h3>
+  <table>
+    <thead>
+      <tr><th>模块</th><th>状态</th><th>在本案例中的具体作用</th><th>没有它会怎样</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>SimulatedTimeModule</strong></td>
+        <td><span class="badge-tag purple">新增</span></td>
+        <td>06:00 触发 OnNewDay，驱动全体智能体自主启动；时间段(EarlyMorning)影响任务权重</td>
+        <td>无时间感知，智能体不知道「新的一天开始了」，无法自主启动</td>
+      </tr>
+      <tr>
+        <td><strong>AutonomousGoalGenerator</strong></td>
+        <td><span class="badge-tag purple">新增</span></td>
+        <td>每机调用LLM基于性格+记忆+社会关系自主生成当日目标，替代人类任务注入</td>
+        <td><strong>完全无法实现本案例</strong>，所有行为必须等待人类注入才能开始</td>
+      </tr>
+      <tr>
+        <td><strong>PersonalitySystem</strong></td>
+        <td><span class="badge-tag purple">新增</span></td>
+        <td>UAV-1高责任心→自主选择安全巡逻；UAV-3高开放性→自主选择探索；三机目标自然分化</td>
+        <td>三机生成相同目标，无法自然分工，分组毫无意义</td>
+      </tr>
+      <tr>
+        <td><strong>LLM#1 任务解析</strong></td>
+        <td><span class="badge-tag green">现有</span></td>
+        <td>将自主生成的目标文本解析为结构化约束和分组建议（与人类注入走完全相同流程）</td>
+        <td>自主目标无法被后续Slot系统消费，规划流程断裂</td>
+      </tr>
+      <tr>
+        <td><strong>分组+LLM#2 Slot生成</strong></td>
+        <td><span class="badge-tag green">现有</span></td>
+        <td>识别UAV-1/2目标重叠→合并巡逻组；UAV-3独立→探索组；生成日常任务的软约束Slot</td>
+        <td>无法识别协作机会，三机完全独立无协同；或无角色划分导致重复覆盖</td>
+      </tr>
+      <tr>
+        <td><strong>LLM#3+Whiteboard Slot认领</strong></td>
+        <td><span class="badge-tag green">现有</span></td>
+        <td>UAV-1基于历史成功率选LeadScout；UAV-2读白板+社会关系选SupportPatrol；无冲突确认</td>
+        <td>角色选择随机或冲突，两机可能都去巡逻北门，操场无人覆盖</td>
+      </tr>
+      <tr>
+        <td><strong>响应式ADM（LLM#5升级）</strong></td>
+        <td><span class="badge-tag orange">改进</span></td>
+        <td>东门未关异常被感知后，ADM在当前决策周期自动调整行为，无需预设步骤</td>
+        <td>固定步骤无东门检查节点，异常被忽视；或需人类告知才能处理</td>
+      </tr>
+      <tr>
+        <td><strong>PerceptionModule</strong></td>
+        <td><span class="badge-tag green">现有</span></td>
+        <td>0.5s周期感知东门状态，发现开启异常→写入记忆流→ADM下次决策周期自动获取</td>
+        <td>感知结果不写入记忆，ADM无法知道刚才发生了什么</td>
+      </tr>
+      <tr>
+        <td><strong>SharedWhiteboard</strong></td>
+        <td><span class="badge-tag green">现有</span></td>
+        <td>UAV-1将东门异常上报写入白板（C1_east_gate），UAV-2可感知并协调后续行动</td>
+        <td>异常上报仅存在于UAV-1本地，UAV-2不知情，无法协同处理</td>
+      </tr>
+      <tr>
+        <td><strong>WorldSemanticMap</strong></td>
+        <td><span class="badge-tag purple">新增</span></td>
+        <td>UAV-3探索新捷径后更新语义地图，全体UAV次日可直接使用，提升整体导航效率</td>
+        <td>探索成果只存在UAV-3记忆中，无法共享；其他机无法受益于新发现</td>
+      </tr>
+      <tr>
+        <td><strong>SkillLibrary</strong></td>
+        <td><span class="badge-tag purple">新增</span></td>
+        <td>命中已有「routine_campus_patrol」技能，ADM直接复用步骤框架，减少LLM调用40%</td>
+        <td>每次巡逻都从零规划，即使是重复任务也消耗相同计算资源，无法积累经验</td>
+      </tr>
+      <tr>
+        <td><strong>GroupMonitor</strong></td>
+        <td><span class="badge-tag green">现有</span></td>
+        <td>收集全天巡逻完成信号，LLM评估覆盖率94%，触发「日常任务完成」状态</td>
+        <td>系统不知道任务何时算「完成」，无法触发后续反思和关系更新</td>
+      </tr>
+      <tr>
+        <td><strong>MemoryModule（升级）</strong></td>
+        <td><span class="badge-tag blue">升级</span></td>
+        <td>三维评分确保东门异常（高重要性）、新捷径（高关联性）被优先检索，指导明日目标生成</td>
+        <td>关键经验被平等对待或被遗忘，AutonomousGoalGenerator无法从过去学习</td>
+      </tr>
+      <tr>
+        <td><strong>ReflectionModule（升级）</strong></td>
+        <td><span class="badge-tag blue">升级</span></td>
+        <td>L2反思提炼「加强东门巡逻」建议；夜间L3抽象出跨日模式，直接影响明日目标生成</td>
+        <td>经验无法提炼为洞察，智能体每天重蹈覆辙，无法成长</td>
+      </tr>
+      <tr>
+        <td><strong>SocialRelationshipGraph</strong></td>
+        <td><span class="badge-tag purple">新增</span></td>
+        <td>今日成功协作后UAV-1/2信任度+0.05，明日Slot选择时自然优先搭档，形成默契</td>
+        <td>每天重新匹配，UAV-1/2无法形成固定高效搭档，协作需反复磨合</td>
+      </tr>
+      <tr>
+        <td><strong>CommunicationModule</strong></td>
+        <td><span class="badge-tag green">现有</span></td>
+        <td>UAV-1/2任务后对话写入记忆流，包含明日联合检查东门的协议——跨日协作规划的起点</td>
+        <td>协作规划只发生在LLM内部，无法以自然语言形式固化为可检索记忆</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- 两案例对比 -->
+  <h3 class="sub-title" style="margin-top:28px;">📐 两个端到端案例对比</h3>
+  <table>
+    <thead>
+      <tr><th>对比维度</th><th>案例一：三机协同拦截（人类注入）</th><th>案例二：普通一天（自主涌现）</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>任务来源</strong></td>
+        <td>人类操作员注入自然语言任务</td>
+        <td>SimulatedTimeModule + AutonomousGoalGenerator 内部涌现</td>
+      </tr>
+      <tr>
+        <td><strong>规划触发</strong></td>
+        <td>外部突发事件（入侵者出现）</td>
+        <td>时间事件（每日06:00）+ 性格驱动</td>
+      </tr>
+      <tr>
+        <td><strong>约束类型</strong></td>
+        <td>硬物理约束（C3+时序等待、C3-方向互斥）</td>
+        <td>软行为约束（C1区域划分、C2周期同步）</td>
+      </tr>
+      <tr>
+        <td><strong>涌现层级</strong></td>
+        <td>执行层涌现（在固定角色内自主路径/时序）</td>
+        <td>目标层涌现（今天做什么本身是自主决定的）</td>
+      </tr>
+      <tr>
+        <td><strong>时间跨度</strong></td>
+        <td>~30分钟单次任务</td>
+        <td>18小时日常循环，跨日积累成长</td>
+      </tr>
+      <tr>
+        <td><strong>关键新增模块</strong></td>
+        <td>SocialGraph（关系）+ SkillLibrary（技能积累）</td>
+        <td>AutonomousGoalGenerator + PersonalitySystem + SimulatedTimeModule + WorldSemanticMap</td>
+      </tr>
+      <tr>
+        <td><strong>斯坦福小镇类比</strong></td>
+        <td>类比「消防演习」：有明确外部触发，协调解决具体问题</td>
+        <td>类比「普通一天」：居民自主决定今天做什么，在互动中自然涌现</td>
       </tr>
     </tbody>
   </table>

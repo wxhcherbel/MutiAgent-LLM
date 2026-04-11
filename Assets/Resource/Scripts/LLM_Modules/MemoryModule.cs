@@ -7,14 +7,62 @@ using UnityEngine;
 
 public class MemoryModule : MonoBehaviour
 {
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Inspector 配置
+    // ═══════════════════════════════════════════════════════════════════════════
+
     [Header("记忆容量")]
+    /// <summary>记忆列表最大条数。超出时按重要度+访问时间裁剪，程序性提示优先保留。</summary>
     [Min(32)] public int maxMemoryCount = 512;
+    /// <summary>反思洞察最大条数。超出时按置信度+创建时间裁剪。</summary>
     [Min(8)] public int maxReflectionInsightCount = 64;
+    /// <summary>
+    /// 新鲜度衰减窗口（小时）。
+    /// 记忆的年龄超过此值后新鲜度分会趋近于 0，但不会被强制删除。
+    /// </summary>
     [Min(1f)] public float freshnessWindowHours = 72f;
 
+    [Header("重要性累积触发反思")]
+    /// <summary>
+    /// 重要性累积阈值：每次存入记忆时，将 importance×10 累加到累积器。
+    /// 累积器达到此阈值时触发 OnImportanceThresholdReached 事件，通知 ReflectionModule 执行 L2 反思。
+    /// 值越小，反思触发越频繁（token 消耗越高）；值越大，反思越稀疏（经验沉淀越慢）。
+    /// 默认 150 对应约 15 条 importance=1.0 的高权重记忆进入后才触发一次。
+    /// </summary>
+    [Min(50f)] public float reflectionImportanceThreshold = 150f;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 公共数据（Inspector 可见，方便调试）
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>当前存储的所有结构化记忆。</summary>
     public List<Memory> memories = new List<Memory>();
+    /// <summary>当前有效的反思洞察（已过期的在每次 Recall/RegisterInsight 时自动清理）。</summary>
     public List<ReflectionInsight> reflectionInsights = new List<ReflectionInsight>();
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 事件（供外部模块订阅）
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// 当重要性累积器达到 reflectionImportanceThreshold 时触发。
+    /// ReflectionModule 订阅此事件以执行 L2 跨事件反思（独立于失败/阻塞触发的 L1 反思）。
+    /// 每次触发后累积器归零，下一周期重新累积。
+    /// </summary>
+    public event Action OnImportanceThresholdReached;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 私有字段
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// 重要性累积器：每次 StoreMemory 时 += importance×10。
+    /// 达到 reflectionImportanceThreshold 后触发事件并归零。
+    /// 不需要持久化，重启后从 0 重新积累即可。
+    /// </summary>
+    private float _importanceAccumulator = 0f;
+
+    /// <summary>词袋文本相似度使用的 token 提取正则。</summary>
     private static readonly Regex TokenRegex = new Regex(@"[\p{L}\p{Nd}_]+", RegexOptions.Compiled);
 
     private void Awake()
@@ -23,15 +71,20 @@ public class MemoryModule : MonoBehaviour
         TrimMemoryCapacity();
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 接口函数：记忆写入
+    // ═══════════════════════════════════════════════════════════════════════════
+
     /// <summary>
-    /// 统一入库入口：
-    /// 所有记忆都会先在这里补齐默认值、去掉空字段、做容量裁剪，
-    /// 保证后面的检索逻辑面对的是稳定结构，而不是半成品数据。
+    /// 统一入库入口（所有其他 Remember* 方法的最终调用点）：
+    /// 补齐字段默认值 → 入库 → 裁剪容量 → 累积重要性（可能触发 L2 反思事件）。
+    /// 保证后续检索逻辑面对的是结构稳定的数据，而不是半成品。
     /// </summary>
     public Memory StoreMemory(Memory memory)
     {
         if (memory == null) return null;
 
+        // ── 字段规范化 ──────────────────────────────────────────────
         memory.id = string.IsNullOrWhiteSpace(memory.id) ? Guid.NewGuid().ToString("N") : memory.id.Trim();
         memory.summary = CleanText(memory.summary);
         memory.detail = CleanText(memory.detail);
@@ -45,17 +98,28 @@ public class MemoryModule : MonoBehaviour
         memory.lastAccessedAt = memory.lastAccessedAt == default ? memory.createdAt : memory.lastAccessedAt;
         memory.importance = Mathf.Clamp01(memory.importance <= 0f ? 0.5f : memory.importance);
         memory.confidence = Mathf.Clamp01(memory.confidence <= 0f ? 0.5f : memory.confidence);
-        memory.status = memory.status;
         memory.tags = NormalizeList(memory.tags);
         memory.relatedAgentIds = NormalizeList(memory.relatedAgentIds);
         memory.relatedEntityRefs = NormalizeList(memory.relatedEntityRefs);
         memory.derivedFromMemoryIds = NormalizeList(memory.derivedFromMemoryIds);
 
+        // 初始化遗忘曲线强度：以重要度作为起始值，高重要度记忆本身就有更强的初始稳固性
+        if (memory.strengthScore <= 0f)
+            memory.strengthScore = memory.importance;
+
         memories.Add(memory);
         TrimMemoryCapacity();
+
+        // 累积重要性：超过阈值时通知 ReflectionModule 触发 L2 跨事件反思
+        AccumulateImportance(memory.importance);
+
         return memory;
     }
 
+    /// <summary>
+    /// 构建并存储一条结构化记忆（统一工厂方法，推荐优先使用此方法而非直接 new Memory）。
+    /// reflectionDepth 标记知识层次：0=原始事实，1=L2反思推断，2=L3抽象洞察。
+    /// </summary>
     public Memory Remember(
         AgentMemoryKind kind,
         string summary,
@@ -73,7 +137,8 @@ public class MemoryModule : MonoBehaviour
         IEnumerable<string> relatedAgentIds = null,
         IEnumerable<string> relatedEntityRefs = null,
         IEnumerable<string> derivedFromMemoryIds = null,
-        bool isProceduralHint = false)
+        bool isProceduralHint = false,
+        int reflectionDepth = 0)
     {
         Memory memory = new Memory
         {
@@ -93,12 +158,17 @@ public class MemoryModule : MonoBehaviour
             relatedAgentIds = relatedAgentIds != null ? new List<string>(relatedAgentIds) : new List<string>(),
             relatedEntityRefs = relatedEntityRefs != null ? new List<string>(relatedEntityRefs) : new List<string>(),
             derivedFromMemoryIds = derivedFromMemoryIds != null ? new List<string>(derivedFromMemoryIds) : new List<string>(),
-            isProceduralHint = isProceduralHint
+            isProceduralHint = isProceduralHint,
+            reflectionDepth = reflectionDepth
         };
 
         return StoreMemory(memory);
     }
 
+    /// <summary>记录本 Agent 在指定步骤生成执行计划的快照（importance=0.72）。
+    /// 由 PlanningModule 在 LLM#4 步骤生成完毕后调用。
+    /// 后续检索时可为相同角色/目标的计划阶段提供历史经验。
+    /// </summary>
     public Memory RememberPlanSnapshot(
         string missionId,
         string slotId,
@@ -122,6 +192,9 @@ public class MemoryModule : MonoBehaviour
             tags: tags);
     }
 
+    /// <summary>记录某一步骤的阶段性进展（importance 默认 0.68）。
+    /// 由 PlanningModule.CompleteCurrentStep() 或 ADM 在步骤完成时调用。
+    /// </summary>
     public Memory RememberProgress(
         string missionId,
         string slotId,
@@ -145,6 +218,10 @@ public class MemoryModule : MonoBehaviour
             outcome: "progress");
     }
 
+    /// <summary>记录单次原子动作的执行结果（成功 importance=0.62；失败 importance=0.86）。
+    /// 失败记忆的高重要度保证它在后续检索时被优先召回，避免重蹈覆辙。
+    /// 由 ActionDecisionModule 在每批次动作执行完成后调用。
+    /// </summary>
     public Memory RememberActionExecution(
         string missionId,
         string slotId,
@@ -171,6 +248,10 @@ public class MemoryModule : MonoBehaviour
             relatedEntityRefs: BuildTagSet(targetRef));
     }
 
+    /// <summary>记录感知模块捕获到的环境观测（importance=0.75）。
+    /// 由 PerceptionModule 在 OnPerceptionEvent 回调中调用。
+    /// entityRefs 用于传入本次观测涉及的实体引用列表，便于后续按目标检索。
+    /// </summary>
     public Memory RememberObservation(
         string missionId,
         string slotId,
@@ -196,6 +277,10 @@ public class MemoryModule : MonoBehaviour
             tags: BuildTagSet(targetRef, stepLabel));
     }
 
+    /// <summary>记录整个任务（mission）的最终结果（成功 importance=0.94，失败 importance=0.96）。
+    /// 由 GroupMonitor.EvaluateMissionCompletion() 在判断任务完成后调用。
+    /// 这是任务执行全周期最高权重的记忆节点，importance 极高保证未来跨任务检索时必定被召回。
+    /// </summary>
     public Memory RememberMissionOutcome(string missionId, string slotId, string summary, bool success, string targetRef = "")
     {
         return Remember(
@@ -212,9 +297,14 @@ public class MemoryModule : MonoBehaviour
             outcome: success ? "mission_success" : "mission_failure");
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 接口函数：记忆检索
+    // ═══════════════════════════════════════════════════════════════════════════
+
     /// <summary>
     /// 统一检索入口：
-    /// 不靠硬编码地点词表，而是按“任务ID、槽位、步骤、目标、标签、自由文本”综合打分。
+    /// 不靠硬编码词表，而是按”任务ID、槽位、步骤、目标、标签、自由文本”综合打分，
+    /// 返回 Top-K 最相关记忆。每次命中都会强化该记忆的 strengthScore（Ebbinghaus 效应）。
     /// </summary>
     public List<Memory> Recall(MemoryQuery query)
     {
@@ -243,11 +333,20 @@ public class MemoryModule : MonoBehaviour
         {
             ranked[i].accessCount++;
             ranked[i].lastAccessedAt = now;
+            // Ebbinghaus 强化：被访问的记忆强度 +0.1，最高 1.0
+            // 使热点记忆在 TrimMemoryCapacity 时得到优先保留
+            StrengthenMemory(ranked[i]);
         }
 
         return ranked;
     }
 
+    /// <summary>
+    /// 存入一条反思洞察（由 ReflectionModule 在 LLM 反思完成后调用）：
+    /// 同步写入 reflectionInsights 列表（供 GetRelevantInsights 专项检索），
+    /// 并作为 kind=Reflection、isProceduralHint=true 的记忆写入 memories 列表（供 Recall 通用检索）。
+    /// insight.insightDepth 决定写入的 Memory.reflectionDepth（1=L2，2=L3）。
+    /// </summary>
     public void RegisterReflectionInsight(ReflectionInsight insight)
     {
         if (insight == null) return;
@@ -270,6 +369,8 @@ public class MemoryModule : MonoBehaviour
         reflectionInsights.Add(insight);
         TrimInsightCapacity();
 
+        // 将反思洞察同步写入 Memory 列表，供 Recall 检索
+        // reflectionDepth 由 insight.insightDepth 决定（1=L2单次反思，2=L3抽象洞察）
         Remember(
             AgentMemoryKind.Reflection,
             string.IsNullOrWhiteSpace(insight.title) ? insight.summary : insight.title,
@@ -283,9 +384,15 @@ public class MemoryModule : MonoBehaviour
             targetRef: insight.targetRef,
             derivedFromMemoryIds: insight.sourceMemoryIds,
             tags: insight.tags,
-            isProceduralHint: true);
+            isProceduralHint: true,
+            reflectionDepth: insight.insightDepth);
     }
 
+    /// <summary>
+    /// 检索与 query 最相关的反思洞察（专项索引，比 Recall 过滤 kind=Reflection 更高效）。
+    /// 自动清理过期洞察。由 BuildPlanningContext / BuildActionContext 内部调用，
+    /// 也可由 ActionDecisionModule 直接调用以获取操作规则提示。
+    /// </summary>
     public List<ReflectionInsight> GetRelevantInsights(MemoryQuery query, int maxCount = 2)
     {
         if (query == null) query = new MemoryQuery();
@@ -417,30 +524,6 @@ public class MemoryModule : MonoBehaviour
         return builder.ToString().TrimEnd();
     }
 
-    // 兼容旧调用：现在不再生成关键词，而是直接按结构化字段入记忆。
-    public void AddMemory(string description, string type, float importance = 0.5f)
-    {
-        AgentMemoryKind kind = ParseLegacyKind(type);
-        Remember(
-            kind,
-            description,
-            description,
-            importance: importance,
-            confidence: 0.7f,
-            sourceModule: "Legacy");
-    }
-
-    // 兼容旧调用：对外仍返回 Memory 列表，但内部已改成结构化检索。
-    public List<Memory> RetrieveRelevantMemories(string query, int maxCount = 5)
-    {
-        return Recall(new MemoryQuery
-        {
-            freeText = query,
-            maxCount = maxCount,
-            preferProceduralHints = true
-        });
-    }
-
     private float ScoreMemory(Memory memory, MemoryQuery query)
     {
         if (memory == null) return 0f;
@@ -566,12 +649,22 @@ public class MemoryModule : MonoBehaviour
         return builder.ToString();
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 辅助函数：容量管理
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// 裁剪记忆列表到最大容量：
+    /// 优先保留程序性提示 → 次按 strengthScore（Ebbinghaus强度）降序 → 再按重要度 → 最后按访问时间。
+    /// strengthScore 纳入排序保证"频繁被检索的热点记忆不因年龄老化而被淘汰"。
+    /// </summary>
     private void TrimMemoryCapacity()
     {
         if (memories.Count <= maxMemoryCount) return;
 
         memories = memories
             .OrderByDescending(m => m != null && m.isProceduralHint ? 1 : 0)
+            .ThenByDescending(m => m != null ? m.strengthScore : 0f)
             .ThenByDescending(m => m != null ? m.importance : 0f)
             .ThenByDescending(m => m != null ? m.lastAccessedAt : DateTime.MinValue)
             .ThenByDescending(m => m != null ? m.createdAt : DateTime.MinValue)
@@ -596,6 +689,37 @@ public class MemoryModule : MonoBehaviour
     {
         DateTime now = DateTime.UtcNow;
         reflectionInsights.RemoveAll(i => i == null || (i.expiresAt != default && i.expiresAt <= now));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 辅助函数：重要性累积与遗忘曲线
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// 重要性累积器更新：每次 StoreMemory 后调用。
+    /// importance×10 累加到累积器，超过阈值时触发 OnImportanceThresholdReached 事件，
+    /// 通知 ReflectionModule 执行 L2 跨事件反思，然后累积器归零。
+    /// 使用 importance×10 而非原始值，是为了让高重要度事件（如动作失败）对触发反思贡献更大。
+    /// </summary>
+    private void AccumulateImportance(float importance)
+    {
+        _importanceAccumulator += importance * 10f;
+        if (_importanceAccumulator >= reflectionImportanceThreshold)
+        {
+            _importanceAccumulator = 0f;
+            OnImportanceThresholdReached?.Invoke();
+        }
+    }
+
+    /// <summary>
+    /// Ebbinghaus 遗忘曲线强化：每次记忆被 Recall 命中时调用。
+    /// strengthScore +0.1（上限 1.0），模拟"重复激活使记忆更稳固"的效果。
+    /// TrimMemoryCapacity 时 strengthScore 高的记忆优先保留。
+    /// </summary>
+    private static void StrengthenMemory(Memory memory)
+    {
+        if (memory == null) return;
+        memory.strengthScore = Mathf.Min(1f, memory.strengthScore + 0.1f);
     }
 
     private static AgentMemoryKind ParseLegacyKind(string type)
