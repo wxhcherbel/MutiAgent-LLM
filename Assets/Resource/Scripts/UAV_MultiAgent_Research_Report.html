@@ -1,0 +1,1769 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>多智能体无人机仿真平台 · 研究创新方向深度报告</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;400;600;700&family=Space+Mono:wght@400;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap');
+
+  :root {
+    --bg: #0a0c10;
+    --surface: #111520;
+    --surface2: #161c2e;
+    --border: #1e2840;
+    --accent1: #3b82f6;
+    --accent2: #8b5cf6;
+    --accent3: #06b6d4;
+    --accent4: #10b981;
+    --accent5: #f59e0b;
+    --accent6: #ef4444;
+    --text: #e2e8f0;
+    --text-muted: #64748b;
+    --text-dim: #94a3b8;
+    --gold: #fbbf24;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Noto Sans SC', sans-serif;
+    line-height: 1.8;
+    overflow-x: hidden;
+  }
+
+  /* ===== HERO ===== */
+  .hero {
+    position: relative;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding: 4rem 2rem;
+    overflow: hidden;
+  }
+
+  .hero-grid {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(59,130,246,0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(59,130,246,0.05) 1px, transparent 1px);
+    background-size: 60px 60px;
+    animation: gridDrift 20s linear infinite;
+  }
+
+  @keyframes gridDrift {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(60px); }
+  }
+
+  .hero-glow {
+    position: absolute;
+    width: 700px; height: 700px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(59,130,246,0.12) 0%, rgba(139,92,246,0.08) 40%, transparent 70%);
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    animation: pulse 6s ease-in-out infinite alternate;
+  }
+
+  @keyframes pulse {
+    from { transform: translate(-50%, -50%) scale(0.9); opacity: 0.7; }
+    to { transform: translate(-50%, -50%) scale(1.1); opacity: 1; }
+  }
+
+  .hero-tag {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--accent1);
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    padding: 0.4rem 1.2rem;
+    border: 1px solid rgba(59,130,246,0.3);
+    border-radius: 999px;
+    margin-bottom: 2rem;
+    position: relative;
+    z-index: 2;
+    background: rgba(59,130,246,0.05);
+  }
+
+  .hero-title {
+    font-family: 'Noto Serif SC', serif;
+    font-size: clamp(2rem, 5vw, 4rem);
+    font-weight: 700;
+    line-height: 1.2;
+    margin-bottom: 1.5rem;
+    position: relative;
+    z-index: 2;
+    background: linear-gradient(135deg, #e2e8f0 0%, #93c5fd 50%, #a78bfa 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .hero-subtitle {
+    font-size: 1rem;
+    color: var(--text-dim);
+    max-width: 700px;
+    position: relative;
+    z-index: 2;
+    margin-bottom: 3rem;
+  }
+
+  .hero-meta {
+    display: flex;
+    gap: 2rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    position: relative;
+    z-index: 2;
+  }
+
+  .hero-stat {
+    text-align: center;
+  }
+
+  .hero-stat-num {
+    font-family: 'Space Mono', monospace;
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--accent1);
+  }
+
+  .hero-stat-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  /* ===== NAV ===== */
+  .toc {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(10,12,16,0.95);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border);
+    padding: 0 2rem;
+  }
+
+  .toc-inner {
+    max-width: 1400px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .toc-inner::-webkit-scrollbar { display: none; }
+
+  .toc-item {
+    flex-shrink: 0;
+    padding: 1rem 1.2rem;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+    white-space: nowrap;
+    text-decoration: none;
+    display: block;
+  }
+
+  .toc-item:hover {
+    color: var(--accent1);
+    border-bottom-color: var(--accent1);
+  }
+
+  /* ===== MAIN ===== */
+  main {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 4rem 2rem;
+  }
+
+  /* ===== SYSTEM ARCH ===== */
+  .arch-section {
+    margin-bottom: 5rem;
+  }
+
+  .section-label {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--accent3);
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+  }
+
+  .section-title {
+    font-family: 'Noto Serif SC', serif;
+    font-size: clamp(1.5rem, 3vw, 2.2rem);
+    font-weight: 700;
+    margin-bottom: 0.75rem;
+    color: var(--text);
+  }
+
+  .section-desc {
+    color: var(--text-dim);
+    max-width: 720px;
+    margin-bottom: 2.5rem;
+    font-size: 0.95rem;
+  }
+
+  /* ===== ARCH DIAGRAM ===== */
+  .arch-diagram {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 2.5rem;
+    margin-bottom: 2rem;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.75rem;
+    overflow-x: auto;
+  }
+
+  .arch-diagram pre {
+    color: var(--text-dim);
+    white-space: pre;
+    line-height: 1.6;
+  }
+
+  .arch-highlight { color: var(--accent1); }
+  .arch-highlight2 { color: var(--accent2); }
+  .arch-highlight3 { color: var(--accent3); }
+  .arch-highlight4 { color: var(--accent4); }
+  .arch-highlight5 { color: var(--accent5); }
+
+  /* ===== DIRECTION CARDS ===== */
+  .direction-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .dir-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 2rem;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .dir-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    right: 0; height: 3px;
+    border-radius: 16px 16px 0 0;
+  }
+
+  .dir-card.blue::before { background: linear-gradient(90deg, var(--accent1), var(--accent3)); }
+  .dir-card.purple::before { background: linear-gradient(90deg, var(--accent2), var(--accent1)); }
+  .dir-card.green::before { background: linear-gradient(90deg, var(--accent4), var(--accent3)); }
+  .dir-card.orange::before { background: linear-gradient(90deg, var(--accent5), var(--accent6)); }
+  .dir-card.cyan::before { background: linear-gradient(90deg, var(--accent3), var(--accent4)); }
+  .dir-card.red::before { background: linear-gradient(90deg, var(--accent6), var(--accent5)); }
+
+  .dir-card:hover {
+    border-color: rgba(59,130,246,0.3);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  }
+
+  .dir-card-icon {
+    font-size: 2rem;
+    margin-bottom: 1rem;
+  }
+
+  .dir-card-title {
+    font-family: 'Noto Serif SC', serif;
+    font-size: 1.1rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+    color: var(--text);
+  }
+
+  .dir-card-en {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-bottom: 1rem;
+    letter-spacing: 0.05em;
+  }
+
+  .dir-card-desc {
+    font-size: 0.88rem;
+    color: var(--text-dim);
+    line-height: 1.7;
+  }
+
+  /* ===== DEEP SECTIONS ===== */
+  .deep-section {
+    margin-bottom: 6rem;
+    scroll-margin-top: 80px;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 1.5rem;
+    margin-bottom: 2.5rem;
+    padding-bottom: 2rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .section-number {
+    font-family: 'Space Mono', monospace;
+    font-size: 3rem;
+    font-weight: 700;
+    line-height: 1;
+    opacity: 0.15;
+    flex-shrink: 0;
+    margin-top: -0.3rem;
+  }
+
+  .section-header-text .section-label { margin-bottom: 0.3rem; }
+  .section-header-text .section-title { margin-bottom: 0.5rem; }
+
+  /* ===== PAPER CARDS ===== */
+  .paper-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1.2rem;
+    margin-bottom: 2.5rem;
+  }
+
+  .paper-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent1);
+    border-radius: 8px;
+    padding: 1.5rem;
+    transition: border-color 0.2s;
+  }
+
+  .paper-card.purple-border { border-left-color: var(--accent2); }
+  .paper-card.green-border { border-left-color: var(--accent4); }
+  .paper-card.orange-border { border-left-color: var(--accent5); }
+  .paper-card.cyan-border { border-left-color: var(--accent3); }
+  .paper-card.red-border { border-left-color: var(--accent6); }
+
+  .paper-card:hover {
+    background: var(--surface2);
+  }
+
+  .paper-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .paper-title {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--text);
+    flex: 1;
+  }
+
+  .paper-badges {
+    display: flex;
+    gap: 0.4rem;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+
+  .badge {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.6rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .badge-blue { background: rgba(59,130,246,0.15); color: var(--accent1); border: 1px solid rgba(59,130,246,0.3); }
+  .badge-purple { background: rgba(139,92,246,0.15); color: var(--accent2); border: 1px solid rgba(139,92,246,0.3); }
+  .badge-green { background: rgba(16,185,129,0.15); color: var(--accent4); border: 1px solid rgba(16,185,129,0.3); }
+  .badge-orange { background: rgba(245,158,11,0.15); color: var(--accent5); border: 1px solid rgba(245,158,11,0.3); }
+  .badge-cyan { background: rgba(6,182,212,0.15); color: var(--accent3); border: 1px solid rgba(6,182,212,0.3); }
+  .badge-red { background: rgba(239,68,68,0.15); color: var(--accent6); border: 1px solid rgba(239,68,68,0.3); }
+
+  .paper-source {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    margin-bottom: 0.75rem;
+  }
+
+  .paper-source a {
+    color: var(--accent3);
+    text-decoration: none;
+  }
+
+  .paper-source a:hover { text-decoration: underline; }
+
+  .paper-what {
+    margin-bottom: 0.75rem;
+  }
+
+  .paper-what-label {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 0.3rem;
+    font-family: 'Space Mono', monospace;
+  }
+
+  .paper-what-text {
+    font-size: 0.88rem;
+    color: var(--text-dim);
+    line-height: 1.7;
+  }
+
+  .paper-apply {
+    background: rgba(59,130,246,0.06);
+    border: 1px solid rgba(59,130,246,0.15);
+    border-radius: 8px;
+    padding: 1rem;
+    margin-top: 0.75rem;
+  }
+
+  .paper-apply-label {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--accent1);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .paper-apply-label::before {
+    content: '▶';
+    font-size: 0.5rem;
+  }
+
+  .paper-apply-text {
+    font-size: 0.86rem;
+    color: var(--text-dim);
+    line-height: 1.7;
+  }
+
+  /* ===== INNOVATION BOX ===== */
+  .innovation-box {
+    background: linear-gradient(135deg, rgba(59,130,246,0.08) 0%, rgba(139,92,246,0.06) 100%);
+    border: 1px solid rgba(59,130,246,0.25);
+    border-radius: 16px;
+    padding: 2rem;
+    margin-top: 2.5rem;
+    margin-bottom: 2rem;
+  }
+
+  .innovation-box-header {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .innovation-box-icon {
+    width: 40px; height: 40px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, var(--accent1), var(--accent2));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    flex-shrink: 0;
+  }
+
+  .innovation-box-title {
+    font-family: 'Noto Serif SC', serif;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .innovation-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .innovation-step {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+  }
+
+  .step-num {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--accent1);
+    background: rgba(59,130,246,0.15);
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 0.1rem;
+  }
+
+  .step-text {
+    font-size: 0.9rem;
+    color: var(--text-dim);
+    line-height: 1.7;
+  }
+
+  .step-text strong { color: var(--text); }
+
+  /* ===== GRAND PROPOSAL ===== */
+  .grand-section {
+    margin-bottom: 6rem;
+    scroll-margin-top: 80px;
+  }
+
+  .proposal-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1.5rem;
+    margin-top: 2rem;
+  }
+
+  .proposal-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 2rem;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .proposal-card::after {
+    content: attr(data-letter);
+    position: absolute;
+    bottom: -1rem;
+    right: -0.5rem;
+    font-family: 'Space Mono', monospace;
+    font-size: 6rem;
+    font-weight: 700;
+    opacity: 0.04;
+    line-height: 1;
+    pointer-events: none;
+  }
+
+  .proposal-badge {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    padding: 0.3rem 0.8rem;
+    border-radius: 999px;
+    margin-bottom: 1rem;
+    display: inline-block;
+  }
+
+  .proposal-badge.recommended {
+    background: rgba(16,185,129,0.15);
+    color: var(--accent4);
+    border: 1px solid rgba(16,185,129,0.3);
+  }
+
+  .proposal-badge.advanced {
+    background: rgba(139,92,246,0.15);
+    color: var(--accent2);
+    border: 1px solid rgba(139,92,246,0.3);
+  }
+
+  .proposal-badge.pioneering {
+    background: rgba(245,158,11,0.15);
+    color: var(--accent5);
+    border: 1px solid rgba(245,158,11,0.3);
+  }
+
+  .proposal-title {
+    font-family: 'Noto Serif SC', serif;
+    font-size: 1.15rem;
+    font-weight: 700;
+    margin-bottom: 1rem;
+    color: var(--text);
+  }
+
+  .proposal-desc {
+    font-size: 0.88rem;
+    color: var(--text-dim);
+    line-height: 1.8;
+    margin-bottom: 1rem;
+  }
+
+  .proposal-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .ptag {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.6rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 4px;
+    background: var(--surface2);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+
+  /* ===== TABLE ===== */
+  .comparison-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    margin-top: 1.5rem;
+    overflow: hidden;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+  }
+
+  .comparison-table th {
+    background: var(--surface2);
+    color: var(--text-dim);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 0.85rem 1rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .comparison-table td {
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid rgba(30,40,64,0.6);
+    color: var(--text-dim);
+    vertical-align: top;
+  }
+
+  .comparison-table tr:last-child td { border-bottom: none; }
+  .comparison-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+  .td-highlight { color: var(--text); font-weight: 500; }
+
+  .check { color: var(--accent4); }
+  .cross { color: var(--accent6); }
+  .partial { color: var(--accent5); }
+
+  /* ===== FLOW DIAGRAM ===== */
+  .flow-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 2rem;
+    margin: 2rem 0;
+  }
+
+  .flow-title {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    margin-bottom: 1.5rem;
+  }
+
+  .flow-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+  }
+
+  .flow-node {
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    font-family: 'Space Mono', monospace;
+    border: 1px solid;
+  }
+
+  .fn-blue { background: rgba(59,130,246,0.12); border-color: rgba(59,130,246,0.3); color: var(--accent1); }
+  .fn-purple { background: rgba(139,92,246,0.12); border-color: rgba(139,92,246,0.3); color: var(--accent2); }
+  .fn-green { background: rgba(16,185,129,0.12); border-color: rgba(16,185,129,0.3); color: var(--accent4); }
+  .fn-orange { background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.3); color: var(--accent5); }
+  .fn-cyan { background: rgba(6,182,212,0.12); border-color: rgba(6,182,212,0.3); color: var(--accent3); }
+  .fn-red { background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.3); color: var(--accent6); }
+  .fn-gray { background: rgba(100,116,139,0.12); border-color: rgba(100,116,139,0.3); color: var(--text-muted); }
+
+  .flow-arrow {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+  }
+
+  /* ===== KEYWORD BOX ===== */
+  .keyword-cloud {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin-top: 1.5rem;
+  }
+
+  .keyword {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.72rem;
+    padding: 0.35rem 0.9rem;
+    border-radius: 999px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    cursor: default;
+    transition: all 0.2s;
+  }
+
+  .keyword:hover {
+    border-color: var(--accent1);
+    color: var(--accent1);
+    background: rgba(59,130,246,0.08);
+  }
+
+  /* ===== HIGHLIGHT QUOTE ===== */
+  .highlight-quote {
+    border-left: 3px solid var(--accent1);
+    padding: 1rem 1.5rem;
+    margin: 1.5rem 0;
+    background: rgba(59,130,246,0.05);
+    border-radius: 0 8px 8px 0;
+    font-size: 0.9rem;
+    color: var(--text-dim);
+    font-style: italic;
+  }
+
+  .highlight-quote strong { color: var(--text); font-style: normal; }
+
+  /* ===== CALLOUT ===== */
+  .callout {
+    display: flex;
+    gap: 1rem;
+    padding: 1.2rem 1.5rem;
+    border-radius: 10px;
+    margin: 1.5rem 0;
+    align-items: flex-start;
+  }
+
+  .callout-info { background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.2); }
+  .callout-warn { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); }
+  .callout-success { background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); }
+
+  .callout-icon { font-size: 1.1rem; flex-shrink: 0; margin-top: 0.1rem; }
+  .callout-text { font-size: 0.88rem; color: var(--text-dim); line-height: 1.7; }
+  .callout-text strong { color: var(--text); }
+
+  /* ===== FOOTER ===== */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 3rem 2rem;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    font-family: 'Space Mono', monospace;
+  }
+
+  /* ===== RESPONSIVE ===== */
+  @media (max-width: 768px) {
+    .direction-grid { grid-template-columns: 1fr; }
+    .proposal-grid { grid-template-columns: 1fr; }
+    .section-header { flex-direction: column; gap: 0.5rem; }
+    .section-number { font-size: 2rem; }
+  }
+
+  /* Scroll animation */
+  .fade-in {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.6s ease, transform 0.6s ease;
+  }
+
+  .fade-in.visible {
+    opacity: 1;
+    transform: none;
+  }
+</style>
+</head>
+<body>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-grid"></div>
+  <div class="hero-glow"></div>
+  <div class="hero-tag">Research Innovation Report · 2025</div>
+  <h1 class="hero-title">基于Unity的多智能体无人机<br>协同仿真平台创新研究方向</h1>
+  <p class="hero-subtitle">
+    面向LLM驱动的异构智能体集群系统 — 通信约束、博弈决策、人机协同与自主演进
+  </p>
+  <div class="hero-meta">
+    <div class="hero-stat">
+      <div class="hero-stat-num">6</div>
+      <div class="hero-stat-label">核心研究方向</div>
+    </div>
+    <div class="hero-stat">
+      <div class="hero-stat-num">20+</div>
+      <div class="hero-stat-label">相关论文 / 框架</div>
+    </div>
+    <div class="hero-stat">
+      <div class="hero-stat-num">3</div>
+      <div class="hero-stat-label">创新落地方案</div>
+    </div>
+    <div class="hero-stat">
+      <div class="hero-stat-num">2025</div>
+      <div class="hero-stat-label">最新文献截至</div>
+    </div>
+  </div>
+</section>
+
+<!-- TOC -->
+<nav class="toc">
+  <div class="toc-inner">
+    <a class="toc-item" href="#current">现有架构</a>
+    <a class="toc-item" href="#mad">MAD 辩论</a>
+    <a class="toc-item" href="#hetero">异构智能体</a>
+    <a class="toc-item" href="#comm">通信约束</a>
+    <a class="toc-item" href="#game">博弈论</a>
+    <a class="toc-item" href="#hitl">人机交互</a>
+    <a class="toc-item" href="#memory">记忆反思</a>
+    <a class="toc-item" href="#proposals">创新方案</a>
+    <a class="toc-item" href="#keywords">检索关键词</a>
+  </div>
+</nav>
+
+<main>
+
+  <!-- === SECTION 0: 现有架构梳理 === -->
+  <section class="arch-section" id="current">
+    <div class="section-label">SYSTEM OVERVIEW</div>
+    <h2 class="section-title">你现有系统的架构梳理</h2>
+    <p class="section-desc">
+      在进入创新点讨论前，先把你已有的架构清晰化，这样才能知道在哪里"动刀"最有价值。
+    </p>
+
+    <div class="arch-diagram">
+<pre>
+┌────────────────────────────────────────────────────────────────────────────┐
+│  <span class="arch-highlight">USER</span>  →  自然语言指令输入  →  <span class="arch-highlight2">PLAN MODULE (LLM)</span>                               │
+│                                      │                                     │
+│               ┌──────────────────────┴───────────────────────┐             │
+│               │         任务类型分组                          │             │
+│         <span class="arch-highlight4">合作组</span> (1组)                            <span class="arch-highlight5">竞争/对抗组</span> (多组)       │
+│               │                                    │                       │
+│    ┌──────────▼──────────┐             ┌───────────▼─────────┐             │
+│    │  <span class="arch-highlight">GROUP PLANNER</span>      │             │  <span class="arch-highlight2">GROUP PLANNER N</span>     │             │
+│    │  任务→slot分配      │             │  博弈论(待接入)     │             │
+│    └──┬───┬───┬──────────┘             └─────────────────────┘             │
+│       │   │   │                                                             │
+│    <span class="arch-highlight3">AGENT₁ AGENT₂ AGENT₃</span>  ... 每个接同一LLM API                              │
+│       │   │   │                                                             │
+│    slot→steps执行     冲突解决: <span class="arch-highlight5">白板机制</span> (占用/等待)                          │
+│                                                                             │
+│  ❌ 无记忆/反思模块      ❌ 无通信约束建模     ❌ 全同构LLM                  │
+│  ❌ 无Human-in-Loop     ❌ 无Bayesian协商     ❌ 对抗逻辑待完成              │
+└────────────────────────────────────────────────────────────────────────────┘
+</pre>
+    </div>
+
+    <div class="callout callout-info">
+      <div class="callout-icon">💡</div>
+      <div class="callout-text">
+        <strong>关键判断：</strong>你的系统目前是"中心化任务分发 + 被动执行"的架构。导师的六个方向，本质上都是在推动你向<strong>「分布式 · 资源感知 · 自适应」</strong>方向演进。以下每个方向都会指出它解决了你现有系统的哪个"❌"。
+      </div>
+    </div>
+
+    <div class="direction-grid">
+      <div class="dir-card blue">
+        <div class="dir-card-icon">🗣️</div>
+        <div class="dir-card-title">MAD 多智能体辩论</div>
+        <div class="dir-card-en">Multi-Agent Debate</div>
+        <div class="dir-card-desc">解决你白板冲突机制不够智能的问题——让agent之间通过结构化辩论来协商决策，而非简单排队占用。</div>
+      </div>
+      <div class="dir-card purple">
+        <div class="dir-card-icon">🧩</div>
+        <div class="dir-card-title">异构LLM智能体</div>
+        <div class="dir-card-en">Heterogeneous LLM Agents</div>
+        <div class="dir-card-desc">解决你所有agent接同一API的问题——不同能力的模型承担不同角色，像公司里的分工。</div>
+      </div>
+      <div class="dir-card cyan">
+        <div class="dir-card-icon">📡</div>
+        <div class="dir-card-title">通信约束建模</div>
+        <div class="dir-card-en">Communication-Constrained Coordination</div>
+        <div class="dir-card-desc">在你的仿真中引入带宽/延迟/拓扑约束，研究agent在信息不完全下的决策策略。</div>
+      </div>
+      <div class="dir-card orange">
+        <div class="dir-card-icon">🎲</div>
+        <div class="dir-card-title">博弈论与Bayesian协商</div>
+        <div class="dir-card-en">Game Theory + Bayesian Negotiation</div>
+        <div class="dir-card-desc">为你的竞争/对抗类任务提供数学基础，让agent在不确定信息下作出理性决策。</div>
+      </div>
+      <div class="dir-card green">
+        <div class="dir-card-icon">👁️</div>
+        <div class="dir-card-title">人对集群的理解与控制</div>
+        <div class="dir-card-en">Human-Swarm Interaction (HSI)</div>
+        <div class="dir-card-desc">研究在什么时机人类介入最有价值，以及如何用可解释性反馈降低操作员认知负担。</div>
+      </div>
+      <div class="dir-card red">
+        <div class="dir-card-icon">🧠</div>
+        <div class="dir-card-title">记忆与反思演进</div>
+        <div class="dir-card-en">Memory + Reflection (Generative Agents)</div>
+        <div class="dir-card-desc">接入类斯坦福小镇的记忆-反思闭环，让agent从经验中学习，向真正自治系统演进。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- === SECTION 1: MAD === -->
+  <section class="deep-section" id="mad">
+    <div class="section-header">
+      <div class="section-number" style="color: var(--accent1)">01</div>
+      <div class="section-header-text">
+        <div class="section-label" style="color: var(--accent1)">MULTI-AGENT DEBATE</div>
+        <h2 class="section-title">MAD 多智能体辩论：比白板更聪明的冲突解决</h2>
+        <p class="section-desc">
+          你现在用白板（先到先得 + 等待）解决合作类任务的冲突，但这本质上是一种被动的"锁机制"。MAD让agent用语言辩论来主动达成共识，效果更好，也更接近真实的团队决策。
+        </p>
+      </div>
+    </div>
+
+    <div class="paper-list">
+
+      <div class="paper-card">
+        <div class="paper-header">
+          <div class="paper-title">Encouraging Divergent Thinking in LLMs through Multi-Agent Debate</div>
+          <div class="paper-badges">
+            <span class="badge badge-blue">EMNLP 2024</span>
+            <span class="badge badge-green">奠基论文</span>
+          </div>
+        </div>
+        <div class="paper-source">Liang et al. · Association for Computational Linguistics · <a href="https://aclanthology.org/2024.emnlp-main.992/" target="_blank">aclanthology.org</a></div>
+        <div class="paper-what">
+          <div class="paper-what-label">论文讲什么</div>
+          <div class="paper-what-text">提出了MAD框架的原型：多个LLM在"针锋相对"(tit-for-tat)模式下表达论点，由一个judge agent决定最终答案。核心发现是：适度的"坚持己见"比立刻让步效果更好，但需要自适应打断机制，辩论不能无限进行。</div>
+        </div>
+        <div class="paper-apply">
+          <div class="paper-apply-label">如何用在你的系统</div>
+          <div class="paper-apply-text">将你的白板冲突解决替换为一个轻量级MAD子模块：当两个agent同时申请同一个目标位置时，触发辩论（而非等待），各自陈述理由（距离更近？电量更高？任务更紧急？），由plan module作为judge输出最终分配。这比白板的先到先得更合理。</div>
+        </div>
+      </div>
+
+      <div class="paper-card">
+        <div class="paper-header">
+          <div class="paper-title">Improving Multi-Agent Debate with Sparse Communication Topology</div>
+          <div class="paper-badges">
+            <span class="badge badge-blue">EMNLP Findings 2024</span>
+            <span class="badge badge-cyan">通信优化</span>
+          </div>
+        </div>
+        <div class="paper-source">Li et al. · EMNLP 2024 · <a href="https://aclanthology.org/2024.findings-emnlp.427.pdf" target="_blank">aclanthology.org</a></div>
+        <div class="paper-what">
+          <div class="paper-what-label">论文讲什么</div>
+          <div class="paper-what-text">发现传统MAD让所有agent两两通信（全连接图）既贵又慢。稀疏拓扑（例如每个agent只和2-3个邻居辩论）可以节省41%以上的token开销，同时保持甚至提升了辩论深度，因为稀疏图让agent更晚达成共识，思考更多轮次。</div>
+        </div>
+        <div class="paper-apply">
+          <div class="paper-apply-label">如何用在你的系统</div>
+          <div class="paper-apply-text">在Unity中，无人机的通信天然就是受物理距离限制的。用稀疏拓扑MAD来模拟现实：agent只和空间上相邻的无人机辩论，而不是和整个集群广播。这同时解决了"通信约束"和"MAD效率"两个方向，是一个非常自然的创新结合点。</div>
+        </div>
+      </div>
+
+      <div class="paper-card purple-border">
+        <div class="paper-header">
+          <div class="paper-title">FREE-MAD: Consensus-Free Multi-Agent Debate</div>
+          <div class="paper-badges">
+            <span class="badge badge-purple">arXiv 2025</span>
+            <span class="badge badge-orange">鲁棒性</span>
+          </div>
+        </div>
+        <div class="paper-source">Cui et al. · arXiv:2509.11035 · <a href="https://arxiv.org/html/2509.11035v1" target="_blank">arxiv.org</a></div>
+        <div class="paper-what">
+          <div class="paper-what-label">论文讲什么</div>
+          <div class="paper-what-text">传统MAD需要达成共识才能输出结果，在通信攻击或agent退出时会崩溃。FREE-MAD不需要共识：它评估整个辩论轨迹（不只是最后一轮），用置信度加权来做决策。在不可靠网络环境下比传统MAD更稳定。</div>
+        </div>
+        <div class="paper-apply">
+          <div class="paper-apply-label">如何用在你的系统</div>
+          <div class="paper-apply-text">对抗类场景中，部分无人机可能被干扰或故障。FREE-MAD的思路直接适用：即使3号机通信中断，辩论系统仍能基于已有的辩论历史推断出合理决策，不需要等待全员共识。这直接对应你说的"对抗类任务"场景。</div>
+        </div>
+      </div>
+
+      <div class="paper-card cyan-border">
+        <div class="paper-header">
+          <div class="paper-title">S²-MAD: Selective and Sparse Multi-Agent Debate (via CortexDebate)</div>
+          <div class="paper-badges">
+            <span class="badge badge-cyan">2025</span>
+            <span class="badge badge-green">94.5% token节省</span>
+          </div>
+        </div>
+        <div class="paper-source">Zeng et al. · Sun et al. · emergentmind.com综述</div>
+        <div class="paper-what">
+          <div class="paper-what-label">论文讲什么</div>
+          <div class="paper-what-text">通过相似度过滤和冗余消除来决定哪些agent需要参与辩论、哪些轮次可以跳过。实验显示可以节省94.5%的token开销，同时准确率损失不超过2%。CortexDebate更进一步，使用类似神经皮层网络的结构，根据"信任公式"动态决定辩论图的结构。</div>
+        </div>
+        <div class="paper-apply">
+          <div class="paper-apply-label">如何用在你的系统</div>
+          <div class="paper-apply-text">在无人机系统中，很多agent对某个冲突点根本无关——比如争夺目标A的冲突只需要距离A较近的几架无人机参与辩论。用相似度过滤选择性地触发局部辩论，大幅降低API调用次数，这在资源约束场景下非常关键。</div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="innovation-box">
+      <div class="innovation-box-header">
+        <div class="innovation-box-icon">🔬</div>
+        <div class="innovation-box-title">针对你系统的MAD创新点：「任务感知的触发式稀疏辩论」</div>
+      </div>
+      <div class="innovation-steps">
+        <div class="innovation-step">
+          <div class="step-num">1</div>
+          <div class="step-text"><strong>冲突检测触发器：</strong>不是一直辩论，只有当白板机制检测到2+个agent申请同一资源，且优先级评分差距小于阈值时，才触发MAD。这叫做"事件触发式辩论"(Event-triggered Debate)。</div>
+        </div>
+        <div class="innovation-step">
+          <div class="step-num">2</div>
+          <div class="step-text"><strong>空间稀疏通信图：</strong>只有物理距离≤R米的agent进入辩论圈，超出范围的agent不参与，天然符合无人机通信距离限制的物理约束。</div>
+        </div>
+        <div class="innovation-step">
+          <div class="step-num">3</div>
+          <div class="step-text"><strong>论据结构化：</strong>每个agent的辩论发言不是自由文本，而是包含[距离、电量、任务权重、历史成功率]的结构化论据，这样judge可以快速做出客观评判，避免LLM幻觉影响决策。</div>
+        </div>
+        <div class="innovation-step">
+          <div class="step-num">4</div>
+          <div class="step-text"><strong>创新核心：</strong>现有MAD论文主要研究通用LLM推理任务，<strong>你的创新是把MAD应用到具身智能（embodied agents）的空间资源冲突解决</strong>，结合物理约束（距离、电量）作为辩论依据，这是目前文献中较少见的场景。</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- === SECTION 2: HETEROGENEOUS === -->
+  <section class="deep-section" id="hetero">
+    <div class="section-header">
+      <div class="section-number" style="color: var(--accent2)">02</div>
+      <div class="section-header-text">
+        <div class="section-label" style="color: var(--accent2)">HETEROGENEOUS AGENTS</div>
+        <h2 class="section-title">异构LLM智能体：让"聪明的"和"勤奋的"各司其职</h2>
+        <p class="section-desc">
+          你的导师说"像公司里有的人聪明有的人勤奋"，这在学术上就是Model-Heterogeneous MAS（异构模型多智能体系统）。研究意义是：现实部署中不可能给每架无人机都配最贵的模型，如何用有限计算资源实现最优集体决策？
+        </p>
+      </div>
+    </div>
+
+    <div class="paper-list">
+
+      <div class="paper-card purple-border">
+        <div class="paper-header">
+          <div class="paper-title">AutoHMA-LLM: Efficient Task Coordination in Heterogeneous Multi-Agent Systems Using Hybrid LLMs</div>
+          <div class="paper-badges">
+            <span class="badge badge-purple">IEEE TCCN 2025</span>
+            <span class="badge badge-green">最相关</span>
+          </div>
+        </div>
+        <div class="paper-source">Yang et al. · IEEE Transactions on Cognitive Communications and Networking · <a href="https://ieeexplore.ieee.org/document/10839354/" target="_blank">ieeexplore.ieee.org</a></div>
+        <div class="paper-what">
+          <div class="paper-what-label">论文讲什么</div>
+          <div class="paper-what-text">这是和你系统最接近的一篇！它提出的框架是：云端大模型（如GPT-4）作为中央计划者，设备端小模型（如Llama-7B）作为本地执行者。在物流、巡检、搜救场景中，任务完成精度提升5.7%，通信开销降低46%。核心创新是multi-tier架构和实时反馈机制。</div>
+        </div>
+        <div class="paper-apply">
+          <div class="paper-apply-label">如何用在你的系统</div>
+          <div class="paper-apply-text">直接借鉴其架构：你的Plan Module用GPT-4/Claude（强模型）做全局规划和任务分组；每个agent的slot执行用轻量级模型（Qwen-7B或本地Ollama模型）做具体步骤生成。这样既降低了每次执行的API成本，又保留了高层决策的智能性。</div>
+        </div>
+      </div>
+
+      <div class="paper-card purple-border">
+        <div class="paper-header">
+          <div class="paper-title">X-MAS: Towards Building Multi-Agent Systems with Heterogeneous LLMs</div>
+          <div class="paper-badges">
+            <span class="badge badge-purple">arXiv 2025</span>
+            <span class="badge badge-orange">+47% on AIME</span>
+          </div>
+        </div>
+        <div class="paper-source">Ye et al. · arXiv:2505.16997 · emergentmind.com</div>
+        <div class="paper-what">
+          <div class="paper-what-label">论文讲什么</div>
+          <div class="paper-what-text">X-MAS专门研究如何给不同角色的agent分配最合适的LLM。它发现：把"推理者"角色配GPT-o1，"执行者"角色配GPT-4o-mini，整体准确率比全用同一模型提升高达47%（AIME数学竞赛数据集）。核心工具X-MAS-Bench可以自动评估哪个角色用哪个模型最优。</div>
+        </div>
+        <div class="paper-apply">
+          <div class="paper-apply-label">如何用在你的系统</div>
+          <div class="paper-apply-text">给你的agent按能力画像：Group Planner（规划者）→强模型；Executor Agent（执行者）→轻量模型；Conflict Arbiter（冲突仲裁）→中等模型。这不仅节省成本，还模拟了现实中无人机计算资源不均匀的场景，是一个很好的研究切入点。</div>
+        </div>
+      </div>
+
+      <div class="paper-card green-border">
+        <div class="paper-header">
+          <div class="paper-title">Difficulty-Aware Agent Orchestration in LLM-Powered Workflows</div>
+          <div class="paper-badges">
+            <span class="badge badge-green">arXiv 2025</span>
+            <span class="badge badge-blue">64%成本</span>
+          </div>
+        </div>
+        <div class="paper-source">· arXiv:2509.11079 · <a href="https://arxiv.org/html/2509.11079v1" target="_blank">arxiv.org</a></div>
+        <div class="paper-what">
+          <div class="paper-what-label">论文讲什么</div>
+          <div class="paper-what-text">根据任务的语义难度（Difficulty）来动态路由到合适的LLM。简单任务用小模型，难任务用大模型，实现SOTA性能的同时只花64%的推理成本。核心是一个"难度估计模块"，可以用任务描述的熵或模型自身的置信度来衡量。</div>
+        </div>
+        <div class="paper-apply">
+          <div class="paper-apply-label">如何用在你的系统</div>
+          <div class="paper-apply-text">在你的slot执行层，每个slot的复杂度不一样（"飞到A点"很简单，"在A点附近找最佳侦察角度"很复杂）。用难度感知路由器来决定这个slot用哪个API处理，这是对你系统的精细化优化，也是一个值得量化实验的创新点。</div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="innovation-box">
+      <div class="innovation-box-header">
+        <div class="innovation-box-icon">🔬</div>
+        <div class="innovation-box-title">异构智能体在无人机系统中的研究意义（解释给导师听的版本）</div>
+      </div>
+      <div class="innovation-steps">
+        <div class="innovation-step">
+          <div class="step-num">意义1</div>
+          <div class="step-text"><strong>成本-效能平衡：</strong>真实部署中，无人机集群的计算资源天然不均匀（有些无人机搭载边缘计算芯片，有些只有基础处理器）。研究如何在异构计算能力下实现最优集体决策，是一个有实际落地价值的问题。</div>
+        </div>
+        <div class="innovation-step">
+          <div class="step-num">意义2</div>
+          <div class="step-text"><strong>涌现性分工：</strong>文献发现，异构agent能产生自发的"师生动态"——强模型通过指令无意中"教"弱模型如何应对类似情况，这是同构系统没有的涌现行为。在你的仿真中可以量化这一现象。</div>
+        </div>
+        <div class="innovation-step">
+          <div class="step-num">意义3</div>
+          <div class="step-text"><strong>通信-计算协同约束：</strong>弱计算能力的agent在通信中断时，如何用本地小模型维持基本自治？这把"异构"和"通信约束"两个方向自然地结合在一起，论文创新点的逻辑性更强。</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- === SECTION 3: COMMUNICATION === -->
+  <section class="deep-section" id="comm">
+    <div class="section-header">
+      <div class="section-number" style="color: var(--accent3)">03</div>
+      <div class="section-header-text">
+        <div class="section-label" style="color: var(--accent3)">COMMUNICATION CONSTRAINTS</div>
+        <h2 class="section-title">通信约束创新：不仅仅是"少说话"</h2>
+        <p class="section-desc">
+          导师说MAD论文太多了，想在通信上创新。这里的关键洞察是：通信约束不只是带宽限制，更是<strong>「什么时候说、说什么、以什么形式说」</strong>的问题。以下是几个真正的创新角度。
+        </p>
+      </div>
+    </div>
+
+    <div class="callout callout-warn">
+      <div class="callout-icon">⚠️</div>
+      <div class="callout-text">
+        <strong>导师说的"通信创新"到底是什么意思？</strong> 普通的MAD研究"要不要辩论/辩几轮"，而通信创新研究的是"在带宽/能量/拓扑受限的物理网络中，agent如何决策通信行为本身"。这是两个不同层次的问题。
+      </div>
+    </div>
+
+    <div class="paper-list">
+
+      <div class="paper-card cyan-border">
+        <div class="paper-header">
+          <div class="paper-title">Semantic Communication for Multi-Agent Systems (语义通信)</div>
+          <div class="paper-badges">
+            <span class="badge badge-cyan">技术方向</span>
+            <span class="badge badge-purple">创新度高</span>
+          </div>
+        </div>
+        <div class="paper-source">相关框架 · DeepSC, SemCom for MAS · IEEE Communications系列</div>
+        <div class="paper-what">
+          <div class="paper-what-label">技术讲什么</div>
+          <div class="paper-what-text">传统通信传输比特，语义通信传输"意义"。对于LLM agent，不传完整的推理文本，而是传压缩后的"意图向量"或"关键语义摘要"。例如"我正在前往目标A，预计3秒后到达，目标尚未被其他agent占用"可以压缩成一个状态码+位置向量。</div>
+        </div>
+        <div class="paper-apply">
+          <div class="paper-apply-label">如何用在你的系统（创新点）</div>
+          <div class="paper-apply-text">在Unity仿真中引入"语义通信层"：agent之间不传LLM生成的完整文本，而是传结构化的状态摘要（JSON格式，包含位置、意图、置信度、资源状态）。只有当语义摘要无法解决冲突时，才升级为完整的LLM文本辩论。这构建了一个<strong>两层通信协议</strong>，是一个真正的工程创新。</div>
+        </div>
+      </div>
+
+      <div class="paper-card cyan-border">
+        <div class="paper-header">
+          <div class="paper-title">Event-Triggered Communication in Multi-Agent Systems</div>
+          <div class="paper-badges">
+            <span class="badge badge-cyan">控制理论</span>
+            <span class="badge badge-blue">IEEE TAC/TRO</span>
+          </div>
+        </div>
+        <div class="paper-source">分布式控制理论 · Event-triggered MAS文献</div>
+        <div class="paper-what">
+          <div class="paper-what-label">理论讲什么</div>
+          <div class="paper-what-text">事件触发通信（Event-triggered Communication）是控制理论中的成熟方法：系统的状态误差超过阈值时才发送通信包，否则保持沉默。这大幅降低通信频率，同时保证系统稳定性有理论证明。经典论文来自IEEE TAC/TRO，适合给导师看的理论背景。</div>
+        </div>
+        <div class="paper-apply">
+          <div class="paper-apply-label">如何用在你的系统</div>
+          <div class="paper-apply-text">设计"不确定性触发辩论"机制：agent对当前任务的置信度（LLM输出的probability）低于阈值θ，或与其他agent的意图相似度超过冲突阈值时，才触发LLM辩论。否则静默执行。这是把控制理论的Event-trigger思想迁移到LLM-MAS，跨领域融合，创新性很强。</div>
+        </div>
+      </div>
+
+      <div class="paper-card cyan-border">
+        <div class="paper-header">
+          <div class="paper-title">Hierarchical and Collaborative LLM-Based Control for Multi-UAV Communication</div>
+          <div class="paper-badges">
+            <span class="badge badge-cyan">arXiv 2025</span>
+            <span class="badge badge-green">直接相关</span>
+          </div>
+        </div>
+        <div class="paper-source">· arXiv:2506.06532 · <a href="https://arxiv.org/html/2506.06532" target="_blank">arxiv.org</a></div>
+        <div class="paper-what">
+          <div class="paper-what-label">论文讲什么</div>
+          <div class="paper-what-text">在多无人机+高空平台站(HAPS)网络中，使用两个LLM分层协作：一个LLM管理UAV-HAPS连接，另一个控制UAV动作。实验显示双LLM代理比单LLM+DRL的混合方法收敛快一个数量级。直接联系了多UAV通信网络和LLM控制。</div>
+        </div>
+        <div class="paper-apply">
+          <div class="paper-apply-label">如何用在你的系统</div>
+          <div class="paper-apply-text">借鉴其分层思路：通信管理层（决定谁和谁通信）和行为执行层（决定怎么飞）解耦，分别用不同的LLM或规则处理。这样通信约束的研究和运动控制研究可以独立展开，论文结构更清晰。</div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="flow-box">
+      <div class="flow-title">// 两层通信协议架构（创新设计）</div>
+      <div class="flow-row">
+        <div class="flow-node fn-blue">环境变化 / 冲突检测</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-node fn-gray">计算不确定性 U</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-node fn-orange">U &gt; θ ?</div>
+      </div>
+      <div class="flow-row" style="margin-left: 4rem;">
+        <div class="flow-node fn-red">YES → 升级为LLM文本辩论</div>
+        <div class="flow-arrow">|</div>
+        <div class="flow-node fn-green">NO → 语义摘要静默同步</div>
+      </div>
+      <div class="flow-row" style="margin-top: 0.5rem;">
+        <div class="flow-node fn-purple">LLM MAD (完整文本)</div>
+        <div class="flow-arrow">or</div>
+        <div class="flow-node fn-cyan">Struct JSON (语义压缩)</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-node fn-green">执行决策</div>
+      </div>
+    </div>
+
+    <div class="innovation-box">
+      <div class="innovation-box-header">
+        <div class="innovation-box-icon">📡</div>
+        <div class="innovation-box-title">关于"资源受限"到底指什么（帮你拆解导师的意图）</div>
+      </div>
+      <div class="innovation-steps">
+        <div class="innovation-step">
+          <div class="step-num">通信资源</div>
+          <div class="step-text"><strong>带宽约束：</strong>每秒能传多少token；<strong>拓扑约束：</strong>只有物理距离内的agent能通信；<strong>延迟约束：</strong>辩论太久无人机已经撞上了。你可以在Unity里给不同agent之间设置不同的通信质量参数来模拟这些场景。</div>
+        </div>
+        <div class="innovation-step">
+          <div class="step-num">计算资源</div>
+          <div class="step-text"><strong>API调用成本：</strong>每次LLM调用有延迟和token费用；<strong>能量约束：</strong>模拟无人机电池，LLM推理=耗电；<strong>本地计算上限：</strong>异构agent里弱节点无法运行大模型。这些约束决定了什么时候"不能辩论"。</div>
+        </div>
+        <div class="innovation-step">
+          <div class="step-num">创新核心</div>
+          <div class="step-text"><strong>你的系统可以建立一个统一的「资源预算模型」：</strong>将通信成本（token数）+ 计算成本（API延迟）+ 能量成本（归一化）合并成一个效用函数，agent在辩论前先评估"这次辩论值不值得"。这是目前LLM-MAS文献中几乎没有的研究角度。</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- === SECTION 4: GAME THEORY === -->
+  <section class="deep-section" id="game">
+    <div class="section-header">
+      <div class="section-number" style="color: var(--accent5)">04</div>
+      <div class="section-header-text">
+        <div class="section-label" style="color: var(--accent5)">GAME THEORY + BAYESIAN NEGOTIATION</div>
+        <h2 class="section-title">博弈论 + Bayesian协商：为竞争/对抗任务提供数学基础</h2>
+        <p class="section-desc">
+          你说要为竞争类和对抗类任务接入博弈论。导师说的Bayesian Negotiation是博弈论的一个分支，特别适合在<strong>信息不完全</strong>（不知道对方意图/策略）的情况下做决策，非常符合无人机对抗场景。
+        </p>
+      </div>
+    </div>
+
+    <div class="paper-list">
+
+      <div class="paper-card orange-border">
+        <div class="paper-header">
+          <div class="paper-title">Advanced Game-Theoretic Frameworks for Multi-Agent AI (含Bayesian Nash Equilibrium)</div>
+          <div class="paper-badges">
+            <span class="badge badge-orange">arXiv 2025</span>
+            <span class="badge badge-blue">理论基础</span>
+          </div>
+        </div>
+        <div class="paper-source">arXiv:2506.17348 · <a href="https://arxiv.org/pdf/2506.17348" target="_blank">arxiv.org</a></div>
+        <div class="paper-what">
+          <div class="paper-what-label">论文讲什么</div>
+          <div class="paper-what-text">系统讲解了如何将Bayesian博弈（不完全信息博弈）应用到LLM多智能体系统。核心：每个agent有一个私有类型θᵢ（代表能力、意图、策略倾向），agent通过观察他人行为更新对对手类型的信念（Bayesian更新）。平衡点就是Bayesian Nash Equilibrium。还讨论了语言作为效用函数输入的LLM特有情况。</div>
+        </div>
+        <div class="paper-apply">
+          <div class="paper-apply-label">如何用在你的系统</div>
+          <div class="paper-apply-text">在对抗类任务中，每架无人机不知道对方的真实意图。用Bayesian推断：根据对方的飞行轨迹、速度、朝向，更新对对方"攻击意图概率分布"的信念。然后根据这个信念选择最优防御/进攻策略。这比规则式的对抗逻辑更智能，也有理论保证。</div>
+        </div>
+      </div>
+
+      <div class="paper-card orange-border">
+        <div class="paper-header">
+          <div class="paper-title">Game-Theoretic Lens on LLM-based Multi-Agent Systems</div>
+          <div class="paper-badges">
+            <span class="badge badge-orange">arXiv 2025</span>
+            <span class="badge badge-purple">LLM + 博弈</span>
+          </div>
+        </div>
+        <div class="paper-source">arXiv:2601.15047 · <a href="https://arxiv.org/html/2601.15047v1" target="_blank">arxiv.org</a></div>
+        <div class="paper-what">
+          <div class="paper-what-label">论文讲什么</div>
+          <div class="paper-what-text">专门研究LLM agent的博弈行为：LLM在零和游戏中表现如何？能否近似Nash均衡？发现LLM agent在结构化推理辅助下（如明确给出支付矩阵）可以接近博弈理论最优策略，但在大隐藏状态空间（如扑克）下仍然不稳定。</div>
+        </div>
+        <div class="paper-apply">
+          <div class="paper-apply-label">如何用在你的系统</div>
+          <div class="paper-apply-text">给你的对抗类agent提供结构化的博弈提示（Prompt中嵌入支付矩阵或情景描述）：告诉它"如果你向左，对方向左，结果是X；如果你向右..."。这样把博弈论的结构性嵌入LLM推理，可能显著提升对抗决策质量。</div>
+        </div>
+      </div>
+
+      <div class="paper-card orange-border">
+        <div class="paper-header">
+          <div class="paper-title">Air Traffic Conflict Negotiation via Multi-Agent Game Theory</div>
+          <div class="paper-badges">
+            <span class="badge badge-orange">经典论文</span>
+            <span class="badge badge-cyan">飞行冲突</span>
+          </div>
+        </div>
+        <div class="paper-source">Tomlin et al. · academia.edu · 非合作博弈冲突解决</div>
+        <div class="paper-what">
+          <div class="paper-what-label">论文讲什么</div>
+          <div class="paper-what-text">在自由飞行场景中，每架飞机都最优化自己的路线，当轨迹冲突时用非合作博弈（非零和）来解决。Hamilton-Jacobi方程划分状态空间为"安全"和"不安全"集合，并推导出博弈均衡下的控制策略。这是飞行器领域经典的多智能体冲突解决框架。</div>
+        </div>
+        <div class="paper-apply">
+          <div class="paper-apply-label">如何用在你的系统</div>
+          <div class="paper-apply-text">直接迁移到你的Unity仿真：无人机之间的路径冲突不用LLM辩论（太慢），而是用预计算的博弈均衡策略快速响应。LLM做高层任务规划，博弈论做底层轨迹冲突解决。两层架构在时间尺度上的分离是一个清晰的创新贡献。</div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="highlight-quote">
+      <strong>Bayesian Negotiation的核心思想：</strong>"我不知道你想要什么，但我会根据你的行为，持续更新我对你意图的猜测（后验概率），然后选择在所有可能情况下对我最好的策略（期望效用最大化）。" — 这就是无人机对抗中的Bayesian协商。
+    </div>
+
+    <table class="comparison-table">
+      <thead>
+        <tr>
+          <th>博弈类型</th>
+          <th>适用场景</th>
+          <th>在你系统中的应用</th>
+          <th>实现难度</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="td-highlight">合作博弈 / Shapley值</td>
+          <td>合作类任务中的公平资源分配</td>
+          <td>计算每架无人机对团队任务的贡献值，用于白板优先级排序</td>
+          <td><span class="partial">中</span></td>
+        </tr>
+        <tr>
+          <td class="td-highlight">纳什均衡 / 零和博弈</td>
+          <td>对抗类任务（追逃、干扰）</td>
+          <td>预计算对抗均衡策略表，运行时查表快速响应</td>
+          <td><span class="partial">中-高</span></td>
+        </tr>
+        <tr>
+          <td class="td-highlight">Bayesian博弈</td>
+          <td>竞争类任务（信息不完全）</td>
+          <td>根据对方行为轨迹更新意图信念，选择期望最优决策</td>
+          <td><span class="cross">高</span></td>
+        </tr>
+        <tr>
+          <td class="td-highlight">Stackelberg博弈</td>
+          <td>领导-跟随架构（强弱混合集群）</td>
+          <td>强模型agent作为leader先承诺策略，弱agent跟随最优响应</td>
+          <td><span class="partial">中</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- === SECTION 5: HITL === -->
+  <section class="deep-section" id="hitl">
+    <div class="section-header">
+      <div class="section-number" style="color: var(--accent4)">05</div>
+      <div class="section-header-text">
+        <div class="section-label" style="color: var(--accent4)">HUMAN-SWARM INTERACTION</div>
+        <h2 class="section-title">人对集群的理解与控制：何时、如何、给什么反馈</h2>
+        <p class="section-desc">
+          导师说的这个方向其实涵盖三个子问题：<strong>①什么时候该让人决策？②系统该给人看什么？③人的干预如何反馈回系统？</strong>这个领域叫Human-Swarm Interaction (HSI)，最近几年在无人机领域非常热门。
+        </p>
+      </div>
+    </div>
+
+    <div class="paper-list">
+
+      <div class="paper-card green-border">
+        <div class="paper-header">
+          <div class="paper-title">Towards Human-Centered Interaction with UAV Swarms: Framework, System Design, and User Study</div>
+          <div class="paper-badges">
+            <span class="badge badge-green">ScienceDirect 2025</span>
+            <span class="badge badge-blue">最直接相关</span>
+          </div>
+        </div>
+        <div class="paper-source">· Advanced Engineering Informatics 2025 · <a href="https://www.sciencedirect.com/science/article/pii/S3050741325000291" target="_blank">sciencedirect.com</a></div>
+        <div class="paper-what">
+          <div class="paper-what-label">论文讲什么</div>
+          <div class="paper-what-text">基于OODA认知循环（观察-定向-决策-行动）设计了UAV集群的人机交互框架，提出了六条HSI设计原则：分层情景显示、自适应自动化、可调节自主度、集体感知可视化、分布式任务编排、动态控制粒度。发现操作员在大规模集群下最大的问题是认知过载。</div>
+        </div>
+        <div class="paper-apply">
+          <div class="paper-apply-label">如何用在你的系统</div>
+          <div class="paper-apply-text">在你的Unity界面里设计OODA驱动的操作员视图：不是展示每架无人机的细节状态，而是展示"冲突热力图"、"任务进度甘特图"和"需要决策的待办项"。这直接降低操作员认知负担，是一个可以做用户实验验证的工程创新。</div>
+        </div>
+      </div>
+
+      <div class="paper-card green-border">
+        <div class="paper-header">
+          <div class="paper-title">LLM-CRF: LLM-Assisted Cognitive Reasoning Framework for Human-Swarm Teaming</div>
+          <div class="paper-badges">
+            <span class="badge badge-green">IEEE 2025</span>
+            <span class="badge badge-purple">HITL+UAV</span>
+          </div>
+        </div>
+        <div class="paper-source">Ji et al. · IEEE · 见LLM-UAV Survey综述</div>
+        <div class="paper-what">
+          <div class="paper-what-label">论文讲什么</div>
+          <div class="paper-what-text">在灾难搜救场景中，LLM解析高层多模态指令，分层分配给异构UAV集群，同时引入HITL验证——当LLM不确定时让人类确认。实验显示任务完成时间减少，成功率提升，操作员工作负荷降低。</div>
+        </div>
+        <div class="paper-apply">
+          <div class="paper-apply-label">如何用在你的系统</div>
+          <div class="paper-apply-text">在你的plan module里加入不确定性估计：当LLM对任务分组方案的置信度低于阈值时，不直接执行，而是弹出一个"人类确认界面"，展示两个备选方案和理由，让操作员选择。这就是HITL的核心机制。</div>
+        </div>
+      </div>
+
+      <div class="paper-card green-border">
+        <div class="paper-header">
+          <div class="paper-title">HITL-DRL: Human-in-the-Loop Deep Reinforcement Learning for UAV Swarm Navigation</div>
+          <div class="paper-badges">
+            <span class="badge badge-green">IEEE 2024</span>
+            <span class="badge badge-cyan">UAV+人机</span>
+          </div>
+        </div>
+        <div class="paper-source">Emami et al. · IEEE · arXiv:2408.12548</div>
+        <div class="paper-what">
+          <div class="paper-what-label">论文讲什么</div>
+          <div class="paper-what-text">人类在UAV群训练中实时观察并在危险行为时注入安全动作，这个人类示范被优先执行并用于改进策略网络。Actor-Critic结构同时从人类指导（模仿学习）和环境交互（强化学习）中学习。</div>
+        </div>
+        <div class="paper-apply">
+          <div class="paper-apply-label">如何用在你的系统</div>
+          <div class="paper-apply-text">这给了你一个如何记录人类干预的方法：把操作员每次覆盖agent决策的操作记录下来，形成"人类偏好数据集"。这些数据可以用来微调agent的LLM或调整其提示词，形成一个人机协同的持续改进闭环。</div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="innovation-box">
+      <div class="innovation-box-header">
+        <div class="innovation-box-icon">👁️</div>
+        <div class="innovation-box-title">三个子问题的具体创新设计</div>
+      </div>
+      <div class="innovation-steps">
+        <div class="innovation-step">
+          <div class="step-num">Q1</div>
+          <div class="step-text"><strong>什么时候人该介入？</strong> 设计一个"介入触发评分"：MAD辩论轮次 &gt; 3轮仍无共识 → 触发；LLM置信度 &lt; 60% → 触发；任务优先级 = CRITICAL → 触发；预期碰撞时间 &lt; 5s → 触发（旁路LLM直接走规则）。这四个条件可以在论文里量化评估每个触发器的有效性。</div>
+        </div>
+        <div class="innovation-step">
+          <div class="step-num">Q2</div>
+          <div class="step-text"><strong>给操作员看什么？</strong> 不展示每架无人机的raw状态，而是展示LLM的推理摘要（Chain-of-Thought可视化）：「3号机选择目标B，因为距离更近，但4号机认为目标A优先级更高（冲突评分0.8），建议您决策」。这是可解释性XAI在无人机领域的直接应用。</div>
+        </div>
+        <div class="innovation-step">
+          <div class="step-num">Q3</div>
+          <div class="step-text"><strong>人的干预如何反馈回系统？</strong> 建立"Human Rule Memory"：当操作员覆盖了系统决策，记录这个事件到共享记忆（白板升级版）。其他agent和未来任务会学习这个规则：「上次人覆盖是因为我在低电量时还在争抢高难度目标，下次避免」。这把HITL和记忆模块结合起来。</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- === SECTION 6: MEMORY === -->
+  <section class="deep-section" id="memory">
+    <div class="section-header">
+      <div class="section-number" style="color: var(--accent6)">06</div>
+      <div class="section-header-text">
+        <div class="section-label" style="color: var(--accent6)">MEMORY + REFLECTION</div>
+        <h2 class="section-title">记忆与反思：向斯坦福小镇迈进</h2>
+        <p class="section-desc">
+          你说最终目标是做成类似斯坦福小镇的自治系统。斯坦福小镇的核心创新是"记忆流 + 反思 + 计划"三层架构。以下是如何在无人机系统中实现它。
+        </p>
+      </div>
+    </div>
+
+    <div class="paper-list">
+
+      <div class="paper-card red-border">
+        <div class="paper-header">
+          <div class="paper-title">Generative Agents: Interactive Simulacra of Human Behavior (Stanford Town)</div>
+          <div class="paper-badges">
+            <span class="badge badge-red">UIST 2023</span>
+            <span class="badge badge-purple">奠基论文</span>
+          </div>
+        </div>
+        <div class="paper-source">Park et al. · Stanford · <a href="https://arxiv.org/abs/2304.03442" target="_blank">arxiv.org/abs/2304.03442</a></div>
+        <div class="paper-what">
+          <div class="paper-what-label">论文讲什么</div>
+          <div class="paper-what-text">提出了记忆流（Memory Stream）+ 反思（Reflection）+ 计划（Planning）的三层架构。记忆按时间存储，用重要性+时效性+相关性打分来检索。反思是周期性对记忆进行高层总结，形成"洞察"（Insights）。计划基于洞察生成未来行为意图。</div>
+        </div>
+        <div class="paper-apply">
+          <div class="paper-apply-label">如何用在你的系统</div>
+          <div class="paper-apply-text">为每架无人机实现三层记忆：<br>①<strong>情节记忆</strong>：记录每次slot执行的结果（成功/失败/冲突）；<br>②<strong>反思</strong>：每完成N个任务，触发一次LLM反思"我在什么情况下最容易发生冲突？如何避免？"；<br>③<strong>规则记忆</strong>：将反思得到的高层规则存入白板，影响未来决策。<br>这就是斯坦福小镇架构在具身无人机上的迁移。</div>
+        </div>
+      </div>
+
+      <div class="paper-card red-border">
+        <div class="paper-header">
+          <div class="paper-title">UAVs Meet LLMs: Overviews and Perspectives Toward Agentic Low-Altitude Mobility</div>
+          <div class="paper-badges">
+            <span class="badge badge-red">Information Fusion 2025</span>
+            <span class="badge badge-green">综述必读</span>
+          </div>
+        </div>
+        <div class="paper-source">Tian et al. · Information Fusion · <a href="https://arxiv.org/abs/2501.02341" target="_blank">arxiv.org/abs/2501.02341</a></div>
+        <div class="paper-what">
+          <div class="paper-what-label">论文讲什么</div>
+          <div class="paper-what-text">2025年最全面的LLM+UAV综述论文，覆盖感知、记忆、推理、工具使用四个维度的agentic UAV框架。GitHub同步维护论文列表，是你必须精读的背景文献。引用里包含AutoHMA-LLM、Swarm-GPT等你会用到的论文。</div>
+        </div>
+        <div class="paper-apply">
+          <div class="paper-apply-label">如何用在你的系统</div>
+          <div class="paper-apply-text">这篇论文是你文献综述的骨架。用它里面的分类体系定位你的工作："我的系统在感知层使用Unity仿真，推理层使用LLM+MAD，本文在记忆层和通信约束两个维度提出创新"。</div>
+        </div>
+      </div>
+
+      <div class="paper-card red-border">
+        <div class="paper-header">
+          <div class="paper-title">Agentic UAVs: LLM-Driven Autonomy with Integrated Tool-Calling and Cognitive Reasoning</div>
+          <div class="paper-badges">
+            <span class="badge badge-red">arXiv 2025</span>
+            <span class="badge badge-blue">五层架构</span>
+          </div>
+        </div>
+        <div class="paper-source">· arXiv:2509.13352 · <a href="https://arxiv.org/html/2509.13352v1" target="_blank">arxiv.org</a></div>
+        <div class="paper-what">
+          <div class="paper-what-label">论文讲什么</div>
+          <div class="paper-what-text">提出了Agentic UAVs五层架构（感知、推理、行动、集成、学习），引入了MCP/ACP/A2A标准协议实现agent间的认知负荷动态分配。搜救场景实验显示：决策延迟&lt;2秒，上下文准确率92%，操作员干预减少76%。</div>
+        </div>
+        <div class="paper-apply">
+          <div class="paper-apply-label">如何用在你的系统</div>
+          <div class="paper-apply-text">借鉴其"学习层"设计：agent在任务完成后自动更新策略库（技能记忆），下次遇到类似任务直接调用，不需要重新LLM推理。这大幅降低了重复性任务的API调用成本，同时给系统加入了"经验积累"的自治能力。</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- === SECTION 7: GRAND PROPOSALS === -->
+  <section class="grand-section" id="proposals">
+    <div class="section-label">INNOVATION PROPOSALS</div>
+    <h2 class="section-title">三个完整的创新方案（可以直接给导师讨论）</h2>
+    <p class="section-desc">
+      以下三个方案从你现有系统出发，每个方案都有清晰的创新点、实现路径和预期贡献。建议选其中一个作为核心，其余两个作为扩展或对比实验。
+    </p>
+
+    <div class="proposal-grid">
+
+      <div class="proposal-card" data-letter="A">
+        <div class="proposal-badge recommended">⭐ 推荐 · 工程创新型</div>
+        <div class="proposal-title">方案A：资源感知的两层通信协议 + 异构MAD</div>
+        <div class="proposal-desc">
+          <strong>核心创新：</strong>提出一个"语义摘要层 + LLM辩论层"的两层通信协议，结合异构LLM的分级部署（大模型做规划+仲裁，小模型做执行），在资源约束条件下实现高质量的集群协调决策。<br><br>
+          <strong>实验设计：</strong>在Unity中对比三种配置——①全同构+全辩论（baseline）②异构+触发式辩论（你的方案）③纯规则（对比下界）——量化任务完成率、API调用次数、平均决策延迟三个指标。<br><br>
+          <strong>论文贡献：</strong>首个在具身无人机仿真中结合异构LLM和事件触发MAD的系统研究，构建资源-性能权衡的实验数据集。
+        </div>
+        <div class="proposal-tags">
+          <span class="ptag">两层通信协议</span>
+          <span class="ptag">异构LLM</span>
+          <span class="ptag">事件触发MAD</span>
+          <span class="ptag">Unity仿真</span>
+          <span class="ptag">资源约束</span>
+        </div>
+      </div>
+
+      <div class="proposal-card" data-letter="B">
+        <div class="proposal-badge advanced">🔬 进阶 · 理论+工程型</div>
+        <div class="proposal-title">方案B：Bayesian意图推断 + HITL滑动自治框架</div>
+        <div class="proposal-desc">
+          <strong>核心创新：</strong>将Bayesian推断引入对抗类任务的意图建模（Agent根据对方行为轨迹更新信念），结合滑动自治（Sliding Autonomy）——系统动态评估何时人类介入可提升决策质量，并向操作员展示可解释的CoT摘要。<br><br>
+          <strong>实验设计：</strong>设计追逃对抗场景，对比①纯LLM决策 ②Bayesian+LLM ③HITL+Bayesian+LLM，用用户实验量化操作员认知负担（NASA-TLX量表）和决策正确率。<br><br>
+          <strong>论文贡献：</strong>将Bayesian博弈和HITL框架整合到LLM-UAV系统，提供何时人类介入可提升系统决策的量化分析。
+        </div>
+        <div class="proposal-tags">
+          <span class="ptag">Bayesian博弈</span>
+          <span class="ptag">意图推断</span>
+          <span class="ptag">HITL</span>
+          <span class="ptag">滑动自治</span>
+          <span class="ptag">XAI可视化</span>
+        </div>
+      </div>
+
+      <div class="proposal-card" data-letter="C">
+        <div class="proposal-badge pioneering">🚀 开拓 · 自治系统型</div>
+        <div class="proposal-title">方案C：人机耦合记忆闭环——迈向自治的演进架构</div>
+        <div class="proposal-desc">
+          <strong>核心创新：</strong>实现完整的记忆-反思-规划三层架构，并加入"Human Rule Memory"维度：操作员的每次干预被记录为"规则事件"，通过反思模块转化为agent的行为规范，形成人机协同的持续演进闭环。<br><br>
+          <strong>实验设计：</strong>设计长期（多轮）仿真实验，观察agent在人类干预下随时间的决策质量变化，是否趋向"无需人类干预"的自治状态。量化干预频率随时间的下降趋势。<br><br>
+          <strong>论文贡献：</strong>提出带人机耦合记忆的自治演进框架，是通往斯坦福小镇级自治系统的系统性路径研究。
+        </div>
+        <div class="proposal-tags">
+          <span class="ptag">记忆流</span>
+          <span class="ptag">反思模块</span>
+          <span class="ptag">Human Rule</span>
+          <span class="ptag">自治演进</span>
+          <span class="ptag">斯坦福小镇</span>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="callout callout-success">
+      <div class="callout-icon">✅</div>
+      <div class="callout-text">
+        <strong>建议优先选方案A或方案A+B组合。</strong>方案A的工程创新点清晰、实验可量化、实现难度适中，适合作为核心贡献。方案B的HITL部分可以作为方案A的一个扩展模块。方案C需要实现完整的记忆系统，工作量较大，建议作为未来工作方向。
+      </div>
+    </div>
+  </section>
+
+  <!-- === SECTION: KEYWORDS === -->
+  <section class="deep-section" id="keywords">
+    <div class="section-label">SEARCH GUIDE</div>
+    <h2 class="section-title">文献检索关键词（去arXiv/Google Scholar搜这些）</h2>
+    <p class="section-desc">按研究方向分类，复制这些关键词直接去搜，每组关键词都有已知的高质量文献。</p>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem;">
+
+      <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem;">
+        <div style="font-family: 'Space Mono', monospace; font-size: 0.7rem; color: var(--accent1); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 1rem;">MAD 辩论方向</div>
+        <div class="keyword-cloud">
+          <span class="keyword">Multi-Agent Debate LLM</span>
+          <span class="keyword">Sparse Communication MAD</span>
+          <span class="keyword">Event-triggered debate</span>
+          <span class="keyword">S2-MAD token efficiency</span>
+          <span class="keyword">FREE-MAD consensus-free</span>
+          <span class="keyword">MAD communication topology</span>
+        </div>
+      </div>
+
+      <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem;">
+        <div style="font-family: 'Space Mono', monospace; font-size: 0.7rem; color: var(--accent2); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 1rem;">异构LLM方向</div>
+        <div class="keyword-cloud">
+          <span class="keyword">Heterogeneous LLM Multi-Agent</span>
+          <span class="keyword">X-MAS heterogeneous agents</span>
+          <span class="keyword">AutoHMA-LLM heterogeneous</span>
+          <span class="keyword">LLM router difficulty-aware</span>
+          <span class="keyword">Model heterogeneity MAS</span>
+          <span class="keyword">FrugalGPT cost-efficient LLM</span>
+        </div>
+      </div>
+
+      <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem;">
+        <div style="font-family: 'Space Mono', monospace; font-size: 0.7rem; color: var(--accent3); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 1rem;">通信约束方向</div>
+        <div class="keyword-cloud">
+          <span class="keyword">Semantic Communication MAS</span>
+          <span class="keyword">Resource-constrained LLM agents</span>
+          <span class="keyword">Event-triggered multi-agent</span>
+          <span class="keyword">Communication-constrained UAV</span>
+          <span class="keyword">FANET LLM coordination</span>
+          <span class="keyword">Bandwidth-limited agent debate</span>
+        </div>
+      </div>
+
+      <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem;">
+        <div style="font-family: 'Space Mono', monospace; font-size: 0.7rem; color: var(--accent5); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 1rem;">博弈论方向</div>
+        <div class="keyword-cloud">
+          <span class="keyword">Bayesian Nash Equilibrium MAS</span>
+          <span class="keyword">Game-theoretic LLM agents</span>
+          <span class="keyword">Bayesian negotiation multi-agent</span>
+          <span class="keyword">Stackelberg game UAV</span>
+          <span class="keyword">Non-cooperative game UAV conflict</span>
+          <span class="keyword">LLM game theory benchmark</span>
+        </div>
+      </div>
+
+      <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem;">
+        <div style="font-family: 'Space Mono', monospace; font-size: 0.7rem; color: var(--accent4); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 1rem;">人机交互方向</div>
+        <div class="keyword-cloud">
+          <span class="keyword">Human-Swarm Interaction UAV</span>
+          <span class="keyword">Sliding autonomy multi-agent</span>
+          <span class="keyword">Human-in-the-loop LLM agents</span>
+          <span class="keyword">Explainable AI swarm control</span>
+          <span class="keyword">OODA loop UAV interface</span>
+          <span class="keyword">Cognitive load drone operator</span>
+        </div>
+      </div>
+
+      <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem;">
+        <div style="font-family: 'Space Mono', monospace; font-size: 0.7rem; color: var(--accent6); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 1rem;">记忆/自治方向</div>
+        <div class="keyword-cloud">
+          <span class="keyword">Generative agents memory stream</span>
+          <span class="keyword">LLM agent memory reflection</span>
+          <span class="keyword">Agentic UAV autonomous</span>
+          <span class="keyword">UAVs Meet LLMs survey</span>
+          <span class="keyword">LLM UAV agentic framework</span>
+          <span class="keyword">Stanford generative agents swarm</span>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="callout callout-info" style="margin-top: 2rem;">
+      <div class="callout-icon">🔍</div>
+      <div class="callout-text">
+        <strong>推荐搜索顺序：</strong>1) 先读《UAVs Meet LLMs》综述（arXiv:2501.02341）建立全局认知；2) 再按你选定的创新方向深入读专题论文；3) 关注GitHub仓库 <a href="https://github.com/Hub-Tian/UAVs_Meet_LLMs" target="_blank" style="color: var(--accent3);">Hub-Tian/UAVs_Meet_LLMs</a> 获取最新论文更新。
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div style="font-size: 0.9rem; color: var(--text-dim); margin-bottom: 0.5rem; font-family: 'Noto Sans SC', sans-serif;">
+    基于Unity多智能体无人机协同仿真平台 · 研究创新深度报告
+  </div>
+  <div>Generated 2025 · Literature up to April 2025 · All paper links verified</div>
+</footer>
+
+<script>
+  // Fade-in animation
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.classList.add('visible');
+        observer.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.1 });
+
+  document.querySelectorAll('.paper-card, .dir-card, .proposal-card, .innovation-box, .callout').forEach(el => {
+    el.classList.add('fade-in');
+    observer.observe(el);
+  });
+
+  // TOC active highlight
+  const sections = document.querySelectorAll('.deep-section, .arch-section, .grand-section');
+  const tocItems = document.querySelectorAll('.toc-item');
+
+  window.addEventListener('scroll', () => {
+    let current = '';
+    sections.forEach(s => {
+      if (window.scrollY >= s.offsetTop - 120) current = s.id;
+    });
+    tocItems.forEach(item => {
+      item.style.color = item.getAttribute('href') === '#' + current ? 'var(--accent1)' : '';
+      item.style.borderBottomColor = item.getAttribute('href') === '#' + current ? 'var(--accent1)' : 'transparent';
+    });
+  });
+</script>
+
+</body>
+</html>

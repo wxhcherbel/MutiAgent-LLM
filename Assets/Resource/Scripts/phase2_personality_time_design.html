@@ -1,0 +1,1103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第二部分实现方案：工作人格与时间感知</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --bg2: #161b22;
+    --bg3: #1c2330;
+    --border: #30363d;
+    --accent: #58a6ff;
+    --accent2: #3fb950;
+    --accent3: #f78166;
+    --accent4: #d2a8ff;
+    --accent5: #ffa657;
+    --text: #e6edf3;
+    --text2: #8b949e;
+    --warn: #f0883e;
+    --danger: #f85149;
+    --success: #3fb950;
+    --tag-bg: #1f2d3d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    line-height: 1.7;
+    padding: 32px 16px;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+
+  /* ── 标题 ── */
+  .page-title {
+    font-size: 26px; font-weight: 700;
+    background: linear-gradient(90deg, #58a6ff, #d2a8ff);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    margin-bottom: 4px;
+  }
+  .page-subtitle { color: var(--text2); font-size: 13px; margin-bottom: 32px; }
+
+  /* ── 章节 ── */
+  .section { margin-bottom: 48px; }
+  .section-title {
+    font-size: 18px; font-weight: 700;
+    color: var(--accent);
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 8px; margin-bottom: 20px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .section-title .num {
+    background: var(--accent); color: #000;
+    border-radius: 50%; width: 24px; height: 24px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 800; flex-shrink: 0;
+  }
+  h3 { color: var(--accent4); font-size: 15px; margin: 24px 0 10px; }
+  h4 { color: var(--accent5); font-size: 13px; margin: 16px 0 8px; }
+
+  /* ── 卡片 ── */
+  .card {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px 20px; margin-bottom: 16px;
+  }
+  .card-title {
+    font-size: 13px; font-weight: 700;
+    color: var(--accent2); margin-bottom: 8px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .card-title .icon { font-size: 16px; }
+
+  /* ── 代码块 ── */
+  pre {
+    background: #0d1117; border: 1px solid var(--border);
+    border-radius: 6px; padding: 14px 16px;
+    overflow-x: auto; font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 12.5px; line-height: 1.6; margin: 10px 0;
+    color: #c9d1d9;
+  }
+  .kw { color: #ff7b72; }
+  .ty { color: #79c0ff; }
+  .str { color: #a5d6ff; }
+  .cm { color: #8b949e; font-style: italic; }
+  .num-lit { color: #f2cc60; }
+  .field { color: #d2a8ff; }
+  .method { color: #d2a8ff; }
+  .prop { color: #79c0ff; }
+
+  /* ── 표 ── */
+  table {
+    width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0;
+  }
+  th {
+    background: var(--bg3); color: var(--accent); text-align: left;
+    padding: 8px 12px; border: 1px solid var(--border); font-weight: 600;
+  }
+  td { padding: 8px 12px; border: 1px solid var(--border); vertical-align: top; }
+  tr:nth-child(even) td { background: #141a22; }
+  .mono { font-family: monospace; color: var(--accent4); }
+
+  /* ── 警告/提示框 ── */
+  .note {
+    border-left: 4px solid var(--accent);
+    background: #161f2e; padding: 10px 16px;
+    border-radius: 0 6px 6px 0; margin: 12px 0;
+    font-size: 13px; color: var(--text2);
+  }
+  .warn { border-left-color: var(--warn); background: #1f1a0e; }
+  .ok   { border-left-color: var(--success); background: #0e1f11; }
+  .bad  { border-left-color: var(--danger); background: #1f0e0e; }
+
+  /* ── 标签 ── */
+  .tag {
+    display: inline-block; background: var(--tag-bg);
+    color: var(--accent); border: 1px solid #2d4261;
+    border-radius: 4px; padding: 1px 7px; font-size: 11.5px;
+    margin: 2px; font-family: monospace;
+  }
+  .tag.green { color: var(--accent2); border-color: #1a3a1a; background: #0e1f11; }
+  .tag.purple { color: var(--accent4); border-color: #3a2a5a; background: #1a1030; }
+  .tag.orange { color: var(--accent5); border-color: #3a2a00; background: #1f1800; }
+  .tag.red { color: var(--accent3); border-color: #3a1a1a; background: #1f0a0a; }
+
+  /* ── 流程图 ── */
+  .flow {
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: 4px; margin: 12px 0;
+  }
+  .flow-box {
+    background: var(--bg3); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 12px; font-size: 12px;
+    font-weight: 600;
+  }
+  .flow-box.blue { border-color: #58a6ff; color: #58a6ff; }
+  .flow-box.green { border-color: #3fb950; color: #3fb950; }
+  .flow-box.purple { border-color: #d2a8ff; color: #d2a8ff; }
+  .flow-box.orange { border-color: #ffa657; color: #ffa657; }
+  .flow-box.red { border-color: #f85149; color: #f85149; }
+  .flow-arrow { color: var(--text2); font-size: 16px; }
+
+  /* ── 例子区块 ── */
+  .example-block {
+    border: 1px solid #2d4261; background: #0d1520;
+    border-radius: 8px; overflow: hidden; margin: 16px 0;
+  }
+  .example-header {
+    background: #1a2840; padding: 10px 16px;
+    font-size: 12px; font-weight: 700; color: var(--accent);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .example-body { padding: 14px 16px; }
+
+  /* ── 步骤时间线 ── */
+  .timeline { border-left: 2px solid var(--border); padding-left: 20px; margin: 12px 0; }
+  .timeline-step { position: relative; margin-bottom: 24px; }
+  .timeline-step::before {
+    content: '';
+    position: absolute; left: -27px; top: 4px;
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--bg);
+  }
+  .timeline-step.green::before { background: var(--success); }
+  .timeline-step.purple::before { background: var(--accent4); }
+  .timeline-step.orange::before { background: var(--accent5); }
+  .timeline-label {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+    color: var(--accent); margin-bottom: 4px; text-transform: uppercase;
+  }
+  .timeline-step.green .timeline-label { color: var(--success); }
+  .timeline-step.purple .timeline-label { color: var(--accent4); }
+  .timeline-step.orange .timeline-label { color: var(--accent5); }
+
+  /* ── 两栏 ── */
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 12px 0; }
+  @media (max-width: 768px) { .cols { grid-template-columns: 1fr; } }
+
+  /* ── 导航 ── */
+  .toc {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px 20px; margin-bottom: 32px;
+  }
+  .toc-title { font-size: 13px; font-weight: 700; color: var(--text2); margin-bottom: 10px; }
+  .toc a { color: var(--accent); text-decoration: none; font-size: 13px; }
+  .toc a:hover { text-decoration: underline; }
+  .toc ol { padding-left: 18px; }
+  .toc li { margin: 5px 0; }
+
+  hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+
+  .highlight { color: var(--accent5); font-weight: 600; }
+  .new-badge {
+    display: inline-block; background: #1a3a1a; color: var(--success);
+    border: 1px solid #1f4a1f; border-radius: 4px; padding: 1px 6px;
+    font-size: 11px; font-weight: 700; margin-left: 6px;
+  }
+  .mod-badge {
+    display: inline-block; background: #1f2d3d; color: var(--accent);
+    border: 1px solid #2d4261; border-radius: 4px; padding: 1px 6px;
+    font-size: 11px; font-weight: 700; margin-left: 6px;
+  }
+
+  .field-table td:first-child { font-family: monospace; color: var(--accent4); white-space: nowrap; }
+  .field-table td:nth-child(2) { color: var(--text2); font-size: 12px; white-space: nowrap; }
+  .field-table td:nth-child(3) { color: var(--text); }
+  .field-table td:nth-child(4) { color: var(--accent2); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- 标题 -->
+<div class="page-title">第二部分实现方案：工作人格与时间感知</div>
+<div class="page-subtitle">Phase 2 · P0 · 预期工期约 1.5 周 · 基于 agent_architecture_report.html 设计</div>
+
+<!-- 目录 -->
+<div class="toc">
+  <div class="toc-title">📋 目录</div>
+  <ol>
+    <li><a href="#diagnosis">记忆模块诊断：当前问题与价值评估</a></li>
+    <li><a href="#time-module">SimulatedTimeModule.cs（新建）—— 时间感知模块</a></li>
+    <li><a href="#personality-module">PersonalitySystem.cs（新建）—— 工作人格模块</a></li>
+    <li><a href="#memory-extension">Memory 字段扩展 —— 时间与人格注入</a></li>
+    <li><a href="#integration">主流程串联图 —— 各模块如何衔接</a></li>
+    <li><a href="#example">完整例子：Hawk-1 在第3天下午的一次拦截任务</a></li>
+  </ol>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- 第一节：记忆模块诊断 -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="section" id="diagnosis">
+  <div class="section-title"><span class="num">1</span>记忆模块诊断：当前问题与价值评估</div>
+
+  <h3>1.1 一般应该记什么？</h3>
+  <p style="color:var(--text2);margin-bottom:12px;">
+    记忆的核心价值是"改变未来决策"。一条记忆只有在被检索时能让 LLM 做出不同（且更好）的判断，它才有意义。衡量标准是：<span class="highlight">如果没有这条记忆，LLM 会做错什么？</span>
+  </p>
+
+  <div class="cols">
+    <div class="card" style="border-color:#1a3a1a">
+      <div class="card-title"><span class="icon">✅</span>值得记忆的内容</div>
+      <table>
+        <tr><th>类型</th><th>示例</th><th>作用</th></tr>
+        <tr><td>失败动作 + 原因</td><td>"从东侧接近被目标发现"</td><td>避免重蹈覆辙</td></tr>
+        <tr><td>环境状态观测</td><td>"北门14:30人员密集"</td><td>时空感知积累</td></tr>
+        <tr><td>角色历史成效</td><td>"担任Scout完成率87%"</td><td>LLM#3选槽偏好</td></tr>
+        <tr><td>约束推理依据</td><td>"充电桩共享→需C3互斥"</td><td>同类任务复用</td></tr>
+        <tr><td>反思洞察（isProceduralHint）</td><td>"高空观察效率>低空扫描"</td><td>跨任务通用规则</td></tr>
+        <tr><td>协作模式</td><td>"与UAV-2搭档完成率高"</td><td>社会关系积累</td></tr>
+      </table>
+    </div>
+    <div class="card" style="border-color:#3a1a1a">
+      <div class="card-title"><span class="icon">❌</span>不值得记忆的内容</div>
+      <table>
+        <tr><th>类型</th><th>原因</th></tr>
+        <tr><td>成功的平凡动作<br><small>"MoveTo执行成功"</small></td><td>不提供差异化信息，稀释失败信号</td></tr>
+        <tr><td>重复相同结论</td><td>占用容量，降低检索精度</td></tr>
+        <tr><td>无上下文的状态码</td><td>"步骤1完成"缺乏条件信息，无法泛化</td></tr>
+        <tr><td>执行细节（坐标等）</td><td>随时间失效，且LLM从感知层可实时获取</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <h3>1.2 当前记忆体系的问题</h3>
+  <div class="note bad">
+    <strong>核心问题：记忆内容是客观的，但缺乏主观维度。</strong>
+    当前系统记录了"发生了什么"，但没有记录"在什么状态下发生的"（时间、人格、情绪）以及"我对此的解读"（不是从 thought 里提取的主观判断）。
+  </div>
+
+  <table>
+    <tr>
+      <th>当前记忆点</th><th>实际存储内容</th><th>缺什么</th><th>有没有用</th>
+    </tr>
+    <tr>
+      <td>RememberConstraintAnalysis<br><small>（今天刚加）</small></td>
+      <td>约束类型+数量+LLM推理</td>
+      <td>时间上下文、任务复杂度评估</td>
+      <td class="tag green">有用 —— 同类任务规划时能被检索</td>
+    </tr>
+    <tr>
+      <td>RememberSlotDesign<br><small>（今天刚加）</small></td>
+      <td>角色列表+LLM角色设计思路</td>
+      <td>人格对角色偏好的影响</td>
+      <td class="tag green">有用 —— 组长下次设计角色时参考</td>
+    </tr>
+    <tr>
+      <td>RememberSlotSelection<br><small>（今天刚加）</small></td>
+      <td>选了哪个槽位+LLM选择理由</td>
+      <td>⚠️ 缺人格偏好标注，检索时难以区分"能力匹配"vs"偏好匹配"</td>
+      <td class="tag green">有用 —— 但需要人格系统配合才完整</td>
+    </tr>
+    <tr>
+      <td>RememberPlanSnapshot</td>
+      <td>步骤列表+LLM拆解推理</td>
+      <td>时间段（下午的计划vs晚上的计划不同）</td>
+      <td class="tag">中等 —— 无时间维度时跨时段检索噪声大</td>
+    </tr>
+    <tr>
+      <td>RememberActionExecution<br><small>（仅失败）</small></td>
+      <td>动作类型+结果</td>
+      <td>✅ 设计正确：成功不记，只记失败</td>
+      <td class="tag green">有用 —— 规避重蹈覆辙</td>
+    </tr>
+    <tr>
+      <td>RememberObservation</td>
+      <td>感知事件摘要</td>
+      <td>时间点（同一地点不同时段状态不同）</td>
+      <td class="tag">中等 —— 无时间上下文时容易产生过时判断</td>
+    </tr>
+    <tr>
+      <td>RememberMissionOutcome</td>
+      <td>任务成败结论</td>
+      <td>人格与时间对任务成败的关联</td>
+      <td class="tag green">有用 —— importance最高，必然被检索</td>
+    </tr>
+  </table>
+
+  <h3>1.3 与主要模块的串联现状</h3>
+  <div class="card">
+    <div class="flow">
+      <div class="flow-box blue">PlanningModule<br><small>写入：LLM#1/2/3/4</small></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box green">MemoryModule<br><small>存储</small></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box blue">PlanningModule<br><small>读取：BuildPlanningContext</small></div>
+    </div>
+    <div class="flow" style="margin-top:8px">
+      <div class="flow-box purple">ActionDecisionModule<br><small>写入：失败/进展</small></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box green">MemoryModule</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box purple">ActionDecisionModule<br><small>读取：BuildActionContext</small></div>
+    </div>
+    <div class="flow" style="margin-top:8px">
+      <div class="flow-box orange">PerceptionModule<br><small>写入：RememberObservation</small></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box green">MemoryModule</div>
+      <div class="flow-arrow">⚠️ 未串联</div>
+      <div class="flow-box" style="border-color:var(--warn);color:var(--warn)">ADM Prompt<br><small>感知记忆未注入ADM</small></div>
+    </div>
+    <div class="note warn" style="margin-top:8px">
+      PerceptionModule 写入了观察记忆，但 ADM 的 BuildActionContext 使用的是实时感知快照，而不是历史观察记忆。两者并未真正串联——历史观察记忆在 ADM 执行时几乎没有被用到。这是一个现存的串联断层。
+    </div>
+  </div>
+
+  <p style="color:var(--text2);margin-top:12px;">
+    <strong>结论：</strong>记忆模块当前的主要问题不是"记了什么"，而是<span class="highlight">缺少时间维度和人格维度</span>，导致记忆检索时缺乏语境区分能力。这正是第二部分要解决的问题。
+  </p>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- 第二节：SimulatedTimeModule -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="section" id="time-module">
+  <div class="section-title"><span class="num">2</span>SimulatedTimeModule.cs <span class="new-badge">NEW</span> —— 时间感知模块</div>
+
+  <p style="color:var(--text2);margin-bottom:16px;">
+    让每个 agent 拥有"现在是什么时间"的感知，并在关键时间节点（换日、换时段）触发事件，为后续的自主目标生成（Phase 3）做铺垫。
+  </p>
+
+  <h3>2.1 枚举与数据结构</h3>
+  <pre><span class="kw">public enum</span> <span class="ty">TimePeriod</span>
+{
+    <span class="field">Night</span>     = <span class="num-lit">0</span>,  <span class="cm">// 21:00 - 07:00  夜间，能见度低，建议减少主动行动</span>
+    <span class="field">Morning</span>   = <span class="num-lit">1</span>,  <span class="cm">// 07:00 - 12:00  上午，状态最佳，适合侦察/搜索</span>
+    <span class="field">Noon</span>      = <span class="num-lit">2</span>,  <span class="cm">// 12:00 - 14:00  午间，人员流动高峰，谨慎行动</span>
+    <span class="field">Afternoon</span> = <span class="num-lit">3</span>,  <span class="cm">// 14:00 - 18:00  下午，光线良好，适合全面任务</span>
+    <span class="field">Evening</span>   = <span class="num-lit">4</span>,  <span class="cm">// 18:00 - 21:00  傍晚，光线减弱，需调整侦察策略</span>
+}</pre>
+
+  <h3>2.2 核心字段说明</h3>
+  <table class="field-table">
+    <tr><th>字段</th><th>类型</th><th>说明</th><th>注入目标</th></tr>
+    <tr>
+      <td>timeScale</td><td>float</td>
+      <td>时间倍率。默认 60f 意为 1 现实秒 = 1 仿真分钟。可在 Inspector 中动态调整。</td>
+      <td>内部驱动</td>
+    </tr>
+    <tr>
+      <td>startHour</td><td>float</td>
+      <td>仿真开始时的小时数（0-24）。默认 8.0（早上8点），决定 agent 的"首日"起点。</td>
+      <td>初始化</td>
+    </tr>
+    <tr>
+      <td>CurrentSimTime</td><td>float (Property)</td>
+      <td>当前仿真时间（秒），由 Update() 持续累加。是所有时间计算的基准。</td>
+      <td>MemoryModule.StoreMemory</td>
+    </tr>
+    <tr>
+      <td>CurrentHour</td><td>float (Property)</td>
+      <td>0-24 小时制，精确到分钟。例如 14.5 = 14:30。</td>
+      <td>LLM Prompt 注入</td>
+    </tr>
+    <tr>
+      <td>CurrentDay</td><td>int (Property)</td>
+      <td>仿真天数，从第1天开始计。触发 OnNewDay 事件使用。</td>
+      <td>MemoryModule 字段 simDay</td>
+    </tr>
+    <tr>
+      <td>CurrentPeriod</td><td>TimePeriod (Property)</td>
+      <td>当前时段枚举，由 CurrentHour 换算。时段切换时触发 OnPeriodChanged。</td>
+      <td>MemoryModule 字段 timePeriod</td>
+    </tr>
+    <tr>
+      <td>FormattedTime</td><td>string (Property)</td>
+      <td>格式化时间字符串，如"第3天 14:30 [下午]"，用于直接插入 LLM prompt。</td>
+      <td>所有 LLM Prompt</td>
+    </tr>
+    <tr>
+      <td>OnNewDay</td><td>event Action</td>
+      <td>每当 CurrentDay 增加时触发。Phase 3 的 AutonomousGoalGenerator 订阅此事件以触发新一天的目标规划。</td>
+      <td>AutonomousGoalGenerator（Phase 3）</td>
+    </tr>
+    <tr>
+      <td>OnPeriodChanged</td><td>event Action&lt;TimePeriod&gt;</td>
+      <td>时段切换时触发。ADM 可订阅以调整行动策略（如从下午切换到傍晚后提高谨慎度）。</td>
+      <td>ActionDecisionModule</td>
+    </tr>
+  </table>
+
+  <h3>2.3 核心方法说明</h3>
+  <pre><span class="kw">public class</span> <span class="ty">SimulatedTimeModule</span> : <span class="ty">MonoBehaviour</span>
+{
+    <span class="cm">// ── 配置 ─────────────────────────────────────────────────────</span>
+    [<span class="ty">SerializeField</span>] <span class="kw">public float</span> <span class="field">timeScale</span>    = <span class="num-lit">60f</span>;  <span class="cm">// 1秒现实 = 1分钟仿真</span>
+    [<span class="ty">SerializeField</span>] <span class="kw">public float</span> <span class="field">startHour</span>   = <span class="num-lit">8f</span>;   <span class="cm">// 仿真从早上8点开始</span>
+
+    <span class="cm">// ── 事件 ─────────────────────────────────────────────────────</span>
+    <span class="kw">public event</span> <span class="ty">Action</span>              <span class="field">OnNewDay</span>;        <span class="cm">// Phase 3 使用</span>
+    <span class="kw">public event</span> <span class="ty">Action</span>&lt;<span class="ty">TimePeriod</span>&gt; <span class="field">OnPeriodChanged</span>; <span class="cm">// ADM 订阅</span>
+
+    <span class="cm">// ── 状态属性 ──────────────────────────────────────────────────</span>
+    <span class="kw">public float</span>      <span class="prop">CurrentSimTime</span>  { <span class="kw">get</span>; <span class="kw">private set</span>; }
+    <span class="kw">public float</span>      <span class="prop">CurrentHour</span>     { <span class="kw">get</span>; <span class="kw">private set</span>; }
+    <span class="kw">public int</span>        <span class="prop">CurrentDay</span>      { <span class="kw">get</span>; <span class="kw">private set</span>; }
+    <span class="kw">public</span> <span class="ty">TimePeriod</span> <span class="prop">CurrentPeriod</span>   { <span class="kw">get</span>; <span class="kw">private set</span>; }
+
+    <span class="cm">/// &lt;summary&gt;供 LLM Prompt 直接插入的时间上下文字符串。&lt;/summary&gt;</span>
+    <span class="kw">public string</span> <span class="prop">FormattedTime</span>
+        => $<span class="str">"第{CurrentDay}天 {(int)CurrentHour:D2}:{(int)((CurrentHour % 1) * 60):D2} [{PeriodLabel(CurrentPeriod)}]"</span>;
+
+    <span class="cm">/// &lt;summary&gt;返回当前时段的行动建议，注入 LLM 帮助调整决策风格。&lt;/summary&gt;</span>
+    <span class="kw">public string</span> <span class="method">GetActionHint</span>()
+    {
+        <span class="kw">return</span> <span class="prop">CurrentPeriod</span> <span class="kw">switch</span>
+        {
+            <span class="ty">TimePeriod</span>.<span class="field">Morning</span>   => <span class="str">"当前为上午，状态最佳，适合主动侦察与搜索"</span>,
+            <span class="ty">TimePeriod</span>.<span class="field">Noon</span>      => <span class="str">"当前为午间，人员流动高峰，谨慎识别目标"</span>,
+            <span class="ty">TimePeriod</span>.<span class="field">Afternoon</span> => <span class="str">"当前为下午，光线良好，适合执行完整任务"</span>,
+            <span class="ty">TimePeriod</span>.<span class="field">Evening</span>   => <span class="str">"当前为傍晚，光线减弱，优先选择高空观察"</span>,
+            <span class="ty">TimePeriod</span>.<span class="field">Night</span>     => <span class="str">"当前为夜间，能见度低，建议依赖热感/雷达传感器"</span>,
+            _ => <span class="str">""</span>
+        };
+    }
+
+    <span class="cm">/// &lt;summary&gt;返回完整的时间上下文段落，可直接拼接进任何 LLM prompt。&lt;/summary&gt;</span>
+    <span class="kw">public string</span> <span class="method">GetContextBlock</span>()
+        => $<span class="str">"当前时间：{FormattedTime}\n环境提示：{GetActionHint()}"</span>;
+}</pre>
+
+  <h3>2.4 如何挂载</h3>
+  <div class="note ok">
+    <strong>推荐：</strong>在 IntelligentAgent 的 Awake/Start 中通过 <code>GetComponent&lt;SimulatedTimeModule&gt;()</code> 获取引用，作为共享组件挂载在全局 GameManager 对象上（所有 agent 共享同一个时钟），或每个 agent 独立运行（如果需要不同的时间感知）。
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- 第三节：PersonalitySystem -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="section" id="personality-module">
+  <div class="section-title"><span class="num">3</span>PersonalitySystem.cs <span class="new-badge">NEW</span> —— 工作人格模块</div>
+
+  <p style="color:var(--text2);margin-bottom:16px;">
+    为每个 agent 定义稳定的个性特征，影响其在 LLM#3 选槽、ADM 行动决策和记忆重要度评估中的行为偏好。人格不随任务改变，但可以通过长期反思（Phase 3）缓慢漂移。
+  </p>
+
+  <h3>3.1 PersonalityProfile 数据结构</h3>
+  <pre><span class="cm">/// &lt;summary&gt;
+/// 智能体人格档案（大五人格模型 + 领域特化）。
+/// 在 Inspector 中配置初始值，运行时只读（长期漂移由 Phase 3 实现）。
+/// &lt;/summary&gt;</span>
+[<span class="ty">Serializable</span>]
+<span class="kw">public class</span> <span class="ty">PersonalityProfile</span>
+{
+    <span class="kw">public string</span> <span class="field">agentId</span>;
+
+    <span class="cm">// ── 大五人格维度 [0,1] ───────────────────────────────────────</span>
+    [<span class="ty">Range</span>(<span class="num-lit">0f</span>, <span class="num-lit">1f</span>)] <span class="kw">public float</span> <span class="field">openness</span>;          <span class="cm">// 开放性：好奇心、创造力、愿意尝试新方法</span>
+    [<span class="ty">Range</span>(<span class="num-lit">0f</span>, <span class="num-lit">1f</span>)] <span class="kw">public float</span> <span class="field">conscientiousness</span>; <span class="cm">// 尽责性：纪律性、系统性、按规则执行</span>
+    [<span class="ty">Range</span>(<span class="num-lit">0f</span>, <span class="num-lit">1f</span>)] <span class="kw">public float</span> <span class="field">extraversion</span>;      <span class="cm">// 外向性：主动协作、主动汇报、占主导角色</span>
+    [<span class="ty">Range</span>(<span class="num-lit">0f</span>, <span class="num-lit">1f</span>)] <span class="kw">public float</span> <span class="field">agreeableness</span>;     <span class="cm">// 宜人性：服从指令、优先配合队友</span>
+    [<span class="ty">Range</span>(<span class="num-lit">0f</span>, <span class="num-lit">1f</span>)] <span class="kw">public float</span> <span class="field">neuroticism</span>;       <span class="cm">// 神经质：对失败的敏感程度，越高越容易触发反思</span>
+
+    <span class="cm">// ── 领域特化 ─────────────────────────────────────────────────</span>
+    <span class="kw">public string</span>[] <span class="field">coreValues</span>;  <span class="cm">// 核心价值观，如 ["安全第一","团队优先","效率"]</span>
+    <span class="kw">public string</span>[] <span class="field">habits</span>;      <span class="cm">// 行为习惯，如 ["先观察后行动","优先保持队形"]</span>
+    <span class="kw">public string</span>[] <span class="field">dislikes</span>;    <span class="cm">// 厌恶项，如 ["冲突","模糊指令","独自行动"]</span>
+
+    <span class="cm">// ── 衍生倾向（由 PersonalitySystem 计算，不在 Inspector 配置）────</span>
+    [<span class="ty">HideInInspector</span>] <span class="kw">public float</span> <span class="field">riskTolerance</span>;    <span class="cm">// 风险容忍度 = openness*0.5 + (1-neuroticism)*0.5</span>
+    [<span class="ty">HideInInspector</span>] <span class="kw">public float</span> <span class="field">cooperationBias</span>;  <span class="cm">// 协作偏好 = agreeableness*0.6 + extraversion*0.4</span>
+}</pre>
+
+  <h3>3.2 PersonalitySystem 核心方法</h3>
+
+  <table class="field-table">
+    <tr>
+      <th>方法</th><th>返回值</th><th>说明</th><th>注入目标</th>
+    </tr>
+    <tr>
+      <td>GetRolePreferenceHint()</td><td>string</td>
+      <td>根据大五维度生成角色偏好描述。高尽责性→偏好Perimeter/Guard；高开放性→偏好Scout/Explorer；高外向性→偏好Coordinator/Leader</td>
+      <td>LLM#3 prompt</td>
+    </tr>
+    <tr>
+      <td>GetDecisionStyleHint()</td><td>string</td>
+      <td>生成行动决策风格描述。高神经质→"谨慎行事，优先规避风险"；高开放性→"可尝试非常规路径"</td>
+      <td>ADM Rolling Prompt</td>
+    </tr>
+    <tr>
+      <td>GetImportanceModifier(AgentMemoryKind)</td><td>float</td>
+      <td>根据人格调整记忆重要度。高神经质agent对失败记忆额外加权(×1.2)；高尽责性对计划记忆加权(×1.1)</td>
+      <td>MemoryModule.StoreMemory</td>
+    </tr>
+    <tr>
+      <td>GetFullPersonalityContext()</td><td>string</td>
+      <td>返回完整人格描述段落，用于 AutonomousGoalGenerator（Phase 3）和 LLM#3 完整版注入</td>
+      <td>Phase 3 自主目标生成</td>
+    </tr>
+    <tr>
+      <td>ShouldTriggerEarlyReflection()</td><td>bool</td>
+      <td>高神经质(>0.7)时降低反思触发阈值，让agent更频繁地进行自我反思</td>
+      <td>ReflectionModule</td>
+    </tr>
+    <tr>
+      <td>GetPreferredRoles()</td><td>string[]</td>
+      <td>根据人格维度返回偏好角色列表，用于在 BuildPlanningContext 检索中增加相关性权重</td>
+      <td>MemoryQuery.tags</td>
+    </tr>
+  </table>
+
+  <h3>3.3 GetRolePreferenceHint() 的逻辑</h3>
+  <pre><span class="kw">public string</span> <span class="method">GetRolePreferenceHint</span>()
+{
+    <span class="kw">var</span> hints = <span class="kw">new</span> <span class="ty">List</span>&lt;<span class="kw">string</span>&gt;();
+
+    <span class="cm">// 尽责性高 → 系统性角色（边界控制、监视）</span>
+    <span class="kw">if</span> (<span class="field">profile</span>.<span class="field">conscientiousness</span> > <span class="num-lit">0.7f</span>)
+        hints.<span class="method">Add</span>(<span class="str">"倾向选择边界管控或系统性角色(如Perimeter/Guard)"</span>);
+
+    <span class="cm">// 开放性高 → 探索性角色（侦察、发现）</span>
+    <span class="kw">if</span> (<span class="field">profile</span>.<span class="field">openness</span> > <span class="num-lit">0.7f</span>)
+        hints.<span class="method">Add</span>(<span class="str">"倾向选择侦察或探索角色(如Scout/Explorer)"</span>);
+
+    <span class="cm">// 外向性高 → 领导或协调角色</span>
+    <span class="kw">if</span> (<span class="field">profile</span>.<span class="field">extraversion</span> > <span class="num-lit">0.7f</span>)
+        hints.<span class="method">Add</span>(<span class="str">"倾向选择协调或领导角色(如Coordinator)"</span>);
+
+    <span class="cm">// 宜人性高 → 支援角色，配合队友</span>
+    <span class="kw">if</span> (<span class="field">profile</span>.<span class="field">agreeableness</span> > <span class="num-lit">0.7f</span>)
+        hints.<span class="method">Add</span>(<span class="str">"倾向选择支援角色，优先配合队友需求"</span>);
+
+    <span class="kw">return</span> hints.<span class="field">Count</span> > <span class="num-lit">0</span>
+        ? <span class="str">"[人格倾向] "</span> + <span class="kw">string</span>.<span class="method">Join</span>(<span class="str">"；"</span>, hints)
+        : <span class="str">""</span>;
+}</pre>
+
+  <h3>3.4 GetImportanceModifier() 的逻辑</h3>
+  <pre><span class="kw">public float</span> <span class="method">GetImportanceModifier</span>(<span class="ty">AgentMemoryKind</span> kind)
+{
+    <span class="kw">return</span> kind <span class="kw">switch</span>
+    {
+        <span class="cm">// 高神经质 → 失败记忆额外加权，避免重蹈覆辙</span>
+        <span class="ty">AgentMemoryKind</span>.<span class="field">Decision</span> when <span class="field">profile</span>.<span class="field">neuroticism</span> > <span class="num-lit">0.6f</span> => <span class="num-lit">1.2f</span>,
+
+        <span class="cm">// 高尽责性 → 计划记忆加权，强化流程遵从</span>
+        <span class="ty">AgentMemoryKind</span>.<span class="field">Plan</span> when <span class="field">profile</span>.<span class="field">conscientiousness</span> > <span class="num-lit">0.7f</span> => <span class="num-lit">1.1f</span>,
+
+        <span class="cm">// 高开放性 → 观察记忆加权，鼓励从环境学习</span>
+        <span class="ty">AgentMemoryKind</span>.<span class="field">Observation</span> when <span class="field">profile</span>.<span class="field">openness</span> > <span class="num-lit">0.7f</span> => <span class="num-lit">1.1f</span>,
+
+        _ => <span class="num-lit">1.0f</span>  <span class="cm">// 默认不修改</span>
+    };
+}</pre>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- 第四节：Memory 字段扩展 -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="section" id="memory-extension">
+  <div class="section-title"><span class="num">4</span>Memory 字段扩展 <span class="mod-badge">MODIFY</span> —— 时间与人格注入</div>
+
+  <h3>4.1 Memory 类新增字段（MemoryContracts.cs）</h3>
+
+  <table class="field-table">
+    <tr><th>字段</th><th>类型</th><th>说明</th><th>谁写入</th></tr>
+    <tr>
+      <td>simDay</td><td>int</td>
+      <td>记忆创建时的仿真天数（第1天=1）。用于按天检索，区分"今天发生"vs"昨天发生"。</td>
+      <td>MemoryModule.StoreMemory（自动注入）</td>
+    </tr>
+    <tr>
+      <td>timePeriod</td><td>string</td>
+      <td>记忆创建时的时段字符串（"Morning"/"Afternoon"等）。自动加入 tags，让检索能按时段过滤。</td>
+      <td>MemoryModule.StoreMemory（自动注入）</td>
+    </tr>
+    <tr>
+      <td>simHour</td><td>float</td>
+      <td>记忆创建时的精确仿真小时（0-24）。用于计算同一地点不同时段的状态变化。</td>
+      <td>MemoryModule.StoreMemory（自动注入）</td>
+    </tr>
+    <tr>
+      <td>personalityContext</td><td>string</td>
+      <td>记忆创建时的人格摘要标注（如"[高尽责性]"）。让反思模块知道这条记忆来自什么人格状态的决策。</td>
+      <td>MemoryModule.StoreMemory（自动注入）</td>
+    </tr>
+  </table>
+
+  <h3>4.2 MemoryModule.StoreMemory 自动注入逻辑</h3>
+  <pre><span class="cm">// MemoryModule.cs — StoreMemory 方法末尾增加</span>
+<span class="kw">private void</span> <span class="method">InjectTimeAndPersonality</span>(<span class="ty">Memory</span> m)
+{
+    <span class="cm">// ① 注入时间上下文</span>
+    <span class="kw">if</span> (_timeModule != <span class="kw">null</span>)
+    {
+        m.<span class="field">simDay</span>     = _timeModule.<span class="prop">CurrentDay</span>;
+        m.<span class="field">simHour</span>    = _timeModule.<span class="prop">CurrentHour</span>;
+        m.<span class="field">timePeriod</span> = _timeModule.<span class="prop">CurrentPeriod</span>.<span class="method">ToString</span>();
+
+        <span class="cm">// 自动追加时段 tag，让 Recall 时能按时段过滤</span>
+        <span class="kw">if</span> (!m.<span class="field">tags</span>.<span class="method">Contains</span>(m.<span class="field">timePeriod</span>))
+            m.<span class="field">tags</span>.<span class="method">Add</span>(m.<span class="field">timePeriod</span>);
+    }
+
+    <span class="cm">// ② 注入人格标注并修正重要度</span>
+    <span class="kw">if</span> (_personalitySystem != <span class="kw">null</span>)
+    {
+        <span class="cm">// 根据人格调整 importance 权重</span>
+        <span class="kw">float</span> modifier = _personalitySystem.<span class="method">GetImportanceModifier</span>(m.<span class="field">kind</span>);
+        m.<span class="field">importance</span> = <span class="ty">Mathf</span>.<span class="method">Clamp01</span>(m.<span class="field">importance</span> * modifier);
+
+        <span class="cm">// 记录人格标注到 detail，供反思模块分析</span>
+        <span class="kw">string</span> pCtx = _personalitySystem.<span class="method">GetPersonalityTag</span>();
+        <span class="kw">if</span> (!<span class="kw">string</span>.<span class="method">IsNullOrWhiteSpace</span>(pCtx))
+            m.<span class="field">personalityContext</span> = pCtx;
+    }
+}</pre>
+
+  <h3>4.3 MemoryQuery 新增字段</h3>
+  <pre><span class="kw">public class</span> <span class="ty">MemoryQuery</span>
+{
+    <span class="cm">// ... 原有字段 ...</span>
+
+    <span class="cm">// 新增：时间维度过滤</span>
+    <span class="kw">public string</span> <span class="field">timePeriod</span>;   <span class="cm">// 只检索某时段的记忆（可选）</span>
+    <span class="kw">public int</span>    <span class="field">simDay</span> = -<span class="num-lit">1</span>;  <span class="cm">// -1 = 不过滤；>=1 = 只看指定天的记忆</span>
+    <span class="kw">public bool</span>   <span class="field">preferSamePeriod</span>; <span class="cm">// 同时段记忆加权（检索下午任务时优先下午历史）</span>
+}</pre>
+
+  <h3>4.4 ScoreMemory 增加时段相关性加权</h3>
+  <pre><span class="cm">// MemoryModule.ScoreMemory 末尾增加</span>
+<span class="kw">if</span> (query.<span class="field">preferSamePeriod</span> && !<span class="kw">string</span>.<span class="method">IsNullOrWhiteSpace</span>(memory.<span class="field">timePeriod</span>)
+    && !<span class="kw">string</span>.<span class="method">IsNullOrWhiteSpace</span>(query.<span class="field">timePeriod</span>)
+    && memory.<span class="field">timePeriod</span> == query.<span class="field">timePeriod</span>)
+{
+    score += <span class="num-lit">1.5f</span>;  <span class="cm">// 同时段记忆额外加分，提高时间相关性</span>
+}</pre>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- 第五节：主流程串联图 -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="section" id="integration">
+  <div class="section-title"><span class="num">5</span>主流程串联图 —— 各模块如何衔接</div>
+
+  <h3>5.1 初始化阶段</h3>
+  <div class="card">
+    <div class="flow">
+      <div class="flow-box orange">GameManager.Start()</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box orange">SimulatedTimeModule.Init()<br><small>startHour=8, timeScale=60</small></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box purple">PersonalitySystem.LoadProfile()<br><small>从 Inspector 读取人格配置</small></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box green">MemoryModule.SetDependencies(<br><small>timeModule, personalitySystem)</small></div>
+    </div>
+  </div>
+
+  <h3>5.2 LLM#1（任务解析）注入时间上下文</h3>
+  <div class="example-block">
+    <div class="example-header">📍 PlanningModule.RunLLM1() — prompt 前段增加</div>
+    <div class="example-body">
+      <pre><span class="kw">string</span> timeContext = _timeModule?.<span class="method">GetContextBlock</span>() ?? <span class="str">""</span>;
+<span class="kw">string</span> prompt = timeContext + <span class="str">"\n\n"</span> + <span class="str">"你是多智能体任务规划器..."</span>;</pre>
+      <p style="color:var(--text2);font-size:12px;margin-top:8px;">
+        LLM#1 知道现在是什么时间，可以在约束分析时考虑时间因素（如"夜间任务应增加能见度约束"）。
+        随后 RememberConstraintAnalysis 写入的记忆会自动带上 simDay 和 timePeriod 字段。
+      </p>
+    </div>
+  </div>
+
+  <h3>5.3 LLM#3（槽位选择）注入人格偏好</h3>
+  <div class="example-block">
+    <div class="example-header">📍 PlanningModule.RunLLM3() — prompt 中增加</div>
+    <div class="example-body">
+      <pre><span class="kw">string</span> roleHint  = _personalitySystem?.<span class="method">GetRolePreferenceHint</span>() ?? <span class="str">""</span>;
+<span class="kw">string</span> timeHint  = _timeModule?.<span class="method">GetContextBlock</span>() ?? <span class="str">""</span>;
+<span class="kw">string</span> prompt =
+    <span class="str">"你是无人机智能体。\n"</span> +
+    timeHint + <span class="str">"\n"</span> +
+    (<span class="kw">string</span>.<span class="method">IsNullOrWhiteSpace</span>(roleHint) ? <span class="str">""</span> : roleHint + <span class="str">"\n"</span>) +
+    <span class="str">"请从可选槽中选择最适合自己的一个...\n"</span> +
+    <span class="str">"你的人格偏好已如上说明，请在 thought 字段解释是否参考了这些偏好。\n"</span> + ...;</pre>
+      <p style="color:var(--text2);font-size:12px;margin-top:8px;">
+        LLM 在选槽时会综合考虑：当前时段（下午适合主动任务）+ 人格偏好（高尽责性→偏好系统性角色）+ 当前状态（电量/位置）。
+        RememberSlotSelection 写入的记忆会标注 timePeriod 和 personalityContext。
+      </p>
+    </div>
+  </div>
+
+  <h3>5.4 ADM Rolling Loop 注入时间+人格</h3>
+  <div class="example-block">
+    <div class="example-header">📍 ActionDecisionModule.BuildRollingPrompt() — 增加上下文段</div>
+    <div class="example-body">
+      <pre><span class="kw">string</span> timeCtx   = _timeModule?.<span class="method">GetContextBlock</span>() ?? <span class="str">""</span>;
+<span class="kw">string</span> styleHint = _personalitySystem?.<span class="method">GetDecisionStyleHint</span>() ?? <span class="str">""</span>;
+
+<span class="cm">// 在 prompt 的"角色描述"与"当前感知"之间插入</span>
+<span class="kw">string</span> contextSection =
+    <span class="str">$"## 时间与行动风格\n{timeCtx}\n{styleHint}\n\n"</span>;</pre>
+    </div>
+  </div>
+
+  <h3>5.5 ReflectionModule 人格驱动的触发阈值</h3>
+  <div class="example-block">
+    <div class="example-header">📍 ReflectionModule — 订阅时根据人格调整阈值</div>
+    <div class="example-body">
+      <pre><span class="cm">// 在 ReflectionModule.OnEnable() 或初始化时</span>
+_memoryModule.<span class="field">OnImportanceThresholdReached</span> -= <span class="field">OnThresholdReached</span>;
+_memoryModule.<span class="field">OnImportanceThresholdReached</span> += <span class="field">OnThresholdReached</span>;
+
+<span class="cm">// 若高神经质，动态降低触发阈值</span>
+<span class="kw">if</span> (_personalitySystem?.<span class="field">Profile</span>.<span class="field">neuroticism</span> > <span class="num-lit">0.7f</span>)
+    _memoryModule.<span class="field">reflectionImportanceThreshold</span> = <span class="num-lit">100f</span>; <span class="cm">// 默认150→100</span></pre>
+      <p style="color:var(--text2);font-size:12px;margin-top:8px;">
+        高神经质的 agent 更容易进入自我反思，从失败中学习更积极，但可能过度反思影响执行效率（这本身也是人格特征的体现）。
+      </p>
+    </div>
+  </div>
+
+  <h3>5.6 完整串联总览</h3>
+  <table>
+    <tr>
+      <th>触发点</th><th>注入内容</th><th>目标模块</th><th>效果</th>
+    </tr>
+    <tr>
+      <td>LLM#1 prompt</td>
+      <td>timeModule.GetContextBlock()</td>
+      <td>PlanningModule</td>
+      <td>约束分析考虑时间因素（如夜间/午间）</td>
+    </tr>
+    <tr>
+      <td>LLM#2 prompt</td>
+      <td>timeModule.GetContextBlock()</td>
+      <td>PlanningModule</td>
+      <td>角色设计考虑当前时段行动效率</td>
+    </tr>
+    <tr>
+      <td>LLM#3 prompt</td>
+      <td>timeModule + personalitySystem.GetRolePreferenceHint()</td>
+      <td>PlanningModule</td>
+      <td>选槽时综合人格偏好和时间状态</td>
+    </tr>
+    <tr>
+      <td>ADM Rolling prompt</td>
+      <td>timeModule + personalitySystem.GetDecisionStyleHint()</td>
+      <td>ActionDecisionModule</td>
+      <td>每次行动决策带有时间感知和风格偏好</td>
+    </tr>
+    <tr>
+      <td>MemoryModule.StoreMemory</td>
+      <td>simDay, simHour, timePeriod, personalityContext（自动注入）</td>
+      <td>所有写入记忆的调用点</td>
+      <td>所有记忆自动携带时间和人格维度</td>
+    </tr>
+    <tr>
+      <td>MemoryModule.ScoreMemory</td>
+      <td>query.preferSamePeriod + timePeriod 加权</td>
+      <td>所有检索场景</td>
+      <td>同时段的历史经验优先被召回</td>
+    </tr>
+    <tr>
+      <td>ReflectionModule 阈值</td>
+      <td>personalitySystem.neuroticism 动态调整</td>
+      <td>ReflectionModule</td>
+      <td>不同人格的 agent 反思频率不同</td>
+    </tr>
+    <tr>
+      <td>OnNewDay 事件</td>
+      <td>SimulatedTimeModule 触发</td>
+      <td>AutonomousGoalGenerator（Phase 3预留）</td>
+      <td>换日触发新一天的自主目标规划</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- 第六节：完整例子 -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="section" id="example">
+  <div class="section-title"><span class="num">6</span>完整例子：Hawk-1 在第3天下午的一次拦截任务</div>
+
+  <h3>6.1 初始状态设定</h3>
+  <div class="cols">
+    <div class="card">
+      <div class="card-title"><span class="icon">🕒</span>时间模块状态</div>
+      <table>
+        <tr><td>仿真天数</td><td><strong>第3天</strong></td></tr>
+        <tr><td>仿真时刻</td><td><strong>14:30</strong></td></tr>
+        <tr><td>时段</td><td><strong>Afternoon（下午）</strong></td></tr>
+        <tr><td>时段提示</td><td>光线良好，适合执行完整任务</td></tr>
+        <tr><td>timeScale</td><td>60x（1秒=1分钟）</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="icon">🧠</span>Hawk-1 人格档案</div>
+      <table>
+        <tr><td>openness</td><td><strong>0.55</strong>（中等）</td></tr>
+        <tr><td>conscientiousness</td><td><strong>0.85</strong>（高）→ 系统性执行</td></tr>
+        <tr><td>extraversion</td><td><strong>0.40</strong>（偏内向）</td></tr>
+        <tr><td>agreeableness</td><td><strong>0.70</strong>（偏高）→ 配合队友</td></tr>
+        <tr><td>neuroticism</td><td><strong>0.30</strong>（低）→ 稳定</td></tr>
+        <tr><td>coreValues</td><td>安全第一, 系统执行, 团队优先</td></tr>
+        <tr><td>habits</td><td>先观察后行动, 按步骤执行</td></tr>
+        <tr><td>riskTolerance</td><td>0.625（中等偏高）</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="card" style="border-color:#2d4261">
+    <div class="card-title">任务描述（人类注入）</div>
+    <p style="color:var(--text);font-size:13px; font-style:italic;">
+      "3架无人机协作在北门区域拦截可疑入侵者，UAV-1负责侦察确认目标，UAV-2从西侧拦截，UAV-3封锁南侧出口，所有机完成后统一向指挥部汇报。"
+    </p>
+  </div>
+
+  <div class="note">已有跨任务记忆（来自第1天下午同一地点任务）：
+    <br>→ "第1天下午14:20，从东侧接近北门目标时被发现，目标向南逃跑 [timePeriod=Afternoon, simDay=1]"（importance=0.86，失败）
+    <br>→ "第1天下午，担任Perimeter角色成功封锁南门 [timePeriod=Afternoon, simDay=1]"（importance=0.94，成功）
+  </div>
+
+  <hr>
+
+  <h3>6.2 LLM#1 调用（约束解析）</h3>
+
+  <div class="timeline">
+    <div class="timeline-step">
+      <div class="timeline-label">Prompt 头部注入</div>
+      <pre><span class="str">当前时间：第3天 14:30 [下午]
+环境提示：当前为下午，光线良好，适合执行完整任务
+
+你是多智能体任务规划器。请将任务解析为合法 JSON 对象。
+任务：3架无人机协作在北门区域拦截可疑入侵者...
+智能体数量：3
+...</span></pre>
+    </div>
+    <div class="timeline-step green">
+      <div class="timeline-label">LLM 输出（新增 thought 字段）</div>
+      <pre>{
+  <span class="str">"thought"</span>: <span class="str">"三机分工明确：UAV-1侦察确认→C1约束；UAV-2、3各负责不同方位→C1约束；
+  下午光线良好无需特殊传感器约束；均完成后统一汇报→C2同步约束"</span>,
+  <span class="str">"relType"</span>: <span class="str">"Cooperation"</span>,
+  <span class="str">"groupCnt"</span>: <span class="num-lit">1</span>,
+  <span class="str">"constraints"</span>: [
+    { <span class="str">"constraintId"</span>: <span class="str">"c1_scout"</span>, <span class="str">"cType"</span>: <span class="str">"C1"</span>, <span class="str">"subject"</span>: <span class="str">"UAV-1"</span>, <span class="str">"targetObject"</span>: <span class="str">"北门区域侦察"</span> },
+    { <span class="str">"constraintId"</span>: <span class="str">"c2_report"</span>, <span class="str">"cType"</span>: <span class="str">"C2"</span>, <span class="str">"condition"</span>: <span class="str">"三机均完成后统一汇报"</span>, <span class="str">"syncWith"</span>: [] },
+    { <span class="str">"constraintId"</span>: <span class="str">"c3_intercept"</span>, <span class="str">"cType"</span>: <span class="str">"C3"</span>, <span class="str">"sign"</span>: <span class="num-lit">1</span>, <span class="str">"reactTo"</span>: <span class="str">"ReadySignal"</span> }
+  ]
+}</pre>
+    </div>
+    <div class="timeline-step purple">
+      <div class="timeline-label">写入记忆（RememberConstraintAnalysis）</div>
+      <pre>{
+  summary:    <span class="str">"任务解析: Cooperation, 3个约束"</span>,
+  detail:     <span class="str">"任务解析: Cooperation, 3个约束\n[推理] 三机分工明确：UAV-1侦察确认→C1..."</span>,
+  kind:       <span class="str">Plan</span>,
+  importance: <span class="num-lit">0.70f</span>,
+  <span class="cm">// 自动注入：</span>
+  simDay:     <span class="num-lit">3</span>,
+  simHour:    <span class="num-lit">14.5f</span>,
+  timePeriod: <span class="str">"Afternoon"</span>,
+  tags:       [<span class="str">"Cooperation"</span>, <span class="str">"constraint_analysis"</span>, <span class="str">"Afternoon"</span>],
+  personalityContext: <span class="str">"[高尽责性-0.85]"</span>
+}</pre>
+    </div>
+  </div>
+
+  <hr>
+
+  <h3>6.3 LLM#2 调用（组长生成槽位）</h3>
+
+  <div class="timeline">
+    <div class="timeline-step">
+      <div class="timeline-label">Prompt 头部注入</div>
+      <pre><span class="str">当前时间：第3天 14:30 [下午]
+环境提示：当前为下午，光线良好，适合执行完整任务
+
+你是多智能体任务组长。请为本组生成计划槽 slots...
+组任务：3架无人机协作拦截北门可疑入侵者
+成员数：3</span></pre>
+    </div>
+    <div class="timeline-step green">
+      <div class="timeline-label">LLM 输出</div>
+      <pre>{
+  <span class="str">"thought"</span>: <span class="str">"下午光线好适合全面任务，3机分Scout/Interceptor/Perimeter明确分工；
+  C3+1约束要求Scout先确认目标再让Interceptor行动"</span>,
+  <span class="str">"slots"</span>: [
+    { <span class="str">"slotId"</span>: <span class="str">"s0"</span>, <span class="str">"role"</span>: <span class="str">"Scout"</span>,       <span class="str">"desc"</span>: <span class="str">"飞往北门区域侦察确认目标位置，发出ReadySignal"</span>,  <span class="str">"doneCond"</span>: <span class="str">"目标位置确认"</span> },
+    { <span class="str">"slotId"</span>: <span class="str">"s1"</span>, <span class="str">"role"</span>: <span class="str">"Interceptor"</span>, <span class="str">"desc"</span>: <span class="str">"等待ReadySignal后从西侧接近拦截目标"</span>,           <span class="str">"doneCond"</span>: <span class="str">"目标被拦截"</span> },
+    { <span class="str">"slotId"</span>: <span class="str">"s2"</span>, <span class="str">"role"</span>: <span class="str">"Perimeter"</span>,   <span class="str">"desc"</span>: <span class="str">"飞往南侧出口执行封锁，防止目标逃跑"</span>,            <span class="str">"doneCond"</span>: <span class="str">"南侧出口封锁"</span> }
+  ]
+}</pre>
+    </div>
+    <div class="timeline-step purple">
+      <div class="timeline-label">写入记忆（RememberSlotDesign）</div>
+      <pre>{
+  summary:    <span class="str">"槽位设计: Scout, Interceptor, Perimeter"</span>,
+  detail:     <span class="str">"...下午光线好适合全面任务，3机分工明确..."</span>,
+  timePeriod: <span class="str">"Afternoon"</span>,
+  simDay:     <span class="num-lit">3</span>,
+  tags:       [<span class="str">"slot_design"</span>, <span class="str">"Afternoon"</span>]
+}</pre>
+    </div>
+  </div>
+
+  <hr>
+
+  <h3>6.4 LLM#3 调用（Hawk-1 选槽）</h3>
+
+  <div class="timeline">
+    <div class="timeline-step">
+      <div class="timeline-label">Prompt（包含时间+人格）</div>
+      <pre><span class="str">你是无人机智能体 Hawk-1。
+当前时间：第3天 14:30 [下午]
+环境提示：当前为下午，光线良好，适合执行完整任务
+[人格倾向] 倾向选择边界管控或系统性角色(如Perimeter/Guard)；倾向配合队友需求
+
+可选槽：
+- s0: Scout    "飞往北门区域侦察确认目标位置"   doneCond="目标位置确认"
+- s1: Interceptor "等待ReadySignal后从西侧接近"  doneCond="目标被拦截"
+- s2: Perimeter "飞往南侧出口执行封锁"           doneCond="南侧出口封锁"
+
+当前电量：88%，当前位置：(12, 0, -45)（靠近南侧区域）
+
+历史记忆上下文（BuildPlanningContext 返回，preferSamePeriod=true）：
+- [Outcome] 第1天下午，担任Perimeter角色成功封锁南门 | outcome=mission_success
+- [Decision] 第1天下午，从东侧接近北门目标时被发现 | outcome=failure
+</span></pre>
+    </div>
+    <div class="timeline-step green">
+      <div class="timeline-label">LLM 输出</div>
+      <pre>{
+  <span class="str">"thought"</span>: <span class="str">"位置靠近南侧(12,-45)，历史记忆显示我第1天下午成功执行Perimeter封锁南门；
+  人格倾向系统性角色；s2(Perimeter封锁南侧)与我的位置、历史经验、人格特征高度匹配。
+  避免选Scout因为第1天从东侧接近失败过。"</span>,
+  <span class="str">"slotId"</span>: <span class="str">"s2"</span>
+}</pre>
+    </div>
+    <div class="timeline-step orange">
+      <div class="timeline-label">注意：历史记忆在这里起到了关键作用</div>
+      <div style="color:var(--text2);font-size:12.5px;padding-top:4px">
+        由于上一步 BuildPlanningContext 设置了 <code>preferSamePeriod=true</code>，第1天下午的两条记忆（timePeriod=Afternoon）获得了 +1.5f 的额外加分，优先被检索出来。
+        <br>LLM 从"第1天下午成功执行Perimeter"这条记忆中获取了经验，结合人格偏好，做出了更有依据的选择。
+        <br><strong>这就是时间维度记忆的价值：同一时段的历史经验比其他时段更相关。</strong>
+      </div>
+    </div>
+    <div class="timeline-step purple">
+      <div class="timeline-label">写入记忆（RememberSlotSelection）</div>
+      <pre>{
+  summary:    <span class="str">"选择槽位 s2(Perimeter): 南侧出口封锁"</span>,
+  detail:     <span class="str">"...位置靠近南侧，历史记忆显示成功Perimeter经验，人格倾向系统性角色..."</span>,
+  timePeriod: <span class="str">"Afternoon"</span>,
+  simDay:     <span class="num-lit">3</span>,
+  personalityContext: <span class="str">"[高尽责性-0.85][高宜人性-0.70]"</span>,
+  tags:       [<span class="str">"Perimeter"</span>, <span class="str">"slot_selection"</span>, <span class="str">"Afternoon"</span>],
+  importance: <span class="num-lit">0.715f</span>  <span class="cm">// 0.65 × 1.1（高尽责性对Plan/Decision类加权）</span>
+}</pre>
+    </div>
+  </div>
+
+  <hr>
+
+  <h3>6.5 ADM Rolling Loop（Hawk-1 执行Perimeter封锁）</h3>
+
+  <div class="timeline">
+    <div class="timeline-step">
+      <div class="timeline-label">Rolling Prompt 中间段</div>
+      <pre><span class="str">## 时间与行动风格
+当前时间：第3天 14:30 [下午]
+环境提示：当前为下午，光线良好，适合执行完整任务
+行动风格：系统型执行者，倾向按步骤行动，优先保护队形，配合队友需求
+
+## 当前角色
+角色：Perimeter封锁手 | 步骤：飞往南侧出口执行封锁
+
+## 历史动作上下文（BuildActionContext，preferSamePeriod=true）
+- [Outcome] 第1天下午，担任Perimeter角色成功封锁南门 | outcome=success
+- [Observation] 南侧出口14:00-16:00人流量低，适合封锁
+</span></pre>
+    </div>
+    <div class="timeline-step green">
+      <div class="timeline-label">LLM 动作输出</div>
+      <pre>{
+  <span class="str">"thought"</span>: <span class="str">"下午光线好，当前位置已靠近南侧，历史显示同样时段成功封锁南门。
+  按系统化步骤：先飞至南侧出口建立监视点，再写IntentAnnounce告知队友。"</span>,
+  <span class="str">"isDone"</span>: <span class="kw">false</span>,
+  <span class="str">"nextActions"</span>: [
+    { <span class="str">"type"</span>: <span class="str">"MoveTo"</span>,       <span class="str">"targetName"</span>: <span class="str">"南侧出口"</span> },
+    { <span class="str">"type"</span>: <span class="str">"WriteWhiteboard"</span>, <span class="str">"actionParams"</span>: <span class="str">"IntentAnnounce: 封锁南侧出口"</span> }
+  ]
+}</pre>
+    </div>
+  </div>
+
+  <hr>
+
+  <h3>6.6 任务完成后记忆写入</h3>
+
+  <div class="timeline">
+    <div class="timeline-step green">
+      <div class="timeline-label">RememberMissionOutcome（importance=0.94）</div>
+      <pre>{
+  summary:    <span class="str">"任务成功：北门可疑入侵者被拦截，南侧出口封锁有效"</span>,
+  timePeriod: <span class="str">"Afternoon"</span>,
+  simDay:     <span class="num-lit">3</span>,
+  tags:       [<span class="str">"mission_success"</span>, <span class="str">"Perimeter"</span>, <span class="str">"Afternoon"</span>],
+  importance: <span class="num-lit">0.94f</span>
+}</pre>
+    </div>
+    <div class="timeline-step orange">
+      <div class="timeline-label">第4天下午执行类似任务时</div>
+      <div style="color:var(--text2);font-size:12.5px;padding-top:6px">
+        BuildPlanningContext 使用 <code>preferSamePeriod=true, timePeriod="Afternoon"</code>，检索结果里会出现：
+        <br>→ <strong>第3天下午 Perimeter封锁成功（importance=0.94, timePeriod=Afternoon, +1.5f加分）</strong>
+        <br>→ <strong>第1天下午 Perimeter封锁成功（importance=0.94, timePeriod=Afternoon, +1.5f加分）</strong>
+        <br>→ 第1天下午 从东侧接近失败（importance=0.86）
+        <br>
+        <br>LLM#3 看到这些记忆后，<strong>Hawk-1 会稳定地强化"下午担任Perimeter"的角色偏好</strong>——这就是人格+时间维度带来的角色专业化涌现。
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <h3>6.7 如果换成高神经质的 Falcon-3</h3>
+  <div class="card" style="border-color:#3a1a3a">
+    <div class="card-title" style="color:var(--accent4)">对比：同任务下不同人格的差异</div>
+    <table>
+      <tr><th></th><th>Hawk-1（低神经质 0.30）</th><th>Falcon-3（高神经质 0.75）</th></tr>
+      <tr>
+        <td>反思触发阈值</td>
+        <td>150（默认）</td>
+        <td><strong>100</strong>（PersonalitySystem 动态调低）</td>
+      </tr>
+      <tr>
+        <td>失败记忆重要度</td>
+        <td>0.86（默认）</td>
+        <td><strong>0.86 × 1.2 = 1.0</strong>（人格修正）</td>
+      </tr>
+      <tr>
+        <td>LLM#3 选槽风格</td>
+        <td>稳定选择历史成功角色</td>
+        <td>prompt中会出现"谨慎行事，优先规避风险"，可能倾向回避失败过的角色</td>
+      </tr>
+      <tr>
+        <td>ADM 行动风格</td>
+        <td>系统化按步执行</td>
+        <td>"谨慎型，倾向先观察后行动，对不确定情况保守处理"</td>
+      </tr>
+      <tr>
+        <td>反思频率</td>
+        <td>每积累150分触发一次</td>
+        <td><strong>每积累100分触发一次</strong>，产出更多 Reflection 记忆</td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+<!-- 页脚 -->
+<hr>
+<div style="color:var(--text2);font-size:12px;text-align:center;padding:16px 0">
+  Phase 2 实现方案 · 工作人格与时间感知 ·
+  文件涉及：SimulatedTimeModule.cs（新建）、PersonalitySystem.cs（新建）、
+  MemoryContracts.cs（扩展4字段）、MemoryModule.cs（InjectTimeAndPersonality方法）、
+  PlanningModule.cs（LLM#1/2/3 prompt注入）、ActionDecisionModule.cs（Rolling prompt注入）
+</div>
+
+</div>
+</body>
+</html>

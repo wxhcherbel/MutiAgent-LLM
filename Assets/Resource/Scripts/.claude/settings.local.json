@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd:*)",
+      "Bash(/tmp/check_regions.txt:*)",
+      "Read(//tmp/**)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(git:*)",
+      "Bash(python3:*)",
+      "Bash(node:*)",
+      "Bash(powershell -Command \"cd 'E:\\\\基于Unity3D的多智能体控制与协同仿真系统\\\\UnityLLM\\\\LLM\\\\Assets\\\\Resource\\\\Scripts\\\\Maps'; [System.IO.File]::ReadAllBytes\\('CampusGrid2D.cs'\\)[0..600] -join ',' | Out-String\")",
+      "Bash(powershell -Command \"\n\\\\$file = 'E:\\\\基于Unity3D的多智能体控制与协同仿真系统\\\\UnityLLM\\\\LLM\\\\Assets\\\\Resource\\\\Scripts\\\\Maps\\\\CampusGrid2D.cs'\n\\\\$content = [System.IO.File]::ReadAllText\\(\\\\$file, [System.Text.Encoding]::UTF8\\)\n\\\\$oldComment = \\\\$content.Substring\\(\\\\$content.IndexOf\\('/// <summary>'\\), \\\\$content.IndexOf\\('[ExecuteAlways]'\\) - \\\\$content.IndexOf\\('/// <summary>'\\)\\)\nWrite-Host 'Found comment, length:' \\\\$oldComment.Length\nWrite-Host 'First 50 chars:' \\\\$oldComment.Substring\\(0, [Math]::Min\\(50, \\\\$oldComment.Length\\)\\)\n\")",
+      "Bash(powershell -Command \"\n\\\\$file = 'E:\\\\基于Unity3D的多智能体控制与协同仿真系统\\\\UnityLLM\\\\LLM\\\\Assets\\\\Resource\\\\Scripts\\\\Maps\\\\CampusGrid2D.cs'\n\\\\$content = [System.IO.File]::ReadAllText\\(\\\\$file, [System.Text.Encoding]::UTF8\\)\n\\\\$start = \\\\$content.IndexOf\\('/// <summary>'\\)\n\\\\$end = \\\\$content.IndexOf\\('[ExecuteAlways]'\\)\n\\\\$oldComment = \\\\$content.Substring\\(\\\\$start, \\\\$end - \\\\$start\\)\nWrite-Host \\\\$oldComment\n\")",
+      "Bash(powershell -Command \"\n\\\\$file = 'E:\\\\基于Unity3D的多智能体控制与协同仿真系统\\\\UnityLLM\\\\LLM\\\\Assets\\\\Resource\\\\Scripts\\\\Maps\\\\CampusGrid2D.cs'\n\\\\$content = [System.IO.File]::ReadAllText\\(\\\\$file, [System.Text.Encoding]::UTF8\\)\n\\\\$start = \\\\$content.IndexOf\\('/// <summary>'\\)\n\\\\$end = \\\\$content.IndexOf\\('[ExecuteAlways]'\\)\n\\\\$oldComment = \\\\$content.Substring\\(\\\\$start, \\\\$end - \\\\$start\\)\n\n\\\\$newComment = @'\n/// <summary>\n/// 将 <see cref=\"\"CampusJsonMapLoader\"\"/> 加载的校园 JSON 数据转换为二维逻辑网格（XZ 平面），\n/// 供多智能体路径规划仿真使用。\n/// <para>核心职责：</para>\n/// <list type=\"\"number\"\">\n///   <item>仅构建 2D 网格，不处理 3D 体素。</item>\n///   <item>网格可视化可按需开启或关闭。</item>\n///   <item>提供 A* 寻路、世界坐标 ↔ 网格坐标转换，以及要素（Feature）空间查询接口。</item>\n/// </list>\n/// </summary>\n\n'@\n\n\\\\$newContent = \\\\$content.Replace\\(\\\\$oldComment, \\\\$newComment\\)\nif \\(\\\\$newContent -eq \\\\$content\\) { Write-Host 'NO CHANGE'; } else { Write-Host 'REPLACED OK, length delta:' \\(\\\\$newContent.Length - \\\\$content.Length\\) }\n[System.IO.File]::WriteAllText\\(\\\\$file, \\\\$newContent, [System.Text.Encoding]::UTF8\\)\n\")",
+      "Bash(powershell -Command \"\n\\\\$file = 'E:\\\\基于Unity3D的多智能体控制与协同仿真系统\\\\UnityLLM\\\\LLM\\\\Assets\\\\Resource\\\\Scripts\\\\Maps\\\\CampusGrid2D.cs'\n\\(Get-Content \\\\$file | Measure-Object -Line\\).Lines\n\")",
+      "Bash(gh search:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(curl:*)",
+      "Bash(mkdir:*)",
+      "Bash(powershell -Command \"Get-Content 'E:\\\\基于Unity3D的多智能体控制与协同仿真系统\\\\UnityLLM\\\\LLM\\\\Assets\\\\Resource\\\\Scripts\\\\system-flow-reference.html' | Measure-Object -Line | Select-Object -ExpandProperty Lines\")",
+      "Bash(powershell -Command \"Get-Content 'E:\\\\基于Unity3D的多智能体控制与协同仿真系统\\\\UnityLLM\\\\LLM\\\\Assets\\\\Resource\\\\Scripts\\\\system-flow-reference.html' | Select-Object -Last 10\")",
+      "WebSearch",
+      "WebFetch(domain:arxiv.org)",
+      "Bash(sed 's/<[^>]*>//g')",
+      "Bash(wc -l Agents/*.cs LLM_Modules/*.cs Communication_Module/*.cs Enums/*.cs LLM_API/*.cs)"
+    ]
+  }
+}

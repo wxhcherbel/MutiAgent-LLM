@@ -1,0 +1,3020 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>系统主链说明与代码审阅</title>
+<style>
+  /* 视觉主题：纸面流程图 + 情报面板 */
+  :root {
+    --bg: #f5f1e8;
+    --bg-soft: #fbf8f2;
+    --panel: rgba(255, 250, 241, 0.92);
+    --panel-strong: #fffdf8;
+    --ink: #1f2a33;
+    --muted: #5c6b72;
+    --muted-2: #7d8a90;
+    --line: rgba(47, 66, 73, 0.14);
+    --line-strong: rgba(47, 66, 73, 0.28);
+    --accent: #146c7f;
+    --accent-2: #a84d2f;
+    --accent-3: #245d52;
+    --accent-4: #785b13;
+    --good: #2f7d5b;
+    --warn: #af6b14;
+    --risk: #a13b2f;
+    --todo: #7d4aa3;
+    --shadow: 0 18px 48px rgba(34, 44, 52, 0.10);
+    --radius-xl: 26px;
+    --radius-lg: 18px;
+    --radius-md: 12px;
+    --mono: "Cascadia Mono", "JetBrains Mono", "Consolas", monospace;
+    --serif: "Noto Serif SC", "Songti SC", "STSong", Georgia, serif;
+    --sans: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    color: var(--ink);
+    font-family: var(--sans);
+    background:
+      radial-gradient(circle at top right, rgba(20, 108, 127, 0.14), transparent 24%),
+      radial-gradient(circle at left center, rgba(168, 77, 47, 0.12), transparent 30%),
+      linear-gradient(180deg, #f7f4ec 0%, #f1ece2 100%);
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre, .mono { font-family: var(--mono); }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 300px minmax(0, 1fr);
+    min-height: 100vh;
+  }
+
+  aside {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 24px 20px 28px;
+    border-right: 1px solid var(--line);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.34)),
+      linear-gradient(180deg, #ece5d7 0%, #f5f0e5 100%);
+    backdrop-filter: blur(12px);
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+  aside::-webkit-scrollbar { width: 5px; }
+  aside::-webkit-scrollbar-track { background: transparent; }
+  aside::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 4px; }
+
+  .brand {
+    padding: 18px 18px 16px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    background: rgba(255, 252, 245, 0.86);
+    box-shadow: var(--shadow);
+  }
+  .brand small {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--accent);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    font-size: 11px;
+    font-family: var(--mono);
+  }
+  .brand h1 {
+    margin: 0;
+    font-family: var(--serif);
+    font-size: 28px;
+    line-height: 1.25;
+  }
+  .brand p {
+    margin: 10px 0 0;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.75;
+  }
+
+  .side-section {
+    margin-top: 18px;
+    padding: 14px 16px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: rgba(255, 251, 244, 0.78);
+  }
+  .side-title {
+    margin: 0 0 10px;
+    color: var(--muted-2);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-family: var(--mono);
+  }
+  .status-list { display: grid; gap: 8px; }
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 10px;
+    border-radius: 999px;
+    background: rgba(20, 108, 127, 0.08);
+    font-size: 12px;
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .good { background: rgba(47, 125, 91, 0.12); }
+  .warn { background: rgba(175, 107, 20, 0.12); }
+  .risk { background: rgba(161, 59, 47, 0.12); }
+  .todo { background: rgba(125, 74, 163, 0.12); }
+  .good .dot { background: var(--good); }
+  .warn .dot { background: var(--warn); }
+  .risk .dot { background: var(--risk); }
+  .todo .dot { background: var(--todo); }
+
+  nav { margin-top: 18px; }
+  .nav-group + .nav-group { margin-top: 18px; }
+  .nav-group h2 {
+    margin: 0 0 8px;
+    color: var(--muted-2);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-family: var(--mono);
+  }
+  .nav-group a {
+    display: block;
+    padding: 10px 12px;
+    margin-bottom: 6px;
+    border-left: 3px solid transparent;
+    border-radius: 10px;
+    color: var(--ink);
+    font-size: 13px;
+    line-height: 1.5;
+    transition: 0.2s ease;
+  }
+  .nav-group a:hover,
+  .nav-group a.active,
+  .nav-group a:focus-visible {
+    background: rgba(20, 108, 127, 0.08);
+    border-left-color: var(--accent);
+    text-decoration: none;
+  }
+  summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-md);
+  }
+  .nav-note {
+    margin-top: 8px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.7;
+  }
+
+  main { padding: 34px 34px 60px; }
+  .hero,
+  .chapter,
+  .review-summary,
+  .source-index {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-xl);
+    background: var(--panel);
+    box-shadow: var(--shadow);
+  }
+  .hero {
+    position: relative;
+    overflow: hidden;
+    padding: 28px;
+    background:
+      linear-gradient(135deg, rgba(20, 108, 127, 0.10), transparent 40%),
+      linear-gradient(225deg, rgba(168, 77, 47, 0.10), transparent 35%),
+      var(--panel);
+  }
+  .hero::after {
+    content: "";
+    position: absolute;
+    inset: auto -80px -80px auto;
+    width: 220px;
+    height: 220px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(36, 93, 82, 0.16), transparent 72%);
+    pointer-events: none;
+  }
+  .hero small {
+    display: inline-block;
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.66);
+    color: var(--accent);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    font-family: var(--mono);
+  }
+  .hero h2 {
+    margin: 16px 0 12px;
+    font-family: var(--serif);
+    font-size: 40px;
+    line-height: 1.18;
+  }
+  .hero p {
+    max-width: 980px;
+    margin: 0;
+    font-size: 15px;
+    line-height: 1.95;
+    color: var(--muted);
+  }
+  .hero-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+    margin-top: 22px;
+  }
+  .hero-card,
+  .node-card,
+  .review-item,
+  .source-card {
+    border-radius: var(--radius-md);
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.62);
+    min-width: 0;
+  }
+  .hero-card { padding: 14px 14px 12px; }
+  .hero-card strong {
+    display: block;
+    margin-bottom: 7px;
+    font-size: 12px;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-family: var(--mono);
+  }
+  .hero-card span {
+    display: block;
+    color: var(--ink);
+    font-size: 13px;
+    line-height: 1.7;
+  }
+
+  .chapter {
+    margin-top: 28px;
+    padding: 24px;
+    scroll-margin-top: 24px;
+  }
+  .chapter-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 18px;
+  }
+  .chapter-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: rgba(20, 108, 127, 0.10);
+    color: var(--accent);
+    font-size: 12px;
+    font-family: var(--mono);
+  }
+  .chapter-title-wrap h2 {
+    margin: 0;
+    font-family: var(--serif);
+    font-size: 30px;
+    line-height: 1.3;
+  }
+  .chapter-title-wrap p {
+    margin: 10px 0 0;
+    color: var(--muted);
+    font-size: 15px;
+    line-height: 1.9;
+  }
+  .chain-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+  }
+  .chain-badges span {
+    display: inline-flex;
+    align-items: center;
+    padding: 7px 11px;
+    border-radius: 999px;
+    background: rgba(36, 93, 82, 0.10);
+    color: var(--accent-3);
+    font-size: 12px;
+    font-family: var(--mono);
+  }
+
+  .node-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 12px;
+    margin-top: 18px;
+  }
+  .node-card {
+    min-height: 100%;
+    padding: 14px;
+    background: var(--panel-strong);
+  }
+  .node-card h3 {
+    margin: 0 0 10px;
+    color: var(--muted-2);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-family: var(--mono);
+  }
+  .node-card p,
+  .node-card li,
+  .details-body p,
+  .details-body li,
+  .source-card p {
+    font-size: 13px;
+    line-height: 1.78;
+    color: var(--ink);
+  }
+  .node-card ul,
+  .details-body ul {
+    margin: 0;
+    padding-left: 18px;
+  }
+
+  .path-card {
+    margin-top: 16px;
+    padding: 16px 18px;
+    border-radius: var(--radius-md);
+    border: 1px dashed var(--line-strong);
+    background: rgba(20, 108, 127, 0.05);
+  }
+  .path-card h3 {
+    margin: 0 0 10px;
+    color: var(--accent);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-family: var(--mono);
+  }
+  .path-card p {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.85;
+    color: var(--ink);
+  }
+  .path-card code { font-size: 12px; }
+
+  .scenario-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+    margin-top: 18px;
+  }
+  .scenario-card {
+    padding: 16px;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.68), rgba(255, 255, 255, 0.48));
+  }
+  .scenario-card.coop { border-color: rgba(47, 125, 91, 0.24); }
+  .scenario-card.comp { border-color: rgba(175, 107, 20, 0.24); }
+  .scenario-card.adv { border-color: rgba(161, 59, 47, 0.24); }
+  .scenario-card h3 {
+    margin: 0 0 10px;
+    font-size: 18px;
+    font-family: var(--serif);
+  }
+  .scenario-type {
+    display: inline-flex;
+    margin-bottom: 10px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-family: var(--mono);
+  }
+  .coop .scenario-type { background: rgba(47, 125, 91, 0.12); color: var(--good); }
+  .comp .scenario-type { background: rgba(175, 107, 20, 0.12); color: var(--warn); }
+  .adv .scenario-type { background: rgba(161, 59, 47, 0.12); color: var(--risk); }
+  .scenario-card dl { margin: 0; display: grid; gap: 8px; }
+  .scenario-card dt {
+    color: var(--muted-2);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-family: var(--mono);
+  }
+  .scenario-card dd {
+    margin: 0;
+    color: var(--ink);
+    font-size: 13px;
+    line-height: 1.75;
+  }
+
+  .details-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin-top: 18px;
+  }
+  .details-grid > * { min-width: 0; }
+  details {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.62);
+    overflow: hidden;
+  }
+  details[open] { box-shadow: 0 10px 28px rgba(34, 44, 52, 0.07); }
+  summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 14px 16px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  summary::-webkit-details-marker { display: none; }
+  .summary-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+  .summary-badge {
+    flex-shrink: 0;
+    padding: 5px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-family: var(--mono);
+  }
+  .summary-good { background: rgba(47, 125, 91, 0.12); color: var(--good); }
+  .summary-warn { background: rgba(175, 107, 20, 0.12); color: var(--warn); }
+  .summary-risk { background: rgba(161, 59, 47, 0.12); color: var(--risk); }
+  .summary-paper { background: rgba(20, 108, 127, 0.10); color: var(--accent); }
+  .summary-game { background: rgba(125, 74, 163, 0.12); color: var(--todo); }
+  .summary-title { min-width: 0; font-size: 14px; line-height: 1.6; overflow: hidden; text-overflow: ellipsis; }
+  .summary-arrow { flex-shrink: 0; color: var(--muted-2); font-family: var(--mono); }
+  .details-body {
+    padding: 0 16px 16px;
+    border-top: 1px solid var(--line);
+    overflow: hidden;
+    transition: max-height 0.28s ease;
+  }
+  .meta-note,
+  .footnote {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.8;
+  }
+  .meta-note {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: rgba(20, 108, 127, 0.06);
+  }
+  .detail-steps {
+    margin: 0;
+    padding-left: 20px;
+    color: var(--ink);
+    font-size: 13px;
+    line-height: 1.8;
+  }
+  .detail-note {
+    margin-top: 10px;
+    color: var(--ink);
+    font-size: 13px;
+    line-height: 1.8;
+  }
+  .callout {
+    margin-top: 10px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border-left: 3px solid transparent;
+    color: var(--ink);
+    font-size: 12px;
+    line-height: 1.7;
+  }
+  .callout-compact {
+    margin-top: 8px;
+    padding: 8px 12px;
+  }
+  .callout-warn {
+    background: rgba(175, 107, 20, 0.07);
+    border-left-color: var(--warn);
+  }
+  .callout-risk {
+    background: rgba(161, 59, 47, 0.07);
+    border-left-color: var(--risk);
+  }
+  .callout-success {
+    background: rgba(47, 125, 91, 0.07);
+    border-left-color: var(--good);
+  }
+  .callout-accent {
+    background: rgba(120, 91, 19, 0.07);
+    border-left-color: var(--accent-4);
+  }
+  .callout-label {
+    color: inherit;
+  }
+  .copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    padding: 4px 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: rgba(255,255,255,0.7);
+    color: var(--muted);
+    font-size: 11px;
+    font-family: var(--mono);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  pre:hover .copy-btn { opacity: 1; }
+  pre {
+    position: relative;
+    margin: 12px 0 0;
+    padding: 14px;
+    overflow-x: auto;
+    max-width: 100%;
+    white-space: pre;
+    border-radius: 12px;
+    border: 1px solid rgba(30, 42, 51, 0.14);
+    background: #1d2429;
+    color: #f0ebe1;
+  }
+  pre code {
+    font-size: 12px;
+    line-height: 1.85;
+    word-break: normal;
+    white-space: pre;
+  }
+  code { word-break: break-word; overflow-wrap: anywhere; }
+  .field-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12px;
+  }
+  .field-table th,
+  .field-table td {
+    padding: 10px 12px;
+    border-top: 1px solid var(--line);
+    vertical-align: top;
+    text-align: left;
+    font-size: 13px;
+    line-height: 1.75;
+  }
+  .field-table td {
+    word-break: break-all;
+    overflow-wrap: anywhere;
+  }
+  .field-table th {
+    width: 18%;
+    color: var(--muted-2);
+    font-size: 12px;
+    font-family: var(--mono);
+  }
+  .review-summary,
+  .source-index {
+    margin-top: 28px;
+    padding: 22px;
+  }
+  .review-summary h2,
+  .source-index h2 {
+    margin: 0 0 12px;
+    font-family: var(--serif);
+    font-size: 28px;
+  }
+  .review-list { display: grid; gap: 12px; }
+  .review-item { padding: 14px 16px; }
+  .review-item strong {
+    display: inline-block;
+    margin-bottom: 6px;
+    color: var(--risk);
+    font-size: 13px;
+    font-family: var(--mono);
+  }
+  .review-item p {
+    margin: 0;
+    color: var(--ink);
+    font-size: 14px;
+    line-height: 1.82;
+  }
+  .source-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .source-card { padding: 14px 16px; }
+  .source-card strong {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 14px;
+  }
+  .source-card p { margin: 0 0 8px; color: var(--muted); }
+  .source-card a {
+    font-size: 12px;
+    font-family: var(--mono);
+    word-break: break-all;
+  }
+  .footnote {
+    margin-top: 20px;
+    font-size: 13px;
+    line-height: 1.85;
+  }
+
+  @media (max-width: 1420px) {
+    .node-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .details-grid { grid-template-columns: 1fr; }
+    .hero-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 1180px) {
+    .layout { grid-template-columns: 1fr; }
+    aside {
+      position: relative;
+      height: auto;
+      border-right: 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .hero-grid,
+    .scenario-grid,
+    .source-grid { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 760px) {
+    main { padding: 22px 16px 44px; }
+    aside { padding: 18px 14px 22px; }
+    .hero,
+    .chapter,
+    .review-summary,
+    .source-index { padding: 18px; }
+    .hero h2 { font-size: 31px; }
+    .chapter-title-wrap h2 { font-size: 24px; }
+    .hero-grid,
+    .node-grid,
+    .scenario-grid,
+    .source-grid,
+    .details-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside>
+    <div class="brand">
+      <small>System Flow Review</small>
+      <h1>多智能体系统主链说明<br>与代码审阅</h1>
+      <p>
+        基于当前 Unity 项目代码梳理的真实执行链。主线从
+        <code>PlanningModule.SubmitMissionRequest()</code> 开始，一直跟到
+        <code>AtomicAction[]</code> 和 <code>AgentMotionExecutor</code>。
+      </p>
+    </div>
+
+    <div class="side-section">
+      <div class="side-title">审阅快照</div>
+      <div class="status-list">
+        <div class="status-pill good"><span class="dot"></span>白板读写链路已进入主流程</div>
+        <div class="status-pill warn"><span class="dot"></span>裁判接口存在，但运行时接线不完整</div>
+        <div class="status-pill risk"><span class="dot"></span><code>LLMInterface</code> 含硬编码 API Key</div>
+        <div class="status-pill todo"><span class="dot"></span>感知触发重规划仍为 <code>TODO</code></div>
+      </div>
+    </div>
+
+    <nav>
+      <div class="nav-group">
+        <h2>总览</h2>
+        <a href="#overview">说明基准</a>
+        <a href="#stage0">阶段 0 调度入口</a>
+        <a href="#stage1">阶段 1 LLM#1 任务解析</a>
+        <a href="#stage2">阶段 2 分组与广播</a>
+        <a href="#stage3">阶段 3 LLM#2 槽位生成</a>
+        <a href="#stage4">阶段 4 选槽与确认</a>
+        <a href="#stage5">阶段 5 LLM#4 步骤拆解</a>
+        <a href="#stage6">阶段 6 ADM 进入执行</a>
+        <a href="#stage7">阶段 7 滚动决策与协同约束</a>
+        <a href="#stage8">阶段 8 动作执行层</a>
+      </div>
+      <div class="nav-group">
+        <h2>支撑模块</h2>
+        <a href="#memory-reflection">Memory &amp; Reflection 模块</a>
+        <a href="#robustness">容错与鲁棒性</a>
+      </div>
+      <div class="nav-group">
+        <h2>收尾</h2>
+        <a href="#review">审阅结论汇总</a>
+        <a href="#sources">论文与来源索引</a>
+      </div>
+      <p class="nav-note">
+        注：本页以当前代码为准。凡是与 <code>constraint-reference.html</code> 或
+        <code>test.md</code> 不一致的地方，都会在对应主链节点旁直接标注偏差。
+      </p>
+      <div style="margin-top: 14px; display: flex; gap: 8px;">
+        <button id="btn-expand-all" style="flex:1; padding: 7px 10px; border: 1px solid rgba(47,66,73,0.14); border-radius: 8px; background: rgba(20,108,127,0.08); color: #146c7f; font-size: 12px; cursor: pointer; font-family: 'Cascadia Mono','Consolas',monospace;">全展开</button>
+        <button id="btn-collapse-all" style="flex:1; padding: 7px 10px; border: 1px solid rgba(47,66,73,0.14); border-radius: 8px; background: rgba(255,255,255,0.6); color: #5c6b72; font-size: 12px; cursor: pointer; font-family: 'Cascadia Mono','Consolas',monospace;">全折叠</button>
+      </div>
+    </nav>
+  </aside>
+
+  <main>
+    <section class="hero" id="overview">
+      <small>Code Baseline First</small>
+      <h2>当前项目不是“按模块平铺”的系统，而是一条被多处状态机穿起来的主链</h2>
+      <p>
+        真实入口不是 Web 面板，也不是某个“中央裁判脚本”，而是
+        <code>PlanningModule.SubmitMissionRequest(string missionDescription, int agentCount)</code>。
+        该入口先让一个智能体完成任务解析与分组，再通过消息广播把组信息发给所有成员。随后每个成员各自拿到
+        <code>PlanSlot</code>、拆解为 <code>PlanStep</code>，再由
+        <code>ActionDecisionModule</code> 在滚动循环里把步骤解释成一批批
+        <code>AtomicAction[]</code>。白板、通信、裁判、感知、运动执行都不是独立主线，
+        而是在这条链的不同节点上插入上下文、约束和反馈。
+      </p>
+      <div class="hero-grid">
+        <div class="hero-card">
+          <strong>真实入口</strong>
+          <span><code>PlanningModule.SubmitMissionRequest()</code> + <code>IntelligentAgent.CheckForDecision()</code></span>
+        </div>
+        <div class="hero-card">
+          <strong>规划核心</strong>
+          <span>LLM#1 解析任务，LLM#2 产槽，LLM#3（在代码中即 RunLLM3()）用于成员选槽，LLM#4 拆步骤</span>
+        </div>
+        <div class="hero-card">
+          <strong>执行核心</strong>
+          <span><code>RunRollingLoop()</code> 负责把步骤滚动转成 <code>AtomicAction[]</code></span>
+        </div>
+        <div class="hero-card">
+          <strong>审阅原则</strong>
+          <span>代码事实优先，旧设计稿偏差只做旁注，不把推测写成现状</span>
+        </div>
+        <div class="hero-card">
+          <strong>已知主链缺口</strong>
+          <span>R1 裁判未注册 · R2 ReadySignal 无写入点 · R3 感知重规划为 TODO · LLM#3 回退偏向首槽 · WhiteBoard 10s 超时影响 C3</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="chapter" id="stage0">
+      <div class="chapter-header">
+        <div class="chapter-title-wrap">
+          <div class="chapter-tag">阶段 0 · 调度入口</div>
+          <h2>谁来触发规划：不是一直在跑 LLM，而是 <code>IntelligentAgent</code> 轮询后才进入主链</h2>
+          <p>
+            项目中每个智能体都有自己的 <code>IntelligentAgent</code> 控制器。
+            它在 <code>Update()</code> 里调用 <code>CheckForDecision()</code>，每隔 2 秒检查一次是否需要决策。
+            如果当前已经有活动任务且 Agent 处于空闲态，则进入
+            <code>MakeDecisionCoroutine()</code>，再调用
+            <code>ActionDecisionModule.DecideNextAction()</code>。
+            如果是外部任务输入，则由任意一个空闲的 <code>PlanningModule</code> 收到
+            <code>SubmitMissionRequest()</code>，把系统带入规划态。
+          </p>
+          <div class="chain-badges">
+            <span><code>IntelligentAgent.Update()</code></span>
+            <span><code>CheckForDecision()</code></span>
+            <span><code>MakeDecisionCoroutine()</code></span>
+            <span><code>PlanningModule.SubmitMissionRequest()</code></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="node-grid">
+        <article class="node-card">
+          <h3>输入</h3>
+          <ul>
+            <li>用户任务文本 <code>missionDescription</code></li>
+            <li>参与智能体数量 <code>agentCount</code></li>
+            <li>Agent 当前状态 <code>CurrentState.Status</code></li>
+            <li>本地轮询节拍 <code>decisionCheckInterval = 2.0f</code></li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>输出</h3>
+          <ul>
+            <li>规划入口被打开，<code>busy = true</code></li>
+            <li><code>PlanningState</code> 从 <code>Idle</code> 进入 <code>Parsing</code></li>
+            <li>已有活动任务时，进入 ADM 决策而不是重新发起任务</li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>关键字段</h3>
+          <ul>
+            <li><code>isMakingDecision</code>：防止同一智能体重复进入决策协程</li>
+            <li><code>lastDecisionTime</code>：控制轮询节拍</li>
+            <li><code>busy</code>：防止同一 <code>PlanningModule</code> 并发提交任务</li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>涉及函数</h3>
+          <ul>
+            <li><code>IntelligentAgent.CheckForDecision()</code></li>
+            <li><code>IntelligentAgent.ShouldMakeDecision()</code></li>
+            <li><code>IntelligentAgent.MakeDecisionCoroutine()</code></li>
+            <li><code>PlanningModule.SubmitMissionRequest()</code></li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>上下游关系</h3>
+          <ul>
+            <li>上游：UI、HTTP 控制台、脚本直接调用</li>
+            <li>本阶段只负责“是否进入规划”</li>
+            <li>下游直接进入 <code>RunLLM1()</code></li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="path-card">
+        <h3>调用链引用</h3>
+        <p>
+          <code>AgentStateServer.ExecuteCommand()</code> 或本地脚本
+          <code>-> PlanningModule.SubmitMissionRequest()</code>
+          <code>-> StartCoroutine(RunLLM1())</code>。
+          如果当前不是新任务，而是已有活动步骤继续推进，则是
+          <code>IntelligentAgent.MakeDecisionCoroutine()</code>
+          <code>-> ActionDecisionModule.DecideNextAction()</code>。
+        </p>
+      </div>
+
+      <div class="scenario-grid">
+        <article class="scenario-card coop">
+          <span class="scenario-type">合作</span>
+          <h3>校园双区协同侦察</h3>
+          <dl>
+            <dt>用户输入</dt>
+            <dd>“3 架无人机协作侦察东区和西区，全部完成后同步回传。”</dd>
+            <dt>调度表现</dt>
+            <dd>先由一个空闲 PlanningModule 受理任务；后续每个成员的决策由各自 Agent 定时驱动。</dd>
+            <dt>通信含义</dt>
+            <dd>此阶段还没有队内消息，只是把任务送进规划入口。</dd>
+          </dl>
+        </article>
+        <article class="scenario-card comp">
+          <span class="scenario-type">竞争</span>
+          <h3>两队争抢同一资源点</h3>
+          <dl>
+            <dt>用户输入</dt>
+            <dd>“两队无人机竞速争抢同一充电桩，谁先占用谁得分。”</dd>
+            <dt>调度表现</dt>
+            <dd>入口和合作任务相同，但后续应当更依赖裁判事件而不是纯白板协同。</dd>
+            <dt>当前现状</dt>
+            <dd>入口可接，但竞争链路后续仍有裁判接线缺口。</dd>
+          </dl>
+        </article>
+        <article class="scenario-card adv">
+          <span class="scenario-type">对抗</span>
+          <h3>红队围堵蓝队逃脱</h3>
+          <dl>
+            <dt>用户输入</dt>
+            <dd>“红队拦截蓝队，蓝队尝试从教学楼东侧撤离。”</dd>
+            <dt>调度表现</dt>
+            <dd>入口同样统一；差异不在入口，而在后续分组、目标冲突和裁判反馈。</dd>
+            <dt>主链提示</dt>
+            <dd>这类任务需要队内协同和队间对抗并存，因此后续会同时出现白板与裁判话题。</dd>
+          </dl>
+        </article>
+      </div>
+
+      <div class="details-grid">
+        <details open>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-good">已接入</span>
+              <span class="summary-title">入口调度本身比较清晰：新任务和已有任务推进是两条不同入口</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              这里最容易误解的一点是：系统并不是“用户发起一次请求后，所有 Agent 同时跟着跑一条大协程”。
+              实际上只有任务解析阶段是某个 PlanningModule 主导，后续每个 Agent 的动作推进都由自己的
+              <code>IntelligentAgent</code> 周期性触发。这个设计让局部行动具备自治性，也解释了为什么
+              ADM、感知、运动执行都挂在每个 Agent 身上。
+            </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-paper">优化建议</span>
+              <span class="summary-title">多 Agent 框架论文提示：入口后应尽快进入 SOP 化协作，而不是只靠自然语言自由发挥</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              AutoGen、CAMEL、MetaGPT 这类工作都强调：多 Agent 一旦进入复杂任务，必须尽快把角色边界、
+              交互格式、可共享中间结果标准化，否则后续链路会出现级联幻觉。
+            </p>
+            <ul>
+              <li>AutoGen 适合补”多 Agent 会话协议”和消息格式校验。</li>
+              <li>CAMEL 适合补”角色提示词”和角色一致性。</li>
+              <li>MetaGPT 适合补”标准作业流程 SOP”与发布-订阅式共享消息池。</li>
+            </ul>
+            <p><strong>【方法原理】</strong>AutoGen（微软提出）把每个 Agent 的角色、可发消息类型和消息格式定义为结构化 Schema，通过”对话管理器（GroupChatManager）”路由消息并强制校验格式，防止级联幻觉在多轮对话中累积。</p>
+            <p><strong>【为何适合本节点】</strong>SubmitMissionRequest() 是整个规划链的入口，若入口处任务描述结构松散，后续所有 LLM 调用都可能产生无法校验的输出，AutoGen Schema 可在此处建立全局格式契约。</p>
+            <p><strong>【具体实现步骤】</strong></p>
+            <ol class="detail-steps">
+              <li>在 SubmitMissionRequest() 前定义 AgentRoleManifest 结构：声明本轮每类 Agent 的”可输入动词”（如 Scout 只允许产出 Observe/MoveTo）</li>
+              <li>每次 LLM 调用后增加 Schema 校验层，拒绝不合法输出并触发 re-prompt（最多重试2次）</li>
+              <li>把”允许产出的结构、角色边界、失败回退格式”写入统一系统 prompt，而不是分散在各个 LLM 调用里</li>
+              <li>为 ParsedMission 添加后验校验器：验证 groupCnt、groupScope 范围、每个 C2 至少有2个成员</li>
+            </ol>
+            <div class="meta-note">
+              推荐插入点：任务刚进入规划前，把”允许产出的结构””角色边界””失败回退格式”写成统一系统协议。
+            </div>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section class="chapter" id="stage1">
+      <div class="chapter-header">
+        <div class="chapter-title-wrap">
+          <div class="chapter-tag">阶段 1 · LLM#1 任务解析</div>
+          <h2><code>RunLLM1()</code> 把用户自然语言压成 <code>ParsedMission</code>，这是后续所有协同约束的源头</h2>
+          <p>
+            <code>PlanningModule.RunLLM1(string desc, int cnt)</code> 会构造一个非常长的提示词，
+            要求 LLM 识别任务关系类型 <code>relType</code>、分组数 <code>groupCnt</code>、组任务
+            <code>groupMsns</code>、时间限制 <code>timeLimit</code>，以及最关键的
+            <code>StructuredConstraint[] constraints</code>。当前代码里真正落地的协同约束只有
+            <code>C1</code> / <code>C2</code> / <code>C3</code> 三类。
+          </p>
+          <div class="chain-badges">
+            <span><code>PlanningState.Parsing</code></span>
+            <span><code>LLMInterface.SendRequest()</code></span>
+            <span><code>ParsedMission</code></span>
+            <span><code>StructuredConstraint</code></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="node-grid">
+        <article class="node-card">
+          <h3>输入</h3>
+          <ul>
+            <li>用户任务文本 <code>desc</code></li>
+            <li>参与智能体数 <code>cnt</code></li>
+            <li>LLM 提示中内建的 C1/C2/C3 规则与示例</li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>输出</h3>
+          <ul>
+            <li><code>ParsedMission.msnId</code></li>
+            <li><code>relType</code> / <code>groupCnt</code> / <code>groupMsns</code></li>
+            <li><code>timeLimit</code></li>
+            <li><code>constraints[]</code></li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>关键字段</h3>
+          <ul>
+            <li><code>relType</code>：合作、竞争、对抗或混合</li>
+            <li><code>groupScope</code>：约束属于哪一组</li>
+            <li><code>watchAgent</code> / <code>syncWith</code>：供运行期补全和查询</li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>涉及函数</h3>
+          <ul>
+            <li><code>PlanningModule.RunLLM1()</code> <span style="font-size:11px; color:#af6b14; font-family:'Cascadia Mono','Consolas',monospace;">maxTokens:1200</span></li>
+            <li><code>LLMInterface.SendRequest()</code></li>
+            <li><code>PlanningModule.ExtractJson()</code></li>
+            <li><code>PlanningModule.AssignGroups()</code></li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>上下游关系</h3>
+          <ul>
+            <li>上游：入口已确认可提交任务</li>
+            <li>本阶段产出的是“全局任务图”而非个人计划</li>
+            <li>下游立即进入本地分组与组内广播</li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="path-card">
+        <h3>调用链引用</h3>
+        <p>
+          <code>PlanningModule.SubmitMissionRequest()</code>
+          <code>-> RunLLM1()</code>
+          <code>-> LLMInterface.SendRequest(prompt, callback)</code>
+          <code>-> JsonConvert.DeserializeObject&lt;ParsedMission&gt;()</code>
+          <code>-> AssignGroups(parsedMission, agentIds)</code>。
+        </p>
+      </div>
+
+      <div class="details-grid">
+        <details open>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-good">字段内嵌</span>
+              <span class="summary-title">首次出现的数据结构：<code>ParsedMission</code> 与 <code>StructuredConstraint</code></span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <table class="field-table">
+              <tr>
+                <th><code>ParsedMission.msnId</code></th>
+                <td>任务唯一 ID，由 <code>GenMsnId()</code> 生成，后续所有消息和步骤都用它隔离任务轮次。</td>
+              </tr>
+              <tr>
+                <th><code>ParsedMission.relType</code></th>
+                <td>任务关系类型。会影响分组数量与后续协同解释，但当前代码没有专门按类型切不同执行器。</td>
+              </tr>
+              <tr>
+                <th><code>ParsedMission.constraints</code></th>
+                <td>全局约束集合。之后不会重复拷贝内容，只会在槽位与步骤里通过 <code>constraintId</code> 引用。</td>
+              </tr>
+              <tr>
+                <th><code>StructuredConstraint.cType</code></th>
+                <td>当前代码真实支持的是 <code>C1</code>、<code>C2</code>、<code>C3</code>。没有 <code>C4 Priority</code> 实装字段。</td>
+              </tr>
+              <tr>
+                <th><code>StructuredConstraint.channel</code></th>
+                <td>当前主链会用到 <code>whiteboard</code> 与少量 <code>referee</code> 读取语义，但裁判实际广播链不完整。</td>
+              </tr>
+            </table>
+            <pre><code>// LLM#1 期望的核心 JSON 轮廓：这里只展示字段意图，不贴原始源码
+{
+  "relType": "Cooperation",
+  "groupCnt": 1,
+  "groupMsns": ["东区侦察 + 西区侦察 + 同步回传"],
+  "timeLimit": 0,
+  "constraints": [
+    // C1：谁负责什么
+    {"constraintId":"c1_east","cType":"C1","channel":"direct","groupScope":0},
+    // C2：谁和谁同步完成
+    {"constraintId":"c2_report","cType":"C2","channel":"whiteboard","groupScope":0},
+    // C3：谁等谁，或谁和谁互斥
+    {"constraintId":"c3_mutex","cType":"C3","channel":"whiteboard","groupScope":0}
+  ]
+}</code></pre>
+          </div>
+        </details>
+
+        <details open>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-risk">审阅风险</span>
+              <span class="summary-title"><code>LLMInterface</code> 已进入主链，而且当前代码里直接写了 API Key</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              当前 <code>LLM_API/LLMInterface.cs</code> 的默认配置中直接包含兼容 OpenAI Chat Completions 的
+              <code>apiUrl</code>、<code>apiKey</code> 和默认模型。这意味着任何拿到仓库副本的人都能看到密钥。
+              这不是文档推断，而是已经存在于主链的真实安全问题，因为所有 LLM#1/2/3/4 和 ADM 滚动规划都经过它。
+            </p>
+            <ul>
+              <li>风险级别：高。因为密钥泄露会立即影响费用与账号安全。</li>
+              <li>最小正确改法：移到环境变量、Unity Secret、外部配置文件或本地未入库资源。</li>
+              <li>文档层处理：本页只做风险标识，不默认替你改运行时代码。</li>
+            </ul>
+          </div>
+        </details>
+      </div>
+
+      <div class="scenario-grid">
+        <article class="scenario-card coop">
+          <span class="scenario-type">合作</span>
+          <h3>输入如何变成合作约束</h3>
+          <dl>
+            <dt>用户文本</dt>
+            <dd>“A 机侦察东区，B 机侦察西区，全部完成后统一回传。”</dd>
+            <dt>LLM#1 输出重点</dt>
+            <dd><code>relType=Cooperation</code>，<code>groupCnt=1</code>，生成两个 C1 分工约束和一个 C2 同步约束。</dd>
+            <dt>主链价值</dt>
+            <dd>这一步不是生成动作，而是把“业务关系”压成后续可以引用的结构化键。</dd>
+          </dl>
+        </article>
+        <article class="scenario-card comp">
+          <span class="scenario-type">竞争</span>
+          <h3>输入如何变成竞争约束</h3>
+          <dl>
+            <dt>用户文本</dt>
+            <dd>“两队争抢同一充电桩，先到先得。”</dd>
+            <dt>LLM#1 输出重点</dt>
+            <dd>应识别为 <code>Competition</code>，并倾向生成带互斥语义的 C3。</dd>
+            <dt>当前限制</dt>
+            <dd>代码能承接“竞争语义”，但后续裁判广播未完整接入，所以真正的跨队判定还不闭环。</dd>
+          </dl>
+        </article>
+        <article class="scenario-card adv">
+          <span class="scenario-type">对抗</span>
+          <h3>输入如何变成对抗约束</h3>
+          <dl>
+            <dt>用户文本</dt>
+            <dd>“红队围堵蓝队，蓝队逃离东门。”</dd>
+            <dt>LLM#1 输出重点</dt>
+            <dd>应识别为 <code>Adversarial</code>，至少拆成两组任务，并把组内协同约束通过 <code>groupScope</code> 限定在各自组内。</dd>
+            <dt>主链含义</dt>
+            <dd>这一层先把“红蓝对立”定下来，但对手信息后续是否进入决策，还依赖裁判链是否真的广播。</dd>
+          </dl>
+        </article>
+      </div>
+
+      <div class="details-grid">
+        <details>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-risk">设计偏差</span>
+              <span class="summary-title">旧 <code>constraint-reference.html</code> 中的 <code>C4 / involvedAgents</code> 不是当前代码事实</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              仓库里已有的 <code>constraint-reference.html</code> 更像一版更激进的设计草稿，里面出现了
+              <code>C4 Priority</code>、<code>involvedAgents</code>、更完整的裁判机制等概念。
+              但当前 <code>PlanContracts.cs</code> 真实定义的结构只有：
+              <code>constraintId</code>、<code>cType</code>、<code>channel</code>、<code>groupScope</code>、
+              <code>subject</code>、<code>targetObject</code>、<code>exclusive</code>、
+              <code>condition</code>、<code>syncWith</code>、<code>sign</code>、
+              <code>watchAgent</code>、<code>reactTo</code>。
+            </p>
+            <div class="meta-note">
+              所以本页从这里开始就只按代码支持的字段往下讲，不把设计稿字段混进主链解释。
+            </div>
+          </div>
+        </details>
+
+        <details>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-paper">优化建议</span>
+              <span class="summary-title">多 Agent 任务描述可以参考 MetaGPT 的 SOP 思路，让 LLM#1 输出更稳定</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              当前 LLM#1 依靠长提示词硬编码三类约束识别规则，能跑，但对复杂任务容易变脆。
+              MetaGPT 的价值不在”角色名更好看”，而在把 SOP 和中间结构标准化。
+            </p>
+            <ul>
+              <li>可把任务先拆成”目标、参与方、资源、同步条件、互斥条件、时限”六段，再送 LLM。</li>
+              <li>可增加一个解析后校验器，对 <code>groupCnt</code>、<code>groupMsns.length</code>、<code>groupScope</code> 做结构检查。</li>
+              <li>可把失败时的最小重试策略写成固定协议，而不是直接 <code>Failed</code>。</li>
+            </ul>
+            <p><strong>【方法原理】</strong>MetaGPT 为每个角色定义标准作业流程（SOP），用发布-订阅式共享消息池分发中间结果；每个角色只读特定频道、只产出特定文档类型，整个流程可验证、可重放。</p>
+            <p><strong>【为何适合本节点】</strong>LLM#1 的任务解析输出 ParsedMission 是后续所有步骤的数据源，若输出格式自由，解析失败会导致整链崩溃。MetaGPT SOP 的六段式填空可大幅减少自由发挥。</p>
+            <p><strong>【具体实现步骤】</strong></p>
+            <ol class="detail-steps">
+              <li>把 LLM#1 的 prompt 改为”目标→参与方→资源→同步条件→互斥条件→时限”六段式填空</li>
+              <li>产出 ParsedMission 后增加后验校验：验证 groupCnt == groupMsns.Length、所有 groupScope 在 [0, groupCnt) 范围内</li>
+              <li>失败时不直接进入 Failed 状态，而是把错误描述反馈给 LLM，最多重试2次</li>
+              <li>用共享消息池替代直接字段传递，使 LLM#2 可通过订阅频道而非硬编码字段名读取结果</li>
+            </ol>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section class="chapter" id="stage2">
+      <div class="chapter-header">
+        <div class="chapter-title-wrap">
+          <div class="chapter-tag">阶段 2 · 分组与广播</div>
+          <h2><code>AssignGroups()</code> 不是交给 LLM 的，而是本地按人数切组，再用消息把任务图发给每个成员</h2>
+          <p>
+            任务解析完成后，真正的分组逻辑由 <code>PlanningModule.AssignGroups()</code> 本地执行。
+            它根据 <code>groupCnt</code> 把当前注册的 Agent 按顺序切成若干组，再用
+            <code>SelectLeader()</code> 以“当前电量最高”规则选组长，最后向每个成员发送
+            <code>GroupBootstrapPayload</code>。这里才是 Agent 间通信第一次进入主链。
+          </p>
+          <div class="chain-badges">
+            <span><code>AssignGroups()</code></span>
+            <span><code>SelectLeader()</code></span>
+            <span><code>CommunicationModule.SendScopedMessage()</code></span>
+            <span><code>OnGroupBootstrap()</code></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="node-grid">
+        <article class="node-card">
+          <h3>输入</h3>
+          <ul>
+            <li><code>ParsedMission</code> 全局任务图</li>
+            <li><code>CommunicationManager.GetAllAgentIds()</code></li>
+            <li>各 Agent 当前电量，用于选组长</li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>输出</h3>
+          <ul>
+            <li><code>GroupDef[] groups</code></li>
+            <li><code>GroupBootstrapPayload</code></li>
+            <li>每个成员本地更新 <code>myGroup</code>、<code>isLeader</code>、<code>props.TeamID</code></li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>关键字段</h3>
+          <ul>
+            <li><code>groupId</code>：形如 <code>g0</code>、<code>g1</code></li>
+            <li><code>leaderId</code>：由本地电量最高者决定</li>
+            <li><code>constraints</code>：只发全局约束或本组约束</li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>涉及函数</h3>
+          <ul>
+            <li><code>PlanningModule.AssignGroups()</code></li>
+            <li><code>PlanningModule.SelectLeader()</code></li>
+            <li><code>CommunicationModule.SendScopedMessage()</code></li>
+            <li><code>PlanningModule.OnGroupBootstrap()</code></li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>上下游关系</h3>
+          <ul>
+            <li>上游：LLM#1 已给出全局任务图</li>
+            <li>中游：通信总线第一次真正承载结构化任务数据</li>
+            <li>下游：组长进入 LLM#2，成员等待槽位广播</li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="path-card">
+        <h3>调用链引用</h3>
+        <p>
+          <code>AssignGroups()</code>
+          <code>-> comm.SendScopedMessage(DirectAgent, MessageType.GroupBootstrap, payload)</code>
+          <code>-> CommunicationManager.ProcessMessage()</code>
+          <code>-> CommunicationModule.ReceiveMessage()</code>
+          <code>-> CommunicationModule.ProcessMessages()</code>
+          <code>-> PlanningModule.OnGroupBootstrap()</code>。
+        </p>
+      </div>
+
+      <div class="details-grid">
+        <details open>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-good">字段内嵌</span>
+              <span class="summary-title">首次出现的数据结构：<code>GroupDef</code>、<code>GroupBootstrapPayload</code>、<code>AgentMessage</code></span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <table class="field-table">
+              <tr>
+                <th><code>GroupDef.groupId</code></th>
+                <td>组标识，白板后续也会按这个分桶存储条目。</td>
+              </tr>
+              <tr>
+                <th><code>GroupDef.mission</code></th>
+                <td>这一组接下来真正要完成的子任务文本，是 LLM#2 生成槽位时的核心输入。</td>
+              </tr>
+              <tr>
+                <th><code>GroupBootstrapPayload.constraints</code></th>
+                <td>只给“全局约束 + 本组约束”，避免对抗场景里把别组内部协同暴露出来。</td>
+              </tr>
+              <tr>
+                <th><code>AgentMessage.Scope</code></th>
+                <td>这里走的是 <code>DirectAgent</code>，不是全局广播。消息内容在 <code>Content</code> 里以 JSON 形式传输。</td>
+              </tr>
+              <tr>
+                <th><code>props.TeamID</code></th>
+                <td><code>OnGroupBootstrap()</code> 会把它同步成组序号，因此监控页和组内查询都依赖这里的更新。</td>
+              </tr>
+            </table>
+          </div>
+        </details>
+
+        <details open>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-warn">审阅观察</span>
+              <span class="summary-title">这里的“协同约束隔离”已经做了，但组内切分策略仍然非常朴素</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              目前切组是按 Agent 注册顺序和人数均分完成的，而不是按平台类型、角色、位置、剩余电量联合优化。
+              组长选择也只看电量，不看通信范围、机型、负载或地理位置。
+              对简单演示够用，但对异构多机或远距离场景会比较粗糙。
+            </p>
+            <div class="callout callout-warn callout-compact">
+              <strong class="callout-label">余数分配：</strong>当 agentCount 不能被 groupCnt 整除时，余数 Agent 全部追加到 g0 组（<code>g == 0 ? remainder : 0</code>），而非均匀分散。例：5 Agent 分成 2 组 → g0 得 3 台，g1 得 2 台。
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <div class="scenario-grid">
+        <article class="scenario-card coop">
+          <span class="scenario-type">合作</span>
+          <h3>合作任务的广播</h3>
+          <dl>
+            <dt>分组结果</dt>
+            <dd><code>groupCnt=1</code>，所有 Agent 同属 <code>g0</code>。</dd>
+            <dt>通信内容</dt>
+            <dd>每个成员都收到同一份 <code>GroupBootstrapPayload</code>，包含组任务和组内约束。</dd>
+            <dt>白板影响</dt>
+            <dd>此时只是确定后续白板会按 <code>g0</code> 写，不会马上写条目。</dd>
+          </dl>
+        </article>
+        <article class="scenario-card comp">
+          <span class="scenario-type">竞争</span>
+          <h3>竞争任务的广播</h3>
+          <dl>
+            <dt>分组结果</dt>
+            <dd>例如 4 台机器被切成 <code>g0</code> 与 <code>g1</code> 两组。</dd>
+            <dt>通信内容</dt>
+            <dd>每组只收到本组可见约束，因此不会在这里看到对方的内部协同细节。</dd>
+            <dt>后续含义</dt>
+            <dd>真正的资源争抢不应靠组间直接白板共享，而应靠裁判或外部事实层判定。</dd>
+          </dl>
+        </article>
+        <article class="scenario-card adv">
+          <span class="scenario-type">对抗</span>
+          <h3>对抗任务的广播</h3>
+          <dl>
+            <dt>分组结果</dt>
+            <dd>红队和蓝队分别收到自己的组任务，例如“围堵”和“撤离”。</dd>
+            <dt>通信内容</dt>
+            <dd>组内消息是私有的，避免在主链这里把己方协同细节暴露给对手。</dd>
+            <dt>审阅重点</dt>
+            <dd>这种隔离是对的，但若裁判层未接好，对手事实仍然无法可靠进入后续决策。</dd>
+          </dl>
+        </article>
+      </div>
+
+      <div class="details-grid">
+        <details>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-paper">优化建议</span>
+              <span class="summary-title">任务分组可以参考 MRTA 与 CBBA，不必停留在”顺序均分 + 电量最高当组长”</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              Gerkey 与 Matarić 的 MRTA taxonomy 给出的是”怎样把任务分配问题形式化”，而 CBBA 给出的是
+              “分布式任务分配时怎样在局部通信下达成一致”。这两类工作都比当前的顺序切组规则更适合异构无人机系统。
+            </p>
+            <ul>
+              <li>MRTA 视角：先定义任务需求、平台能力、代价函数，再分组。</li>
+              <li>CBBA 视角：把局部出价和共识机制放进组形成或槽位冲突消解阶段。</li>
+              <li>最小落地路径：先不改 UI，只给 <code>SelectLeader()</code> 和分组器引入更丰富的评分函数。</li>
+            </ul>
+            <p><strong>【方法原理】</strong>MRTA（Gerkey &amp; Matarić 2004）将多机器人任务分配形式化为三个维度（任务分解性 ST/MT、承接多任务能力 SR/MR、时间窗口 IP/TP），本系统是 ST-SR-TP 类型。CBBA（Choi 2009）在局部通信约束下让 Agent 先出价再通过共识阶段解决冲突，收敛到全局次优分配，无需中心节点。</p>
+            <p><strong>【为何适合本节点】</strong>当前 AssignGroups() 按顺序切割 Agent，不考虑能力-任务匹配，导致高价值任务可能分配给不匹配的 Agent。引入 MRTA 框架可系统性改进分配质量。</p>
+            <p><strong>【具体实现步骤】</strong></p>
+            <ol class="detail-steps">
+              <li>给 SelectLeader() 增加多维评分：score = w1×battery + w2×proximity_to_task + w3×comm_range + w4×agent_type_match</li>
+              <li>给 AssignGroups() 增加能力-任务匹配矩阵：统计各 Agent 的 AgentType、MaxSpeed、SensorRange，按任务需求优先分配匹配度高的</li>
+              <li>对对抗场景引入 CBBA 局部共识：组内成员同时出价（报距离+电量+角色匹配度），组长做共识收敛而不是直接按顺序切</li>
+              <li>用 Shapley Value 估算各 Agent 对子组的贡献（基于位置、能力、电量），实现能力匹配分组而非顺序切组</li>
+            </ol>
+          </div>
+        </details>
+
+        <details>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-paper">博弈论插入点</span>
+              <span class="summary-title">若你想把博弈论前移，第一站可以放在“组形成”或“队伍角色竞争”上</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              这一段最适合引入的是“合作博弈 / 竞拍博弈”思想，而不是对抗博弈。
+              当多个平台都希望拿到更高收益任务时，可以把组形成视为带约束的效用最大化问题。
+            </p>
+            <ul>
+              <li>合作任务：做能力-任务匹配博弈，决定谁该进哪个子组。</li>
+              <li>竞争任务：做竞拍或 contract-net 风格的角色认领。</li>
+              <li>对抗任务：队内仍可先做角色分配博弈，再进入对手博弈。</li>
+            </ul>
+          </div>
+        </details>
+      </div>
+    </section>
+    <section class="chapter" id="stage3">
+      <div class="chapter-header">
+        <div class="chapter-title-wrap">
+          <div class="chapter-tag">阶段 3 · LLM#2 槽位生成</div>
+          <h2>进入组内之后，组长先用 <code>RunLLM2()</code> 生成 <code>PlanSlot[]</code>，槽位是“个人职责模板”</h2>
+          <p>
+            组长拿到本组任务 <code>myGroup.mission</code>、成员数和组内约束后，会调用
+            <code>RunLLM2()</code> 生成长度严格等于组成员数的 <code>PlanSlot[]</code>。
+            槽位里包含角色、职责描述、完成条件以及它关联的约束 ID。注意这里仍然不是动作序列，而是
+            “给某一位成员看的完整职责槽”。
+          </p>
+          <div class="chain-badges">
+            <span><code>RunLLM2()</code></span>
+            <span><code>PlanSlot[]</code></span>
+            <span><code>constraintIds[]</code></span>
+            <span><code>MessageType.SlotBroadcast</code></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="node-grid">
+        <article class="node-card">
+          <h3>输入</h3>
+          <ul>
+            <li><code>myGroup.mission</code>：本组子任务文本</li>
+            <li><code>memberCount</code>：组内成员数</li>
+            <li><code>_constraintDict</code>：本组可见约束全集</li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>输出</h3>
+          <ul>
+            <li><code>PlanSlot.slotId</code> / <code>role</code> / <code>desc</code> / <code>doneCond</code></li>
+            <li>槽位广播给成员</li>
+            <li>组长自己也会立刻进入 LLM#3 选槽</li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>关键字段</h3>
+          <ul>
+            <li><code>desc</code>：个人完整职责描述</li>
+            <li><code>constraintIds</code>：槽位绑定的约束引用</li>
+            <li><code>role</code>：从 <code>RoleType</code> 枚举中选</li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>涉及函数</h3>
+          <ul>
+            <li><code>PlanningModule.RunLLM2()</code> <span style="font-size:11px; color:#af6b14; font-family:'Cascadia Mono','Consolas',monospace;">maxTokens:1000</span></li>
+            <li><code>CommunicationModule.SendScopedMessage()</code></li>
+            <li><code>PlanningModule.OnSlotBroadcast()</code></li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>上下游关系</h3>
+          <ul>
+            <li>上游：组信息已经确定</li>
+            <li>中游：责任模板从组层落到成员候选层</li>
+            <li>下游：所有成员开始竞争或认领槽位</li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="details-grid">
+        <details open>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-good">字段内嵌</span>
+              <span class="summary-title">首次出现的数据结构：<code>PlanSlot</code> 与 <code>SlotBroadcastPayload</code></span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <table class="field-table">
+              <tr>
+                <th><code>PlanSlot.slotId</code></th>
+                <td>槽位唯一 ID，例如 <code>s0</code>、<code>s1</code>。后续选槽和确认都只引用这个 ID。</td>
+              </tr>
+              <tr>
+                <th><code>PlanSlot.desc</code></th>
+                <td>个人职责的自然语言描述，是 LLM#4 拆步骤时的直接输入。</td>
+              </tr>
+              <tr>
+                <th><code>PlanSlot.doneCond</code></th>
+                <td>槽位完成条件。不是动作层条件，而是成员职责层条件。</td>
+              </tr>
+              <tr>
+                <th><code>PlanSlot.constraintIds</code></th>
+                <td>只是引用，不复制约束内容。真正查询时仍回到 <code>PlanningModule.GetConstraint()</code>。</td>
+              </tr>
+              <tr>
+                <th><code>SlotBroadcastPayload.slots</code></th>
+                <td>组长把整组槽位列表发送给每个成员，让成员自己做适配选择。</td>
+              </tr>
+            </table>
+          </div>
+        </details>
+
+        <details open>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-warn">审阅观察</span>
+              <span class="summary-title">LLM#2 已经承载了大部分“角色分工”责任，因此它的输出质量直接决定后续是否混乱</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              当前代码没有给槽位生成增加后验结构检查，例如：
+              <code>constraintIds</code> 是否真的存在、同类成员的 <code>desc</code> 是否重复、
+              是否把 C1 的独占资源错误分给两个槽位。这意味着一旦 LLM#2 在这里出错，后面的所有成员都会在错误的槽位池里选。
+            </p>
+          </div>
+        </details>
+      </div>
+
+      <div class="scenario-grid">
+        <article class="scenario-card coop">
+          <span class="scenario-type">合作</span>
+          <h3>合作槽位示例</h3>
+          <dl>
+            <dt>输出槽位</dt>
+            <dd><code>s0</code> 侦察东区、<code>s1</code> 侦察西区、<code>s2</code> 中继与同步回传。</dd>
+            <dt>约束绑定</dt>
+            <dd>东区和西区槽位分别绑定各自的 C1；回传槽位绑定 C2。</dd>
+            <dt>消息</dt>
+            <dd>组长把完整槽位池发给每个成员，后续由成员自己挑适合的槽位。</dd>
+          </dl>
+        </article>
+        <article class="scenario-card comp">
+          <span class="scenario-type">竞争</span>
+          <h3>竞争槽位示例</h3>
+          <dl>
+            <dt>输出槽位</dt>
+            <dd>例如“抢资源点 A”“绕后封锁 B”“中路待机补位”。</dd>
+            <dt>约束绑定</dt>
+            <dd>更适合把竞争性约束挂在会接触共享资源的槽位上，为后续 ADM 提供互斥语义。</dd>
+            <dt>限制</dt>
+            <dd>由于裁判广播未闭环，这些槽位仍更像策略意图，而不是真正可判胜负的竞争协议。</dd>
+          </dl>
+        </article>
+        <article class="scenario-card adv">
+          <span class="scenario-type">对抗</span>
+          <h3>对抗槽位示例</h3>
+          <dl>
+            <dt>红队槽位</dt>
+            <dd>“东侧封堵”“南侧追击”；蓝队槽位是“诱导”“主撤离”。</dd>
+            <dt>约束绑定</dt>
+            <dd>队内配合仍可绑定 C1/C2/C3，但对敌方的观察与结果仍要靠后续裁判或感知进入。</dd>
+            <dt>白板关系</dt>
+            <dd>这里只确定哪些槽位之后会写白板，不会提前跨队共享任何条目。</dd>
+          </dl>
+        </article>
+      </div>
+
+      <div class="details-grid">
+        <details>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-paper">优化建议</span>
+              <span class="summary-title">这里最适合引入 Contract Net、MRTA 或 CBBA，而不是继续依赖纯自由文本分工</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              当前流程是”组长先生成槽位，再让成员自己选”，本质上已经很接近 Contract Net 的
+              “招标 - 投标 - 授标”形态，只是投标和授标都还比较弱。
+            </p>
+            <ul>
+              <li>Contract Net 可把当前槽位广播改成标准化招标，成员回报成本、位置、剩余电量等。</li>
+              <li>MRTA 可让槽位生成前就考虑平台异构性和资源约束。</li>
+              <li>CBBA 则适合进一步处理多轮冲突与共识收敛，而不只是”先到先得”。</li>
+            </ul>
+            <p><strong>【方法原理】</strong>Contract Net（Smith 1980）是分布式问题求解的招标协议：管理节点发布任务公告，潜在承包商评估并回报投标（含代价、时间、资源），管理节点选标并授权，分为 announcement → bidding → awarding 三阶段。</p>
+            <p><strong>【当前映射】</strong>组长 RunLLM2() → 槽位公告；成员 RunLLM3() → 投标（但目前只回报 slotId）；组长 ResolveAndConfirm() → 授标（目前是先到先得）。</p>
+            <p><strong>【具体实现步骤】</strong></p>
+            <ol class="detail-steps">
+              <li>修改 SlotSelectPayload 增加竞标字段：{ “slotId”: “s1”, “bid”: { “distance”: 45.2, “battery”: 0.78, “estimatedTime”: 12.0, “roleMatch”: 0.9 } }</li>
+              <li>修改 ResolveAndConfirm() 从”先到先得”改为”按加权评分选最优投标者”：score = w1/distance + w2×battery + w3/estimatedTime + w4×roleMatch</li>
+              <li>对冲突槽位，先汇总所有投标方案，再做整体最优分配（贪心或匈牙利算法）</li>
+              <li>增加授标回执机制：组长广播授标结果，未中标成员收到通知后释放占位，避免死锁</li>
+            </ol>
+          </div>
+        </details>
+
+        <details>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-game">博弈论插入点</span>
+              <span class="summary-title">如果要把“博弈论相关”真正加进系统，这一段就是第一个最自然的落点</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              组长产槽之后，成员选槽之前，其实就已经形成了一个带约束的策略空间：
+              每个成员选择哪一个槽位，不只是“自己最喜欢哪个”，还要看别人会不会选同一个。
+            </p>
+            <ul>
+              <li>可把槽位选择写成简单拍卖博弈：报价函数由距离、电量、角色匹配度组成。</li>
+              <li>可把组长分配写成 Stackelberg 风格：组长先出机制，成员再响应。</li>
+              <li>可把重复冲突看成潜在博弈，寻找更稳定的槽位均衡分配。</li>
+            </ul>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section class="chapter" id="stage4">
+      <div class="chapter-header">
+        <div class="chapter-title-wrap">
+          <div class="chapter-tag">阶段 4 · 选槽与确认</div>
+          <h2>每个成员用 <code>RunLLM3()</code> 选槽，组长再用 <code>ResolveAndConfirm()</code> 做唯一分配</h2>
+          <p>
+            成员收到 <code>SlotBroadcastPayload</code> 后，会根据自己的当前位置、电量和槽位列表调用
+            LLM#3 输出一个 <code>slotId</code>。成员把结果以 <code>SlotSelectPayload</code> 发给组长。
+            当组长收齐所有选择后，由 <code>ResolveAndConfirm()</code> 依据时间戳做“先到先得”分配，
+            再给每个成员发 <code>SlotConfirmPayload</code> 和 <code>StartExecPayload</code>。
+          </p>
+          <div class="chain-badges">
+            <span><code>RunLLM3()</code></span>
+            <span><code>SlotSelectPayload</code></span>
+            <span><code>ResolveAndConfirm()</code></span>
+            <span><code>StartExecPayload</code></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="node-grid">
+        <article class="node-card">
+          <h3>输入</h3>
+          <ul>
+            <li><code>PlanSlot[] availableSlots</code></li>
+            <li>成员当前位置与电量</li>
+            <li>组长维护的 <code>selectionTs</code> 时间戳</li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>输出</h3>
+          <ul>
+            <li><code>SlotSelectPayload</code>：成员想要哪个槽位</li>
+            <li><code>SlotConfirmPayload</code>：最终分配给谁</li>
+            <li><code>StartExecPayload</code>：允许进入步骤拆解</li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>关键字段</h3>
+          <ul>
+            <li><code>agentId</code>：谁在选择或被确认</li>
+            <li><code>slotId</code>：成员选择的槽位 ID</li>
+            <li><code>confirmedSlot</code>：成员本地最终认领的槽位</li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>涉及函数</h3>
+          <ul>
+            <li><code>PlanningModule.RunLLM3()</code> <span style="font-size:11px; color:#a13b2f; font-family:'Cascadia Mono','Consolas',monospace;">maxTokens:150 ⚠️</span></li>
+            <li><code>PlanningModule.OnSlotSelect()</code></li>
+            <li><code>PlanningModule.ResolveAndConfirm()</code></li>
+            <li><code>PlanningModule.OnSlotConfirm()</code></li>
+            <li><code>PlanningModule.OnStartExec()</code></li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>上下游关系</h3>
+          <ul>
+            <li>上游：组长已产出整组槽位池</li>
+            <li>中游：职责模板被唯一绑定到具体成员</li>
+            <li>下游：成员拿着自己的职责进入 LLM#4 步骤拆解</li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="details-grid">
+        <details open>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-good">字段内嵌</span>
+              <span class="summary-title">首次出现的数据结构：<code>SlotSelectPayload</code>、<code>SlotConfirmPayload</code>、<code>StartExecPayload</code></span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <table class="field-table">
+              <tr>
+                <th><code>SlotSelectPayload.slotId</code></th>
+                <td>成员向组长表达的偏好，而不是最终结果。</td>
+              </tr>
+              <tr>
+                <th><code>selectionTs</code></th>
+                <td>组长记录每个成员选择到达时间，之后用于冲突消解排序。</td>
+              </tr>
+              <tr>
+                <th><code>SlotConfirmPayload.slot</code></th>
+                <td>完整槽位对象，而不只是 ID。成员之后拆步骤都基于这个对象。</td>
+              </tr>
+              <tr>
+                <th><code>startExecReceived</code></th>
+                <td>成员本地的同步位：只有确认槽位且收到开始执行信号，才会真正进入 LLM#4。</td>
+              </tr>
+            </table>
+            <pre><code>// LLM#3 只需要输出”我选哪个槽”
+{
+  “slotId”: “s1”
+}
+
+// 组长本地再把它扩展成最终分配结果
+{
+  “msnId”: “msn_20260326_1”,
+  “agentId”: “drone_B”,
+  “slot”: {
+    “slotId”: “s1”,
+    “role”: “Scout”,
+    “desc”: “从出发点飞往西区执行搜索”,
+    “doneCond”: “西区搜索完成”
+  }
+}</code></pre>
+            <div class="callout callout-warn">
+              <strong class="callout-label">回退规则：</strong>LLM#3 返回空值或 JSON 解析失败时，不进入 Failed 状态，而是静默选择 <code>availableSlots[0]</code>（第一个可用槽位）。这造成”第一槽位偏好”的隐性偏差；若引入 Contract Net 竞标机制，需显式禁用此回退逻辑。<br>
+              <strong class="callout-label">Token 限制：</strong>LLM#3 当前 <code>maxTokens=150</code>，是所有 LLM 调用中最低的。直接决定了输出只能是 <code>{“slotId”:”s1”}</code> 这样的极简 JSON。若改为携带竞标数据，需提升到 300–400 tokens。
+            </div>
+          </div>
+        </details>
+
+        <details open>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-risk">审阅风险</span>
+              <span class="summary-title"><code>ResolveAndConfirm()</code> 当前是“先到先得”，这对冲突处理来说过于简单</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              当前组长冲突消解逻辑是：组长自己优先，其余成员按选择消息到达时间排序；
+              如果某人想要的槽位已被占用，就直接给剩余槽位中的第一个。这种方法实现简单，
+              但它没有显式使用角色匹配度、距离代价、平台能力或历史可靠性。
+            </p>
+            <ul>
+              <li>合作任务中：可能把更适合某区域的成员挤去次优槽位。</li>
+              <li>竞争任务中：可能把高价值槽位分给消息更快的人，而不是更优执行者。</li>
+              <li>对抗任务中：可能让队内追击/封堵角色分配不稳定。</li>
+            </ul>
+          </div>
+        </details>
+      </div>
+
+      <div class="scenario-grid">
+        <article class="scenario-card coop">
+          <span class="scenario-type">合作</span>
+          <h3>合作任务的认领</h3>
+          <dl>
+            <dt>选槽输入</dt>
+            <dd>西区更近、电量更高的成员通常会偏向选西区槽位。</dd>
+            <dt>消息关系</dt>
+            <dd>成员发 <code>SlotSelect</code> 给组长；组长再发 <code>SlotConfirm</code> 与 <code>StartExecution</code>。</dd>
+            <dt>输出结果</dt>
+            <dd>每个成员拿到唯一职责，之后才允许拆步骤。</dd>
+          </dl>
+        </article>
+        <article class="scenario-card comp">
+          <span class="scenario-type">竞争</span>
+          <h3>竞争任务的认领</h3>
+          <dl>
+            <dt>选槽输入</dt>
+            <dd>同一组内可能都想选“抢资源点 A”的高收益槽位。</dd>
+            <dt>现有机制</dt>
+            <dd>冲突由先到先得处理，不是拍卖、也不是效用最大化。</dd>
+            <dt>后果</dt>
+            <dd>槽位分配容易受消息延迟影响，而不一定对应更优策略。</dd>
+          </dl>
+        </article>
+        <article class="scenario-card adv">
+          <span class="scenario-type">对抗</span>
+          <h3>对抗任务的认领</h3>
+          <dl>
+            <dt>红队示例</dt>
+            <dd>红队两个成员都想拿“主追击”槽位，组长必须做冲突裁决。</dd>
+            <dt>现有机制</dt>
+            <dd>依旧是先到先得，这会让对抗队内角色分工不够稳定。</dd>
+            <dt>建议方向</dt>
+            <dd>应把地理位置、拦截角度、速度优势纳入裁决，而不是只看消息时间。</dd>
+          </dl>
+        </article>
+      </div>
+
+      <div class="details-grid">
+        <details>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-paper">优化建议</span>
+              <span class="summary-title">这一段最适合落地 Contract Net / 竞价分配 / CBBA 共识机制</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              如果要把当前槽位冲突处理做成真正可扩展的协同约束实现，
+              <code>ResolveAndConfirm()</code> 是最应该升级的节点。
+            </p>
+            <ul>
+              <li>Contract Net：成员不只报 <code>slotId</code>，还报代价、预计完成时间、风险。</li>
+              <li>CBBA：冲突槽位通过局部出价和共识迭代收敛，而不是一次性裁决。</li>
+              <li>MRTA：可把槽位价值函数统一成平台能力与任务收益的映射。</li>
+            </ul>
+            <p><strong>【方法原理】</strong>Contract Net（Smith 1980）是分布式问题求解的招标协议：announcement → bidding → awarding 三阶段，让每个承包商自主评估并竞标，管理节点依据多维指标选标。</p>
+            <p><strong>【为何适合本节点】</strong>ResolveAndConfirm() 已承担"授标"角色，当前仅缺结构化投标内容与多维评分逻辑，改造成本低，收益高。</p>
+            <p><strong>【具体实现步骤】</strong></p>
+            <ol class="detail-steps">
+              <li>扩展 SlotSelectPayload：增加 bid 字段包含 distance、battery、estimatedTime、roleMatch</li>
+              <li>ResolveAndConfirm() 改为按综合评分（而非时间戳）选标</li>
+              <li>对冲突槽位先汇总所有投标再做整体最优分配（贪心或匈牙利算法）</li>
+              <li>增加未中标通知：组长广播 SlotRejected，释放等待占位</li>
+              <li>CBBA 共识扩展：引入多轮出价迭代，处理分布式通信延迟下的槽位争抢</li>
+            </ol>
+          </div>
+        </details>
+
+        <details>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-game">博弈论插入点</span>
+              <span class="summary-title">你提到的“博弈论还没做”，当前最适合加在这里</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              这里就是一个天然的资源分配博弈：多个成员争有限槽位，且每个槽位的收益并不相同。
+            </p>
+            <ul>
+              <li>若组长先公布规则、成员再响应，可建成 Stackelberg 风格分配机制。</li>
+              <li>若成员同步报价并竞争，可建成竞拍博弈或机制设计问题。</li>
+              <li>若希望得到稳定分配，可考虑潜在博弈或匹配博弈视角。</li>
+            </ul>
+            <div class="meta-note">
+              所以“博弈论可以加在哪里”的第一个答案不是运动执行层，而就是 <code>RunLLM3() + ResolveAndConfirm()</code> 这一对函数之间。
+            </div>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section class="chapter" id="stage5">
+      <div class="chapter-header">
+        <div class="chapter-title-wrap">
+          <div class="chapter-tag">阶段 5 · LLM#4 步骤拆解</div>
+          <h2>槽位还不是动作；<code>RunLLM4()</code> 会把 <code>confirmedSlot.desc</code> 拆成 <code>PlanStep[]</code></h2>
+          <p>
+            成员一旦拿到自己被确认的槽位，并收到 <code>StartExecPayload</code>，就会调用
+            <code>RunLLM4()</code>。这里的职责是把个人职责文本拆成有序步骤，并把槽位级约束重新分配到合适步骤上。
+            从这里开始，系统第一次具备“步骤级执行单元”。但它依然不是原子动作，原子动作还要到 ADM 再生成。
+          </p>
+          <div class="chain-badges">
+            <span><code>RunLLM4()</code></span>
+            <span><code>PlanStep[]</code></span>
+            <span><code>AgentPlan</code></span>
+            <span><code>PlanningState.Active</code></span>
+          </div>
+          <div class="meta-note" style="margin-top: 14px;">
+            注：规划模块内部 PlanningState 枚举共 8 个状态（Idle、ParsingMission、…、Active），HTML 中"阶段 8"对应 ADM（ActionDecisionModule）消费层，并非规划模块内部状态，请勿将 HTML 阶段序号与 PlanningState 枚举值直接对应。
+          </div>
+          <details style="margin-top: 12px;">
+            <summary style="cursor: pointer; padding: 10px 14px; background: rgba(20,108,127,0.07); border-radius: 12px; display: flex; align-items: center; gap: 8px; list-style: none; font-size: 13px; font-weight: 600; color: #146c7f;">
+              <span class="summary-arrow">▶</span> PlanningState 完整枚举（9个状态）
+            </summary>
+            <div style="margin-top: 10px; overflow-x: auto;">
+              <table class="field-table" style="width: 100%;">
+                <thead>
+                  <tr>
+                    <th>枚举值</th><th>含义</th><th>进入条件</th><th>对应 HTML 章节</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td>Idle</td><td>等待任务提交</td><td>初始状态 / 任务完成后重置</td><td>阶段0（入口）</td></tr>
+                  <tr><td>Parsing</td><td>LLM#1 任务解析中</td><td>SubmitMissionRequest() 被调用</td><td>阶段1</td></tr>
+                  <tr><td>Grouping</td><td>本地分组计算</td><td>Parsing 完成，ParsedMission 有效</td><td>阶段2</td></tr>
+                  <tr><td>SlotGen</td><td>组长生成槽位（LLM#2）</td><td>isLeader=true，Grouping 完成</td><td>阶段3</td></tr>
+                  <tr><td>SlotPick</td><td>成员选槽（LLM#3）</td><td>收到 SlotBroadcastPayload</td><td>阶段4</td></tr>
+                  <tr><td>SlotWait</td><td>等待所有成员完成选槽</td><td>组长在 SlotGen 后进入等待</td><td>阶段3→4 过渡</td></tr>
+                  <tr><td>StepGen</td><td>LLM#4 拆解执行步骤</td><td>ResolveAndConfirm() 完成</td><td>阶段5</td></tr>
+                  <tr><td>Active</td><td>ActionDecisionModule 消费执行步骤</td><td>StepGen 完成，PlanStep[] 写入</td><td>阶段6-7（ADM 层）</td></tr>
+                  <tr><td>Failed</td><td>超时或解析失败</td><td>CheckTimeout() / LLM 解析失败</td><td>—（终止态）</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </div>
+      </div>
+
+      <div class="node-grid">
+        <article class="node-card">
+          <h3>输入</h3>
+          <ul>
+            <li><code>confirmedSlot.desc</code></li>
+            <li><code>confirmedSlot.doneCond</code></li>
+            <li><code>confirmedSlot.constraintIds</code> 对应的约束对象</li>
+            <li>当前位置与电量</li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>输出</h3>
+          <ul>
+            <li><code>PlanStep.stepId</code> / <code>text</code> / <code>doneCond</code> / <code>constraintIds</code></li>
+            <li><code>AgentPlan</code> 被写入本地</li>
+            <li>规划状态进入 <code>Active</code></li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>关键字段</h3>
+          <ul>
+            <li><code>stepId</code>：例如 <code>step_1</code></li>
+            <li><code>constraintIds</code>：把约束绑定到具体步骤，而非整个槽位</li>
+            <li><code>curIdx</code>：当前执行到哪一步</li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>涉及函数</h3>
+          <ul>
+            <li><code>PlanningModule.RunLLM4()</code> <span style="font-size:11px; color:#af6b14; font-family:'Cascadia Mono','Consolas',monospace;">maxTokens:800</span></li>
+            <li><code>PlanningModule.GetConstraint()</code></li>
+            <li><code>PlanningModule.HasActiveMission()</code></li>
+            <li><code>PlanningModule.GetCurrentStep()</code></li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>上下游关系</h3>
+          <ul>
+            <li>上游：槽位已唯一确认</li>
+            <li>中游：个人职责被切成步骤序列</li>
+            <li>下游：ADM 只消费当前 <code>PlanStep</code></li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="details-grid">
+        <details open>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-good">字段内嵌</span>
+              <span class="summary-title">首次出现的数据结构：<code>PlanStep</code> 与 <code>AgentPlan</code></span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <table class="field-table">
+              <tr>
+                <th><code>PlanStep.text</code></th>
+                <td>给 ADM 继续解释的自然语言步骤文本，例如“等 A 就绪后飞往 B 区”。</td>
+              </tr>
+              <tr>
+                <th><code>PlanStep.doneCond</code></th>
+                <td>步骤完成条件，供 ADM 决定何时把该步骤判定为完成。</td>
+              </tr>
+              <tr>
+                <th><code>PlanStep.constraintIds</code></th>
+                <td>关键桥梁字段。之后白板、裁判、同步、互斥全都依赖它把约束接入当前步骤。</td>
+              </tr>
+              <tr>
+                <th><code>AgentPlan.curIdx</code></th>
+                <td>当前步骤游标。每次 <code>CompleteCurrentStep()</code> 递增，最终走到 <code>Done</code>。</td>
+              </tr>
+            </table>
+          </div>
+        </details>
+
+        <details open>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-warn">审阅观察</span>
+              <span class="summary-title">LLM#4 负责“把约束分配到步骤”，因此一旦绑定错，后续白板和同步都会错位</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              当前步骤拆解虽然给了比较明确的规则，例如 C1 绑首个进入目标的步骤、C2 绑最后一个实质性动作步骤、
+              C3 sign=+1 绑第一步、C3 sign=-1 绑共享资源步骤，但它依然完全依赖 LLM 输出。
+              项目里没有后验检查器去验证某条约束是否真的被绑定到了合理的步骤上。
+            </p>
+          </div>
+        </details>
+      </div>
+
+      <div class="scenario-grid">
+        <article class="scenario-card coop">
+          <span class="scenario-type">合作</span>
+          <h3>合作步骤示例</h3>
+          <dl>
+            <dt>槽位描述</dt>
+            <dd>“等 A 就绪后飞往西区，完成侦察后回传。”</dd>
+            <dt>步骤结果</dt>
+            <dd>会拆成“等待并飞往西区”“侦察西区”“回传”三步，且同步约束挂在最后一步。</dd>
+            <dt>主链意义</dt>
+            <dd>从这里开始，协同约束终于可以被定位到具体步骤而不是大段任务文本。</dd>
+          </dl>
+        </article>
+        <article class="scenario-card comp">
+          <span class="scenario-type">竞争</span>
+          <h3>竞争步骤示例</h3>
+          <dl>
+            <dt>槽位描述</dt>
+            <dd>“接近资源点 A，若可占用则占用，否则转向资源点 B。”</dd>
+            <dt>步骤结果</dt>
+            <dd>当前更可能被拆成若干自然语言步骤，但真正的竞争事实仍要在 ADM 读裁判/白板时补上。</dd>
+            <dt>限制</dt>
+            <dd>由于竞争裁判链未闭环，这里的步骤文本可能比真实执行条件更乐观。</dd>
+          </dl>
+        </article>
+        <article class="scenario-card adv">
+          <span class="scenario-type">对抗</span>
+          <h3>对抗步骤示例</h3>
+          <dl>
+            <dt>槽位描述</dt>
+            <dd>”绕到教学楼南侧，等待队友封口后发起追击。”</dd>
+            <dt>步骤结果</dt>
+            <dd>等待封口是队内耦合步骤，发起追击是对敌动作意图，但是否追上仍不由这一步决定。</dd>
+            <dt>主链意义</dt>
+            <dd>队内协同在这里已被明确挂到步骤上，对敌博弈要留给后面的滚动规划。</dd>
+          </dl>
+        </article>
+      </div>
+
+      <div class="details-grid">
+        <details>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-paper">优化建议</span>
+              <span class="summary-title">步骤拆解可以参考 HTN Planning，为 LLM#4 输出引入结构约束而非纯自然语言</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p><strong>【方法原理】</strong>HTN（Hierarchical Task Network）将复合任务递归分解为有序原语任务，每一级分解由方法（method）控制，支持前提条件检查和分解树剪枝。相比纯自然语言拆解，HTN 可保证分解结构的合法性。</p>
+            <p><strong>【为何适合本节点】</strong>LLM#4 的步骤拆解当前是纯自然语言提示，无法验证”C2 约束是否绑定到最后一步”、”C3 sign=+1 是否在第一步设置了前置等待”。HTN 伪格式可在拆解阶段引入结构约束。</p>
+            <p><strong>【具体实现步骤】</strong></p>
+            <ol class="detail-steps">
+              <li>为 LLM#4 的 prompt 引入伪 HTN 格式：先输出分解树结构（task → [subtask1, subtask2]），再映射到 PlanStep[]</li>
+              <li>对 C2 约束添加后验规则：确认”最后一个实质步骤必须绑定 C2”，否则触发重试</li>
+              <li>对 C3 sign=+1 约束添加后验规则：确认”第一步必须是 Wait 类型或有明确前提条件”</li>
+              <li>引入分解树可视化日志：把分解树结构写入 SharedWhiteboard 供调试查看</li>
+            </ol>
+          </div>
+        </details>
+        <details>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-warn">审阅观察</span>
+              <span class="summary-title">步骤拆解后，约束-步骤绑定缺少自动验证，LLM 随机性会让绑定结果不稳定</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              当前没有后验检查器确认约束被正确绑定到步骤，特别是 C2 同步约束是否真的在”最后一步”，
+              以及 C3 正向等待是否在”第一步”。建议在 RunLLM4() 结束后增加约束绑定校验层，
+              对不合法结果触发最多2次 re-prompt。
+            </p>
+          </div>
+        </details>
+      </div>
+    </section>
+    <section class="chapter" id="stage6">
+      <div class="chapter-header">
+        <div class="chapter-title-wrap">
+          <div class="chapter-tag">阶段 6 · ADM 进入执行</div>
+          <h2><code>ActionDecisionModule.StartStep()</code> 先建立执行上下文，再把当前步骤交给滚动规划循环</h2>
+          <p>
+            当 <code>PlanningModule.HasActiveMission()</code> 为真，且当前 ADM 处于可接受新步骤的空闲态时，
+            <code>IntelligentAgent.MakeDecisionCoroutine()</code> 会进入
+            <code>ActionDecisionModule.DecideNextAction()</code>。这里先通过
+            <code>PlanningModule.GetCurrentStep()</code> 拿到当前步骤，再调用
+            <code>StartStep(step)</code> 构造 <code>ActionExecutionContext</code>。
+            这个上下文是后续滚动决策的工作内存。
+          </p>
+          <div class="chain-badges">
+            <span><code>DecideNextAction()</code></span>
+            <span><code>StartStep()</code></span>
+            <span><code>ActionExecutionContext</code></span>
+            <span><code>RunRollingLoop()</code></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="node-grid">
+        <article class="node-card">
+          <h3>输入</h3>
+          <ul>
+            <li><code>PlanStep currentStep</code></li>
+            <li>当前角色、位置、任务 ID</li>
+            <li>通过 <code>constraintIds</code> 解出的步骤级约束对象</li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>输出</h3>
+          <ul>
+            <li><code>ActionExecutionContext ctx</code></li>
+            <li><code>stepConstraints</code>：步骤关心的结构化约束对象集合</li>
+            <li>状态进入 <code>ADMStatus.Interpreting</code></li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>关键字段</h3>
+          <ul>
+            <li><code>ctx.stepText</code>：后续滚动提示词的主任务句</li>
+            <li><code>ctx.executedActionsSummary</code>：滚动规划历史</li>
+            <li><code>ctx.iterationCount</code>：本步骤已经滚动多少轮</li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>涉及函数</h3>
+          <ul>
+            <li><code>ActionDecisionModule.DecideNextAction()</code></li>
+            <li><code>ActionDecisionModule.StartStep()</code></li>
+            <li><code>PlanningModule.GetCurrentStep()</code></li>
+            <li><code>PlanningModule.GetConstraint()</code></li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>上下游关系</h3>
+          <ul>
+            <li>上游：步骤序列已经就绪</li>
+            <li>中游：构造执行上下文，把“计划层”切到“决策层”</li>
+            <li>下游：进入真正的滚动 LLM 决策</li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="details-grid">
+        <details open>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-good">字段内嵌</span>
+              <span class="summary-title">首次出现的数据结构：<code>ActionExecutionContext</code></span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <table class="field-table">
+              <tr>
+                <th><code>ctx.stepConstraints</code></th>
+                <td>本步骤真正会读取的约束对象集合。白板、裁判、等待、同步都只看这里。</td>
+              </tr>
+              <tr>
+                <th><code>ctx.currentLocationName</code></th>
+                <td>步骤起始位置名，用于给滚动提示词增加空间上下文。</td>
+              </tr>
+              <tr>
+                <th><code>ctx.actionQueue</code></th>
+                <td>当前批次原子动作队列，由后续 LLM 返回的 <code>RollingPlanResult.nextActions</code> 填充。</td>
+              </tr>
+              <tr>
+                <th><code>ctx.executedActionsSummary</code></th>
+                <td>已执行原子动作摘要。让 LLM 不只看当前环境，也看本步骤已走到哪里。</td>
+              </tr>
+            </table>
+          </div>
+        </details>
+
+        <details open>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-warn">审阅观察</span>
+              <span class="summary-title">从这里开始，系统已经不再”按任务模块思考”，而是完全按当前步骤上下文思考</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              这一点对理解白板和裁判非常重要：它们不是”全局解释器”，而是被 ADM 在当前步骤上下文里读取的局部信号源。
+              所以你在主流程里看到白板、裁判、感知，并不是并列模块，而是都被折进了
+              <code>ActionExecutionContext</code> 服务当前步骤。
+            </p>
+            <div class="callout callout-accent callout-compact">
+              <strong class="callout-label">隐性依赖：</strong><code>DecideNextAction()</code> 每次调用时先执行 <code>commModule.ProcessMessages()</code>，意味着白板和裁判事件的消息处理依赖 Agent 的周期性决策节拍——若 Agent 停止决策，消息也将停止被处理。
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <div class="scenario-grid">
+        <article class="scenario-card coop">
+          <span class="scenario-type">合作</span>
+          <h3>合作上下文示例</h3>
+          <dl>
+            <dt>当前步骤</dt>
+            <dd>“等 A 就绪后飞往西区。”</dd>
+            <dt>上下文内容</dt>
+            <dd><code>stepConstraints</code> 会带上 C3 正向等待约束，后续滚动循环会优先检查它。</dd>
+            <dt>主链价值</dt>
+            <dd>从这一刻起，协同约束已经从“文本规则”变成“当前步骤的执行条件”。</dd>
+          </dl>
+        </article>
+        <article class="scenario-card comp">
+          <span class="scenario-type">竞争</span>
+          <h3>竞争上下文示例</h3>
+          <dl>
+            <dt>当前步骤</dt>
+            <dd>“接近资源点 A 并准备占用。”</dd>
+            <dt>上下文内容</dt>
+            <dd><code>stepConstraints</code> 会挂上互斥类 C3，为后续白板或裁判事实输入做准备。</dd>
+            <dt>当前限制</dt>
+            <dd>若裁判层没有广播事实，这一步只能看到己方上下文和白板占位信息。</dd>
+          </dl>
+        </article>
+        <article class="scenario-card adv">
+          <span class="scenario-type">对抗</span>
+          <h3>对抗上下文示例</h3>
+          <dl>
+            <dt>当前步骤</dt>
+            <dd>“等待队友封口后沿南侧走廊推进。”</dd>
+            <dt>上下文内容</dt>
+            <dd>队内耦合约束进入 <code>stepConstraints</code>；敌方事实仍要留给后续感知或裁判读取。</dd>
+            <dt>主链含义</dt>
+            <dd>对抗并不是一个额外模块，而是当前步骤上下文里同时出现“队内协同 + 队外不确定性”。</dd>
+          </dl>
+        </article>
+      </div>
+    </section>
+
+    <section class="chapter" id="stage7">
+      <div class="chapter-header">
+        <div class="chapter-title-wrap">
+          <div class="chapter-tag">阶段 7 · 滚动决策与协同约束</div>
+          <h2><code>RunRollingLoop()</code> 才是“步骤变动作序列”的核心：白板、裁判、地图、感知、LLM 都在这里汇流</h2>
+          <p>
+            当前系统最重要的真实主链节点就是
+            <code>ActionDecisionModule.RunRollingLoop(PlanStep step)</code>。
+            每一轮它先读白板上下文，再检查 C3 等待，再读裁判事件，再拼装局部地图和感知信息，
+            然后构造滚动提示词，调用 LLM 返回
+            <code>RollingPlanResult { isDone, doneReason, nextActions[] }</code>。
+            如果步骤未完成，则把这一批 <code>AtomicAction[]</code> 交给执行层；
+            如果步骤已完成，则写白板完成信号并推进到下一步。
+          </p>
+          <div class="chain-badges">
+            <span><code>ReadWhiteboardContext()</code></span>
+            <span><code>CheckC3WaitConditions()</code></span>
+            <span><code>ReadRefereeContext()</code></span>
+            <span><code>BuildRollingPrompt()</code></span>
+            <span><code>RollingPlanResult</code></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="node-grid">
+        <article class="node-card">
+          <h3>输入</h3>
+          <ul>
+            <li>当前 <code>PlanStep</code> 与步骤约束</li>
+            <li>本地感知快照、当前位置、局部地图</li>
+            <li>白板条目 <code>WhiteboardEntry</code></li>
+            <li>裁判事件 <code>RefereeEvent</code></li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>输出</h3>
+          <ul>
+            <li><code>RollingPlanResult.isDone</code></li>
+            <li><code>RollingPlanResult.nextActions</code></li>
+            <li>白板信号写入：<code>IntentAnnounce</code>、<code>DoneSignal</code></li>
+            <li>必要时推进到下一步或结束任务</li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>关键字段</h3>
+          <ul>
+            <li><code>AtomicAction.type</code>：<code>MoveTo</code>、<code>Observe</code>、<code>Wait</code> 等</li>
+            <li><code>RollingPlanResult.doneReason</code></li>
+            <li><code>WhiteboardEntry.entryType</code>：<code>IntentAnnounce</code> / <code>ReadySignal</code> / <code>DoneSignal</code></li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>涉及函数</h3>
+          <ul>
+            <li><code>ActionDecisionModule.RunRollingLoop()</code> <span style="font-size:11px; color:#af6b14; font-family:'Cascadia Mono','Consolas',monospace;">maxTokens:900</span></li>
+            <li><code>BuildRollingPrompt()</code></li>
+            <li><code>WriteC3MutexClaims()</code></li>
+            <li><code>WriteWhiteboardIntentSignals()</code></li>
+            <li><code>WriteWhiteboardDoneSignals()</code></li>
+            <li><code>WaitForC2Sync()</code></li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>上下游关系</h3>
+          <ul>
+            <li>上游：步骤上下文已经固定</li>
+            <li>中游：多源上下文融成单轮 LLM 决策</li>
+            <li>下游：执行层消耗原子动作；完成后再回到此循环</li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="path-card">
+        <h3>调用链引用</h3>
+        <p>
+          <code>StartStep()</code>
+          <code>-> RunRollingLoop()</code>
+          <code>-> ReadWhiteboardContext()</code>
+          <code>-> CheckC3WaitConditions()</code>
+          <code>-> ReadRefereeContext()</code>
+          <code>-> BuildRollingPrompt()</code>
+          <code>-> LLMInterface.SendRequest()</code>
+          <code>-> RollingPlanResult</code>
+          <code>-> ctx.actionQueue = nextActions</code>
+          <code>-> AgentMotionExecutor.GetCurrentAction()</code>。
+        </p>
+      </div>
+
+      <div class="details-grid">
+        <details open>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-good">字段内嵌</span>
+              <span class="summary-title">首次出现的数据结构：<code>RollingPlanResult</code>、<code>AtomicAction</code>、<code>WhiteboardEntry</code>、<code>RefereeEvent</code></span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <table class="field-table">
+              <tr>
+                <th><code>RollingPlanResult.isDone</code></th>
+                <td>当前步骤是否结束。如果为真，则不再把步骤文本继续拆动作，而是直接写同步信号并推进步骤。</td>
+              </tr>
+              <tr>
+                <th><code>AtomicAction.targetName</code></th>
+                <td>动作目标名。<code>MoveTo</code> 和互斥占位写白板时最依赖它。</td>
+              </tr>
+              <tr>
+                <th><code>WhiteboardEntry.progress</code></th>
+                <td>当前项目里被拿来记录互斥目标名或文本进度。对于 C3 sign=-1，非常关键。</td>
+              </tr>
+              <tr>
+                <th><code>RefereeEvent.payload</code></th>
+                <td>裁判广播的客观事实描述。ADM 只会在 <code>ReadRefereeContext()</code> 中按约束过滤并消费它。</td>
+              </tr>
+            </table>
+            <pre><code>// 单轮滚动规划要求返回的 JSON 轮廓
+{
+  "isDone": false,
+  "doneReason": "尚未完成西区侦察，先前往目标点并观察",
+  "nextActions": [
+    // 第一批原子动作，一次只给 1~3 个
+    {"actionId":"aa_1","type":"MoveTo","targetName":"西区","targetAgentId":"","duration":0,"actionParams":"低空进入","spatialHint":"避开主路"},
+    {"actionId":"aa_2","type":"Observe","targetName":"西区","targetAgentId":"","duration":3,"actionParams":"停留扫描","spatialHint":""}
+  ]
+}</code></pre>
+          </div>
+        </details>
+
+        <details open>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-good">已接入</span>
+              <span class="summary-title">白板在主链中的真实作用：不是独立模块，而是滚动循环读写的组内共享上下文</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              这里的白板已经真正接进主链，而且接得很清楚：
+              <code>ReadWhiteboardContext()</code> 读取和当前步骤约束有关的条目，
+              <code>WriteWhiteboardIntentSignals()</code> 在执行前写意图，
+              <code>WriteC3MutexClaims()</code> 把互斥目标写入 <code>IntentAnnounce.progress</code>，
+              <code>WriteWhiteboardDoneSignals()</code> 在步骤完成时写 <code>DoneSignal</code>。
+            </p>
+            <ul>
+              <li>C2：通过 <code>DoneSignal</code> + <code>WaitForC2Sync()</code> 实现组内同步。</li>
+              <li>C3 sign=-1：通过白板占位 + 提示词注入，让 LLM 主动避开已被占的目标。</li>
+              <li>白板不是替 LLM 决策，而是给 LLM 提供”别人已经在做什么”的上下文。</li>
+            </ul>
+            <div class="callout callout-risk">
+              <strong class="callout-label">⚠️ 超时过滤：</strong>SharedWhiteboard 有 <code>defaultStaleSeconds=10f</code>（Inspector 可调）的自动过滤机制。超时条目在 <code>QueryEntries()</code>/<code>HasSignal()</code> 时被自动过滤，相当于信号自动失效。<br>
+              这直接影响 C3 sign=+1 的等待可靠性：若发出 ReadySignal 的 Agent 在 10 秒内未刷新，等待方会误判”信号不存在”，导致 C3 等待逻辑静默失效。建议写入 ReadySignal 时启动定时刷新协程（每 5 秒写一次）。
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <div class="scenario-grid">
+        <article class="scenario-card coop">
+          <span class="scenario-type">合作</span>
+          <h3>合作任务在滚动环里怎么走</h3>
+          <dl>
+            <dt>白板</dt>
+            <dd>A 写“准备进入东区”，B 读到后不会去抢同一目标；完成后双方写 <code>DoneSignal</code>，再一起通过 C2。</dd>
+            <dt>裁判</dt>
+            <dd>理论上可不用；当前合作主链基本依赖白板即可运转。</dd>
+            <dt>动作输出</dt>
+            <dd>例如 <code>MoveTo(西区)</code> + <code>Observe(西区)</code> + <code>Wait</code>。</dd>
+          </dl>
+        </article>
+        <article class="scenario-card comp">
+          <span class="scenario-type">竞争</span>
+          <h3>竞争任务在滚动环里怎么走</h3>
+          <dl>
+            <dt>白板</dt>
+            <dd>当前代码可用白板做组内互斥，但跨队竞争理论上应由裁判给出“谁先占到资源”的事实。</dd>
+            <dt>裁判</dt>
+            <dd><code>ReadRefereeContext()</code> 已预留读取点，但项目里还没搜到真正的注册与广播接线。</dd>
+            <dt>动作输出</dt>
+            <dd>可先输出抢点动作，但真正判胜负还缺事实层闭环。</dd>
+          </dl>
+        </article>
+        <article class="scenario-card adv">
+          <span class="scenario-type">对抗</span>
+          <h3>对抗任务在滚动环里怎么走</h3>
+          <dl>
+            <dt>白板</dt>
+            <dd>队内成员仍可以共享“封堵方向”“追击意图”等组内状态。</dd>
+            <dt>裁判</dt>
+            <dd>按接口设计，应广播“目标已逃脱”“某 Agent 被淘汰”等客观事实，但当前运行链没有真正接满。</dd>
+            <dt>动作输出</dt>
+            <dd>适合滚动生成“追击、绕行、观察、等待封口”等动作批次。</dd>
+          </dl>
+        </article>
+      </div>
+
+      <div class="details-grid">
+        <details open>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-risk">审阅风险</span>
+              <span class="summary-title">裁判链路当前是“接口存在但主链未接满”，不能把它当成已闭环实现</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              当前代码确实有 <code>RefereeManager</code>、<code>RefereeEvent</code> 和
+              <code>ReadRefereeContext()</code>，但在整个项目搜索里，没有看到
+              <code>RefereeManager.RegisterAgent()</code> 或 <code>BroadcastEvent()</code> 的真实调用落地。
+              这意味着 ADM 的”读取裁判事件”入口已经写好，但真正把事件送进来的人还没接上。
+            </p>
+            <ul>
+              <li>结论：裁判不是不存在，而是处于半接入状态。</li>
+              <li>文档表达：只能写”预留读取点 + 主链未闭环”，不能写成”裁判已参与所有竞争/对抗决策”。</li>
+            </ul>
+            <p class="detail-note">
+              除被动推送（RegisterAgent + BroadcastEvent → callback）外，RefereeManager 还提供
+              <code>PollEvents(agentId, ackPolicy)</code> 主动轮询接口。ADM 可在每次 rolling loop 迭代前主动拉取未读事件，
+              两种接线方式可并用。此外，任务结束时应调用 <code>UnregisterAgent(agentId)</code> 清理注册。
+            </p>
+          </div>
+        </details>
+
+        <details open>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-risk">审阅风险</span>
+              <span class="summary-title">C3 正向等待读取侧已实现，但 <code>ReadySignal</code> 当前没有找到真实写入点</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              <code>CheckC3WaitConditions()</code> 会读取
+              <code>SharedWhiteboard.Instance.HasSignal(... ReadySignal)</code>，说明“我等别人就绪再行动”的消费侧已经写好。
+              但项目里没有搜到任何地方真正写入 <code>WhiteboardEntryType.ReadySignal</code>。
+            </p>
+            <ul>
+              <li>结果：C3 sign=+1 的理想语义在当前代码里只完成了半边。</li>
+              <li>表现：Agent 可能永远等不到真正的“就绪”白板信号，只能靠别的逻辑或超时结束。</li>
+            </ul>
+          </div>
+        </details>
+      </div>
+
+      <div class="details-grid">
+        <details open>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-risk">审阅风险</span>
+              <span class="summary-title">感知触发重规划还停在 <code>pendingPerceptionEvents</code> 队列和 <code>TODO</code> 上</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              <code>PerceptionModule</code> 已经可以把敌方发现等事件推给
+              <code>ActionDecisionModule.OnPerceptionEvent()</code>，事件也会进入
+              <code>pendingPerceptionEvents</code> 队列。但真正消费这些事件并触发 LLM-B 重规划的
+              <code>HandlePendingPerceptionEvents()</code> 仍是 <code>TODO</code>。
+            </p>
+            <ul>
+              <li>所以“感知变化驱动动作再规划”在接口层已经预埋，但主链还没闭合。</li>
+              <li>这也是为什么当前主链更像“步骤内滚动决策”，而不是“对突发环境强响应的闭环”。</li>
+            </ul>
+          </div>
+        </details>
+
+        <details open>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-paper">优化与博弈论</span>
+              <span class="summary-title">竞争/对抗的真正博弈论落点在这里：资源争夺、对手建模、先后手策略都发生在滚动环里</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              如果要把”博弈论相关”做成真正影响动作输出的功能，阶段 7 是最关键的第二个插入点。
+              因为这里才第一次同时看到：当前步骤、环境事实、队友状态、对手事实和候选动作。
+            </p>
+            <ul>
+              <li>竞争任务：可用局部 Nash / 潜在博弈思想，让多个成员围绕共享资源做稳定目标选择。</li>
+              <li>对抗任务：可用 Markov Games 建模多轮追逃；可用 Nash Q-learning 处理一般和局博弈。</li>
+              <li>有明确先手方的追捕/防逃：可用 Stackelberg 视角建模”先布防，后响应”。</li>
+            </ul>
+            <p><strong>【方法原理】</strong>Markov Games（Littman 1994）是多智能体 MDP 推广：状态由所有 Agent 的联合状态组成，每个 Agent 有独立奖励函数，动作组合决定状态转移。Nash Q-Learning（Hu &amp; Wellman 2003）在每步计算 Nash 均衡来更新 Q 值，能处理非零和博弈，适合竞争场景中多方争抢资源时的稳定策略学习。</p>
+            <p><strong>【为何适合本节点】</strong>滚动决策循环（RunRollingLoop）是实时响应对手的关键环节，当前 LLM 每轮独立决策，没有对手模型。引入 Markov Games 框架可让 Agent 在决策时考虑对手的理性响应。</p>
+            <p><strong>【具体实现步骤】</strong></p>
+            <ol class="detail-steps">
+              <li>在 ReadRefereeContext() 后增加”对手状态建模”：根据裁判事件和感知事件估算对手位置概率分布</li>
+              <li>在 BuildRollingPrompt() 中注入对手模型描述：”对手估计在 X 区，置信度 0.7，上一轮动作为 MoveTo(南门)”</li>
+              <li>定义简化状态空间：(自身位置区域, 目标占用状态, 对手位置区域)，枚举有限</li>
+              <li>在每次竞争任务仿真后用 Nash Q-Learning 更新 Q-table，后续仿真中 BuildRollingPrompt() 查表得到”Nash 建议动作”作为 LLM 决策的软约束</li>
+              <li>对竞争资源选择，定义潜在函数 = 总体任务完成收益 - 冲突惩罚，每个成员在 WriteC3MutexClaims() 时选择能最大化潜在函数增量的目标</li>
+            </ol>
+            <div class="meta-note">
+              这也是为什么博弈论不该被单独讲成”另一个模块”：它最自然的落点就是
+              <code>RunRollingLoop()</code> 里”读上下文 -> 生成 nextActions”这一跳。
+            </div>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section class="chapter" id="stage8">
+      <div class="chapter-header">
+        <div class="chapter-title-wrap">
+          <div class="chapter-tag">阶段 8 · 动作执行层</div>
+          <h2><code>AgentMotionExecutor</code> 消费当前原子动作，把文字动作真正变成移动、巡逻、观察、等待</h2>
+          <p>
+            当前系统把原子动作交给 <code>Execution/AgentMotionExecutor.cs</code>。
+            它在 <code>Update()</code> 里轮询 <code>adm.GetCurrentAction()</code>，动作变化时启动新的执行协程，
+            再根据动作类型进入 <code>DoMoveTo()</code>、<code>DoObserve()</code>、
+            <code>DoWait()</code>、<code>DoPatrol()</code>、<code>DoFormation()</code>、
+            <code>DoEvade()</code>。动作完成后调用 <code>adm.CompleteCurrentAction()</code>，
+            于是控制权回到滚动规划主链。
+          </p>
+          <div class="chain-badges">
+            <span><code>GetCurrentAction()</code></span>
+            <span><code>ExecuteAction()</code></span>
+            <span><code>DoMoveTo()</code></span>
+            <span><code>adm.CompleteCurrentAction()</code></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="node-grid">
+        <article class="node-card">
+          <h3>输入</h3>
+          <ul>
+            <li><code>AtomicAction.type</code>、<code>targetName</code>、<code>duration</code></li>
+            <li>地图网格 <code>CampusGrid2D</code></li>
+            <li>Rigidbody 物理参数</li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>输出</h3>
+          <ul>
+            <li>物理移动、巡逻、观察、等待等真实执行</li>
+            <li>动作完成回调到 ADM</li>
+            <li>批次动作完成后再回到滚动规划</li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>关键字段</h3>
+          <ul>
+            <li><code>currentAction</code>：正在执行的动作</li>
+            <li><code>currentPath</code> / <code>waypointIdx</code>：A* 路径缓存</li>
+            <li><code>hoverHeight</code> / <code>pdKp</code> / <code>pdKd</code>：执行层物理参数</li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>涉及函数</h3>
+          <ul>
+            <li><code>AgentMotionExecutor.PollADM()</code></li>
+            <li><code>ExecuteAction()</code></li>
+            <li><code>DoMoveTo()</code></li>
+            <li><code>DoObserve()</code></li>
+            <li><code>ActionDecisionModule.CompleteCurrentAction()</code></li>
+          </ul>
+        </article>
+        <article class="node-card">
+          <h3>上下游关系</h3>
+          <ul>
+            <li>上游：滚动规划已经给出当前批次动作</li>
+            <li>中游：把动作落成物理行为</li>
+            <li>下游：动作完成通知 ADM；步骤完成再通知 PlanningModule</li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="details-grid">
+        <details open>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-good">主链闭环</span>
+              <span class="summary-title">从这里开始，动作序列真正变成空间行为；动作完成后又回流到滚动规划</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              这也是“直到变成动作序列的整个流程”最终落地的节点：前面的计划、槽位、步骤、白板和裁判，
+              最后都会归结为当前批次的 <code>AtomicAction[]</code>。执行层并不理解组任务、也不理解裁判规则，
+              它只负责把当前动作做完，再把“做完了”这件事实反馈回主链。
+            </p>
+            <pre><code>// 执行层的最短闭环：取动作 -> 执行 -> 完成回调
+nextAction = adm.GetCurrentAction();
+if (nextAction.type == MoveTo) {
+  // 先做 A* 路径，再逐路点飞行
+  DoMoveTo(nextAction);
+}
+// 当前动作执行完毕后
+adm.CompleteCurrentAction();</code></pre>
+          </div>
+        </details>
+
+        <details open>
+          <summary>
+            <span class="summary-left">
+              <span class="summary-badge summary-warn">审阅观察</span>
+              <span class="summary-title"><code>FormationHold</code> 的编队偏移仍然硬编码，说明动作层也还存在待补口</span>
+            </span>
+            <span class="summary-arrow">v</span>
+          </summary>
+          <div class="details-body">
+            <p>
+              当前 <code>DoFormation()</code> 使用固定偏移 <code>(3, 0, 0)</code>。
+              这意味着即使上游 LLM 已经知道应采用更合理的编队几何，动作层也无法精细接收。
+              它不会阻断主链，但会限制协同动作表现力。
+            </p>
+          </div>
+        </details>
+      </div>
+
+      <div class="scenario-grid">
+        <article class="scenario-card coop">
+          <span class="scenario-type">合作</span>
+          <h3>合作执行结果</h3>
+          <dl>
+            <dt>动作批次</dt>
+            <dd><code>MoveTo(西区)</code> -> <code>Observe(西区)</code> -> <code>Wait</code> 等队友同步。</dd>
+            <dt>白板回流</dt>
+            <dd>步骤结束时写 <code>DoneSignal</code>，等队友也完成后进入下一步。</dd>
+            <dt>动作链闭环</dt>
+            <dd>执行层做完后只汇报“动作结束”，不直接理解合作目标本身。</dd>
+          </dl>
+        </article>
+        <article class="scenario-card comp">
+          <span class="scenario-type">竞争</span>
+          <h3>竞争执行结果</h3>
+          <dl>
+            <dt>动作批次</dt>
+            <dd><code>MoveTo(资源点A)</code> 或在互斥上下文下转向其他目标。</dd>
+            <dt>事实来源</dt>
+            <dd>理想情况应由裁判确认“是否真的先占到”，但当前项目主要还是停留在意图层或组内互斥层。</dd>
+            <dt>主链评价</dt>
+            <dd>动作能执行，竞争判定未完全闭环。</dd>
+          </dl>
+        </article>
+        <article class="scenario-card adv">
+          <span class="scenario-type">对抗</span>
+          <h3>对抗执行结果</h3>
+          <dl>
+            <dt>动作批次</dt>
+            <dd><code>MoveTo(南侧走廊)</code> -> <code>Observe</code> -> <code>Evade</code> 或继续追击。</dd>
+            <dt>事实来源</dt>
+            <dd>真正的“抓到/逃脱”结果理应由裁判或感知驱动，但当前接线不足意味着这部分更像策略演示。</dd>
+            <dt>主链评价</dt>
+            <dd>队内协同能跑，对手事实闭环仍弱。</dd>
+          </dl>
+        </article>
+      </div>
+    </section>
+
+    <!-- Memory & Reflection 章节 -->
+    <section class="chapter" id="memory-reflection">
+      <div class="chapter-header">
+        <div class="chapter-title-wrap">
+          <div class="chapter-tag">支撑模块</div>
+          <h2>Memory &amp; Reflection 模块</h2>
+          <p>MemoryModule 和 ReflectionModule 在主链中的位置与调用时机</p>
+        </div>
+      </div>
+
+      <div class="node-grid">
+        <div class="node-card" style="padding: 16px; min-width: 0;">
+          <div style="font-size: 11px; color: #146c7f; font-family: 'Cascadia Mono','Consolas',monospace; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px;">MemoryModule</div>
+          <div style="font-size: 13px; line-height: 1.7; color: #1f2a33;">
+            <strong>Remember() / StoreMemory(Memory m)</strong>：统一入库入口，自动补齐默认值、去空字段、做容量裁剪（maxMemoryCount=512，LRU 淘汰）<br>
+            <strong>RememberPlanSnapshot(missionId, slotId, stepLabel, planSummary, targetRef)</strong>：专用于 PlanningModule 在 Active 阶段写入计划快照（此方法此前未在 HTML 中记录）<br>
+            <strong>检索接口</strong>：通过 ReflectionModule.GetActionGuidance() 间接查询，返回可注入 BuildRollingPrompt() 的规则文本<br>
+            <strong>时效管理</strong>：freshnessWindowHours=72f（默认72小时），超期记忆在检索时被过滤
+          </div>
+        </div>
+        <div class="node-card" style="padding: 16px; min-width: 0;">
+          <div style="font-size: 11px; color: #a84d2f; font-family: 'Cascadia Mono','Consolas',monospace; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px;">ReflectionModule</div>
+          <div style="font-size: 13px; line-height: 1.7; color: #1f2a33;">
+            <strong>触发条件（三个入口）：</strong><br>
+            <code>NotifyActionOutcome()</code>：相同动作连续失败 ≥ repeatedFailureThreshold（默认2次），原因 = RepeatedFailure<br>
+            <code>NotifyBlocked()</code>：Agent 进入 Blocked 状态，原因 = Blocked<br>
+            <code>NotifyImportantObservation()</code>：感知到重要异常事件，原因 = ImportantObservation（此入口此前未在 HTML 中记录）<br>
+            <strong>冷却机制</strong>：reflectionCooldownSeconds = 90f，防止高频反思<br>
+            <strong>查询接口</strong>：GetActionGuidance(missionText, missionId, slotId, stepText, targetRef, maxInsights=2)<br>
+            <strong>当前接线状态</strong>：三个触发入口接口完整，但主链（ADM/PlanningModule）中显式调用这三个 Notify 方法的位置尚未确认
+          </div>
+        </div>
+        <div class="node-card" style="padding: 16px; min-width: 0;">
+          <div style="font-size: 11px; color: #245d52; font-family: 'Cascadia Mono','Consolas',monospace; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px;">接入建议</div>
+          <div style="font-size: 13px; line-height: 1.7; color: #1f2a33;">
+            在 ActionDecisionModule.RunRollingLoop() 每轮结束时调用 MemoryModule.StoreMemory(stepResult)<br>
+            在 BuildRollingPrompt() 开头调用 GetRelevantInsights() 并拼接到 prompt 头部<br>
+            在 Agent 进入 Blocked 状态时触发 ReflectionModule.Reflect()
+          </div>
+        </div>
+      </div>
+
+      <div style="padding: 16px; background: rgba(125, 74, 163, 0.07); border-radius: 12px; border: 1px solid rgba(125, 74, 163, 0.18); font-size: 13px; line-height: 1.8; color: #1f2a33;">
+        <strong style="color: #7d4aa3;">当前接线状态：</strong>MemoryModule 已在 PlanningModule.Start() 通过 GetComponent&lt;MemoryModule&gt;() 取到引用，但该 memory 字段在后续状态机方法中尚无实际调用点。ReflectionModule.GetActionGuidance() 的返回结果未被注入到 BuildRollingPrompt()。<br>
+        <strong style="color: #7d4aa3;">建议补入点：</strong><br>
+        1. PlanningModule 进入 Active 状态时调用 <code>memory.RememberPlanSnapshot(missionId, slotId, stepLabel, ...)</code><br>
+        2. RunRollingLoop() 每轮结束后调用 <code>memory.Remember(AgentMemoryKind.Action, stepDescription, ...)</code><br>
+        3. ADM 的 CompleteCurrentStep() 调用 <code>reflection.NotifyActionOutcome(success, actionDescription)</code><br>
+        4. Agent 进入阻塞时调用 <code>reflection.NotifyBlocked(reason)</code>
+      </div>
+    </section>
+
+    <!-- 容错与鲁棒性章节 -->
+    <section class="chapter" id="robustness">
+      <div class="chapter-header">
+        <div class="chapter-title-wrap">
+          <div class="chapter-tag">容错机制</div>
+          <h2>容错与鲁棒性</h2>
+          <p>LLM 调用失败、超时、重规划上限等边界情况的处理建议</p>
+        </div>
+      </div>
+      <table class="field-table">
+        <thead>
+          <tr>
+            <th>场景</th>
+            <th>当前代码</th>
+            <th>建议补全</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>RunLLM1/2/4 超时或返回非法 JSON</td>
+            <td>WaitSec=25f 超时存在，但失败回退不完整</td>
+            <td>最多重试2次，重试时在 prompt 附加"上次输出不合法，原因：{error}"；超限后写入 Failed 状态并记录原因</td>
+          </tr>
+          <tr>
+            <td>ActionDecisionModule MaxIterations=10 超限</td>
+            <td>死锁防护已有，但超限后退出路径未文档化</td>
+            <td>超限后触发 PlanningModule 重规划（而非直接失败），把"已执行步骤摘要"作为上下文传入新一轮 RunLLM4</td>
+          </tr>
+          <tr>
+            <td>MaxReplanCount=5 重规划上限</td>
+            <td>上限字段存在，但触发条件和处理流程未文档化</td>
+            <td>明确触发条件（步骤失败次数、感知中断、裁判事件）和超限后的优雅退出路径（任务标记为 Abandoned，汇报给上层调度）</td>
+          </tr>
+          <tr>
+            <td>CheckTimeout() 超时进入 Failed 无广播</td>
+            <td>WaitSec=25f 每帧轮询，超时直接进入 Failed，busy 重置</td>
+            <td>超时后未广播 GroupBroadcast 失败通知，也未为超时成员补充分配新槽位，导致整组任务可能陷入等待死锁。建议：超时时广播一条含退出原因的通信消息，并调用 memory.Remember() 记录超时事件</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="review-summary" id="review">
+      <h2>代码审阅结论汇总</h2>
+      <div class="review-list">
+        <div class="review-item">
+          <strong>R1 · 裁判链半接入</strong>
+          <p>
+            <code>RefereeManager</code>、<code>RefereeEvent</code> 与
+            <code>ActionDecisionModule.ReadRefereeContext()</code> 已存在，但项目内未搜到
+            <code>RefereeManager.RegisterAgent()</code> 与 <code>BroadcastEvent()</code> 的实际接线，
+            因此不能把裁判写成当前已闭环主链。
+          </p>
+          <p class="detail-note">
+            最小接线方案（三步闭环）：<br>
+            1. 在 AgentLLMControl.Start() 或 IntelligentAgent.InitializeAgent() 中调用 RefereeManager.Instance.RegisterAgent(agentId, callback)，完成 Agent 注册<br>
+            2. 在 AgentMotionExecutor.DoMoveTo() 到达目标后，若目标是资源点，调用 RefereeManager.Instance.BroadcastEvent(ResourceClaimed, agentId, resourceId)<br>
+            3. 在 IntelligentAgent.OnEliminated() 中调用 BroadcastEvent(AgentEliminated, agentId)<br>
+            以上三步构成裁判完整闭环的最小可验证路径。
+          </p>
+          <div class="callout callout-success">
+            <strong class="callout-label">验收标准：</strong>创建单 Agent 场景，手动调用 <code>RefereeManager.Instance.BroadcastEvent(ResourceClaimed, agentId, resourceId)</code>，确认 ADM 的 <code>ReadRefereeContext()</code> 返回非空字符串，且该轮 rolling loop 的 LLM prompt 包含该事件描述。
+          </div>
+        </div>
+        <div class="review-item">
+          <strong>R2 · C3 正向等待只做了读，没有做写</strong>
+          <p>
+            <code>CheckC3WaitConditions()</code> 会等 <code>ReadySignal</code>，
+            但项目中未搜到 <code>ReadySignal</code> 的实际写入点，所以 sign=+1 的完整语义没有真正闭环。
+          </p>
+          <p class="detail-note">
+            补写 ReadySignal 写入点方案：<br>
+            1. 在 RunRollingLoop() 中，当 ADM 判断当前步骤进入"就绪等待"状态时（如抵达集合点后），写入 WhiteboardEntryType.ReadySignal<br>
+            2. 在 WriteWhiteboardIntentSignals() 里，当 C3 sign=+1 且当前步骤是等待类步骤时，自动生成 ReadySignal<br>
+            3. 测试方法：创建 C3 sign=+1 的两 Agent 场景，Agent A 等待 Agent B 的 ReadySignal，验证 B 在抵达指定位置后正确写入
+          </p>
+          <div class="callout callout-success">
+            <strong class="callout-label">验收标准：</strong>两 Agent 场景（C3 sign=+1），Agent B 抵达集合点后写入 <code>WhiteboardEntryType.ReadySignal</code>，确认 Agent A 的 C3 等待条件从"返回 Wait 动作"变为"返回 null（可继续执行下一步）"。
+          </div>
+        </div>
+        <div class="review-item">
+          <strong>R3 · 感知驱动重规划仍是 TODO</strong>
+          <p>
+            <code>pendingPerceptionEvents</code> 队列和 <code>OnPerceptionEvent()</code> 已接入，
+            但 <code>HandlePendingPerceptionEvents()</code> 仍未实现，导致”看到敌人后重规划”还停在预埋状态。
+          </p>
+          <p class="detail-note">
+            感知驱动重规划实现建议：<br>
+            1. 在 RunRollingLoop() 每轮开始检查 pendingPerceptionEvents 队列<br>
+            2. 若发现高优先级事件（如发现敌方/障碍），立即终止当前动作批次，重构 ActionExecutionContext<br>
+            3. 把感知事件摘要注入 executedActionsSummary，让 LLM 在下一轮感知更新后的上下文中重新规划<br>
+            4. 引入”响应等级”：轻微更新（仅注入上下文，继续当前步骤）vs 完整重规划（清空 actionQueue，回到 RunLLM4 重新拆解步骤）
+          </p>
+          <div class="callout callout-success">
+            <strong class="callout-label">验收标准：</strong>向 ADM 注入一个高优先级感知事件（敌方发现），确认 <code>pendingPerceptionEvents</code> 队列被消费、<code>actionQueue</code> 被清空，下一轮 <code>RunRollingLoop()</code> 的 LLM prompt 包含该感知事件描述。
+          </div>
+        </div>
+        <div class="review-item">
+          <strong>R4 · 旧约束文档与当前代码不一致</strong>
+          <p>
+            <code>constraint-reference.html</code> 中出现了 <code>C4 Priority</code>、
+            <code>involvedAgents</code> 等设计字段，但当前 <code>StructuredConstraint</code> 实装中并没有这些字段。
+          </p>
+        </div>
+        <div class="review-item">
+          <strong>R5 · LLM 密钥暴露</strong>
+          <p>
+            <code>LLMInterface</code> 默认配置中直接包含 API Key，这是已经进入主链的高风险安全问题。
+          </p>
+        </div>
+        <div class="review-item">
+          <strong>R6 · 槽位冲突处理过于朴素</strong>
+          <p>
+            <code>ResolveAndConfirm()</code> 主要按先到先得处理冲突，没有利用任务收益、角色匹配度、距离代价等更强决策信息。
+          </p>
+        </div>
+      </div>
+      <p class="footnote">
+        以上问题都已经在前面的主链节点旁做了嵌入式标注。这里集中列出，只是为了让你在审阅时能快速抓到实现边界。
+      </p>
+    </section>
+
+    <section class="source-index" id="sources">
+      <h2>论文与来源索引</h2>
+      <div class="source-grid">
+        <article class="source-card">
+          <strong>AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent Conversation</strong>
+          <p>用于支撑“多 Agent 协作协议、消息格式、角色协商”相关优化建议。</p>
+          <a href="https://arxiv.org/abs/2308.08155" target="_blank" rel="noopener">https://arxiv.org/abs/2308.08155</a>
+        </article>
+        <article class="source-card">
+          <strong>CAMEL: Communicative Agents for Mind Exploration of Large Scale Language Model Society</strong>
+          <p>用于支撑“角色提示、角色一致性、会话驱动协作”相关优化建议。</p>
+          <a href="https://arxiv.org/abs/2303.17760" target="_blank" rel="noopener">https://arxiv.org/abs/2303.17760</a>
+        </article>
+        <article class="source-card">
+          <strong>MetaGPT: Meta Programming for Multi-Agent Collaborative Framework</strong>
+          <p>用于支撑 SOP、发布订阅式消息池、结构化角色协作的优化建议。</p>
+          <a href="https://doi.org/10.48550/arXiv.2308.00352" target="_blank" rel="noopener">https://doi.org/10.48550/arXiv.2308.00352</a>
+        </article>
+        <article class="source-card">
+          <strong>A Formal Analysis and Taxonomy of Task Allocation in Multi-Robot Systems</strong>
+          <p>用于支撑分组、槽位分配、MRTA 形式化改进建议。</p>
+          <a href="https://doi.org/10.1177/0278364904045564" target="_blank" rel="noopener">https://doi.org/10.1177/0278364904045564</a>
+        </article>
+        <article class="source-card">
+          <strong>Consensus-Based Decentralized Auctions for Robust Task Allocation</strong>
+          <p>用于支撑“槽位冲突从先到先得升级为竞拍/共识分配”的建议。</p>
+          <a href="https://doi.org/10.1109/TRO.2009.2022423" target="_blank" rel="noopener">https://doi.org/10.1109/TRO.2009.2022423</a>
+        </article>
+        <article class="source-card">
+          <strong>The Contract Net Protocol: High-Level Communication and Control in a Distributed Problem Solver</strong>
+          <p>用于支撑“LLM#2 产槽 -> LLM#3 选槽 -> 组长授标”可抽象成招标协议的建议。</p>
+          <a href="https://doi.org/10.1109/TC.1980.1675516" target="_blank" rel="noopener">https://doi.org/10.1109/TC.1980.1675516</a>
+        </article>
+        <article class="source-card">
+          <strong>Markov Games as a Framework for Multi-Agent Reinforcement Learning</strong>
+          <p>用于支撑对抗任务中“滚动规划里做对手建模”的建议。</p>
+          <a href="https://doi.org/10.1016/B978-1-55860-335-6.50027-1" target="_blank" rel="noopener">https://doi.org/10.1016/B978-1-55860-335-6.50027-1</a>
+        </article>
+        <article class="source-card">
+          <strong>Nash Q-Learning for General-Sum Stochastic Games</strong>
+          <p>用于支撑竞争/对抗场景下“一般和局博弈 + 滚动资源选择”的建议。</p>
+          <a href="https://doi.org/10.1162/1532443041827880" target="_blank" rel="noopener">https://doi.org/10.1162/1532443041827880</a>
+        </article>
+        <article class="source-card">
+          <strong>Stackelberg Security Games: Models, Applications and Computational Aspects</strong>
+          <p>用于支撑“先布防后响应”“队长先出策略、对手后响应”的博弈论插入建议。</p>
+          <a href="https://doi.org/10.26636/jtit.2016.3.749" target="_blank" rel="noopener">https://doi.org/10.26636/jtit.2016.3.749</a>
+        </article>
+        <article class="source-card">
+          <strong>A Temporal Blackboard for a Multi-Agent Environment</strong>
+          <p>用于支撑白板在协同系统中的时间一致性、并发读写与多访问协议建议。</p>
+          <a href="https://doi.org/10.1016/0169-023X(95)00007-F" target="_blank" rel="noopener">https://doi.org/10.1016/0169-023X(95)00007-F</a>
+        </article>
+        <article class="source-card" style="padding: 16px;">
+          <strong style="display: block; margin-bottom: 6px; font-size: 12px; color: #245d52; font-family: 'Cascadia Mono','Consolas',monospace;">HTN Planning</strong>
+          <p style="margin: 0 0 8px; font-size: 13px; line-height: 1.6; color: #5c6b72;">SHOP2: An HTN Planning System — Nau et al. (2003). 支撑阶段5（步骤拆解）引入伪 HTN 格式约束 LLM#4 输出结构，保证 C2/C3 约束绑定到正确步骤。</p>
+          <a href="https://doi.org/10.1613/jair.1141" style="font-size: 11px; font-family: 'Cascadia Mono','Consolas',monospace; word-break: break-all;">JAIR 2003 · doi:10.1613/jair.1141</a>
+        </article>
+      </div>
+      <p class="footnote">
+        这些来源在本页里只用于支持“为什么这个节点适合这样优化”，没有把论文中的完整方案硬套到现有代码上。
+        本页仍然优先描述当前项目已经写出来、已经调用起来的主链。
+      </p>
+    </section>
+  </main>
+</div>
+
+<script>
+  // 导航高亮：帮助长文档定位当前阅读的主链节点
+  const navLinks = Array.from(document.querySelectorAll(".nav-group a"));
+  const sections = Array.from(document.querySelectorAll("main section[id]"));
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      const id = entry.target.id;
+      navLinks.forEach((link) => {
+        link.classList.toggle("active", link.getAttribute("href") === "#" + id);
+      });
+    });
+  }, {
+    rootMargin: "-10% 0px -85% 0px",
+    threshold: 0
+  });
+
+  sections.forEach((section) => observer.observe(section));
+
+  // Fix: dynamic arrows for details/summary + max-height animation (A4)
+  (function() {
+    function initArrows() {
+      document.querySelectorAll('details').forEach(function(details) {
+        var summary = details.querySelector('summary');
+        var arrow = summary ? summary.querySelector('.summary-arrow') : null;
+        var body = details.querySelector('.details-body');
+        if (arrow) {
+          arrow.textContent = details.open ? '▼' : '▶';
+        }
+        // Set initial max-height based on open state
+        if (body) {
+          body.style.maxHeight = details.open ? body.scrollHeight + 'px' : '0';
+        }
+        details.addEventListener('toggle', function() {
+          var a = details.querySelector('summary .summary-arrow');
+          if (a) a.textContent = details.open ? '▼' : '▶';
+          var b = details.querySelector('.details-body');
+          if (b) {
+            b.style.maxHeight = details.open ? b.scrollHeight + 'px' : '0';
+          }
+        });
+      });
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initArrows);
+    } else {
+      initArrows();
+    }
+  })();
+
+  // Expand-all / collapse-all (B3)
+  document.getElementById('btn-expand-all')?.addEventListener('click', () => {
+    document.querySelectorAll('details').forEach(d => { d.open = true; });
+  });
+  document.getElementById('btn-collapse-all')?.addEventListener('click', () => {
+    document.querySelectorAll('details').forEach(d => { d.open = false; });
+  });
+
+  // Back-to-top (B4)
+  const backToTop = document.getElementById('back-to-top');
+  if (backToTop) {
+    window.addEventListener('scroll', () => {
+      backToTop.style.display = window.scrollY > 600 ? 'flex' : 'none';
+      backToTop.style.alignItems = 'center';
+      backToTop.style.justifyContent = 'center';
+    });
+    backToTop.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+  }
+
+  // Copy buttons for code blocks (B5)
+  document.querySelectorAll('pre').forEach(pre => {
+    const btn = document.createElement('button');
+    btn.className = 'copy-btn';
+    btn.textContent = '复制';
+    btn.addEventListener('click', () => {
+      const code = pre.querySelector('code');
+      navigator.clipboard.writeText(code ? code.textContent : pre.textContent).then(() => {
+        btn.textContent = '已复制';
+        setTimeout(() => { btn.textContent = '复制'; }, 1500);
+      });
+    });
+    pre.appendChild(btn);
+  });
+</script>
+<button id="back-to-top" title="回到顶部" style="display:none; position:fixed; bottom:28px; right:28px; width:44px; height:44px; border-radius:50%; border:1px solid rgba(47,66,73,0.14); background:rgba(255,252,245,0.92); color:#146c7f; font-size:18px; cursor:pointer; box-shadow:0 4px 16px rgba(34,44,52,0.12); backdrop-filter:blur(8px); transition:opacity 0.2s;">↑</button>
+</body>
+</html>

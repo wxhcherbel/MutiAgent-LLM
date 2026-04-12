@@ -1,0 +1,3487 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>面向自主涌现的多智能体仿真系统架构演进研究报告</title>
+<style>
+  :root {
+    --primary: #1a365d;
+    --accent: #2b6cb0;
+    --accent2: #3182ce;
+    --highlight: #ebf8ff;
+    --success: #276749;
+    --warning: #744210;
+    --danger: #742a2a;
+    --surface: #f7fafc;
+    --card: #ffffff;
+    --border: #e2e8f0;
+    --text: #1a202c;
+    --text-muted: #718096;
+    --code-bg: #1a202c;
+    --orange: #c05621;
+    --purple: #553c9a;
+    --teal: #234e52;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: var(--surface);
+    color: var(--text);
+    line-height: 1.7;
+    font-size: 15px;
+  }
+  /* NAV */
+  .toc-sidebar {
+    position: fixed; left: 0; top: 0; width: 210px; height: 100vh;
+    background: var(--primary); color: #fff; overflow-y: auto;
+    padding: 20px 0; z-index: 100; font-size: 12.5px;
+    transition: left .3s ease, box-shadow .3s ease;
+  }
+  .toc-sidebar.collapsed { left: -210px; box-shadow: none; }
+  .toc-sidebar h3 { padding: 0 16px 12px; font-size: 13px; color: #90cdf4; border-bottom: 1px solid rgba(255,255,255,.15); margin-bottom: 8px; }
+  .toc-sidebar a { display: block; padding: 5px 16px; color: #bee3f8; text-decoration: none; border-left: 3px solid transparent; transition: all .2s; }
+  .toc-sidebar a:hover, .toc-sidebar a.active { background: rgba(255,255,255,.1); border-left-color: #63b3ed; color: #fff; }
+  .toc-sidebar .toc-sub { padding-left: 26px; font-size: 12px; color: #a0aec0; }
+  /* 收起/展开按钮 */
+  .toc-toggle {
+    position: fixed; top: 14px; z-index: 200;
+    left: 214px;
+    width: 28px; height: 28px;
+    background: var(--primary); color: #90cdf4;
+    border: 1px solid rgba(255,255,255,.25); border-radius: 0 6px 6px 0;
+    cursor: pointer; font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+    transition: left .3s ease, background .2s;
+    box-shadow: 2px 0 6px rgba(0,0,0,.2);
+  }
+  .toc-toggle:hover { background: var(--accent2); color: #fff; }
+  .toc-toggle.collapsed { left: 4px; border-radius: 6px; }
+  /* MAIN */
+  .main-content { margin-left: 210px; padding: 40px 48px; transition: margin-left .3s ease; }
+  .main-content.expanded { margin-left: 0; }
+  /* HEADER */
+  .doc-header {
+    background: linear-gradient(135deg, #1a365d 0%, #2c5282 50%, #2b6cb0 100%);
+    color: white; padding: 60px 48px; margin: -40px -48px 40px; overflow: hidden;
+    border-bottom: 4px solid #63b3ed;
+  }
+  .doc-header .badge { display: inline-block; background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.3); border-radius: 20px; padding: 4px 14px; font-size: 12px; margin-bottom: 18px; }
+  .doc-header h1 { font-size: 28px; font-weight: 700; line-height: 1.3; margin-bottom: 12px; }
+  .doc-header .subtitle { font-size: 15px; color: #bee3f8; margin-bottom: 24px; }
+  .doc-header .meta { display: flex; gap: 30px; flex-wrap: wrap; font-size: 13px; color: #90cdf4; }
+  .doc-header .meta span { display: flex; align-items: center; gap: 6px; }
+  /* SECTIONS */
+  .section { margin-bottom: 60px; }
+  h2.section-title {
+    font-size: 20px; font-weight: 700; color: var(--primary);
+    border-left: 5px solid var(--accent); padding: 8px 16px;
+    background: linear-gradient(90deg, #ebf8ff, transparent);
+    margin-bottom: 24px; border-radius: 0 6px 6px 0;
+  }
+  h3.sub-title { font-size: 16px; font-weight: 600; color: var(--accent); margin: 24px 0 12px; padding-bottom: 6px; border-bottom: 1px dashed var(--border); }
+  h4.sub-sub { font-size: 14px; font-weight: 600; color: var(--text); margin: 16px 0 8px; }
+  /* CARDS */
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 24px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .card-grid { display: grid; gap: 16px; }
+  .card-grid.cols-2 { grid-template-columns: 1fr 1fr; }
+  .card-grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+  .card.highlight { border-left: 4px solid var(--accent2); background: linear-gradient(90deg, #ebf8ff, #fff); }
+  .card.warning { border-left: 4px solid #ed8936; background: #fffaf0; }
+  .card.danger { border-left: 4px solid #e53e3e; background: #fff5f5; }
+  .card.success { border-left: 4px solid #48bb78; background: #f0fff4; }
+  .card.purple { border-left: 4px solid #805ad5; background: #faf5ff; }
+  /* ABSTRACT */
+  .abstract-box {
+    background: linear-gradient(135deg, #f7fafc, #ebf8ff);
+    border: 1px solid #bee3f8; border-radius: 10px;
+    padding: 28px 32px; margin-bottom: 32px;
+    font-size: 14px; line-height: 1.9;
+  }
+  .abstract-box strong { color: var(--accent); }
+  /* BADGES */
+  .badge-tag { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; margin: 2px; }
+  .badge-tag.green { background: #c6f6d5; color: #276749; }
+  .badge-tag.red { background: #fed7d7; color: #742a2a; }
+  .badge-tag.blue { background: #bee3f8; color: #2b6cb0; }
+  .badge-tag.orange { background: #feebc8; color: #c05621; }
+  .badge-tag.purple { background: #e9d8fd; color: #553c9a; }
+  /* TABLES */
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-bottom: 20px; }
+  th { background: var(--primary); color: white; padding: 10px 14px; text-align: left; font-weight: 600; }
+  td { padding: 9px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:hover td { background: #f0f4f8; }
+  tr:nth-child(even) td { background: #f8fafc; }
+  /* CODE */
+  pre, code { font-family: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace; }
+  pre { background: var(--code-bg); color: #e2e8f0; padding: 18px 22px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; margin: 14px 0; }
+  code { background: #edf2f7; color: #c05621; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+  /* FORMULA */
+  .formula-box {
+    background: #1a202c; color: #e2e8f0; padding: 20px 28px;
+    border-radius: 10px; margin: 16px 0; text-align: center;
+    font-size: 16px; border: 1px solid #2d3748;
+  }
+  .formula-box .formula-label { font-size: 12px; color: #718096; margin-bottom: 10px; }
+  .formula-main { font-size: 18px; color: #90cdf4; font-style: italic; letter-spacing: .5px; }
+  .formula-sub { font-size: 13px; color: #a0aec0; margin-top: 10px; }
+  /* ALERT BOXES */
+  .alert { padding: 14px 18px; border-radius: 8px; margin: 14px 0; font-size: 14px; }
+  .alert.info { background: #ebf8ff; border-left: 4px solid #63b3ed; color: #2b6cb0; }
+  .alert.warn { background: #fffaf0; border-left: 4px solid #ed8936; color: #c05621; }
+  .alert.key { background: #faf5ff; border-left: 4px solid #805ad5; color: #553c9a; }
+  /* NUMBERED LIST */
+  .numbered-list { counter-reset: item; list-style: none; padding: 0; }
+  .numbered-list li { counter-increment: item; display: flex; gap: 14px; margin-bottom: 12px; align-items: flex-start; }
+  .numbered-list li::before { content: counter(item); min-width: 28px; height: 28px; background: var(--accent); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex-shrink: 0; }
+  /* CHECK LIST */
+  .check-list { list-style: none; padding: 0; }
+  .check-list li { padding: 5px 0 5px 28px; position: relative; font-size: 14px; }
+  .check-list li.yes::before { content: '✓'; position: absolute; left: 0; color: #48bb78; font-weight: 700; }
+  .check-list li.no::before { content: '✗'; position: absolute; left: 0; color: #e53e3e; font-weight: 700; }
+  .check-list li.partial::before { content: '△'; position: absolute; left: 0; color: #ed8936; font-weight: 700; }
+  /* STEP FLOW */
+  .step-flow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 12px 0; }
+  .step-box { background: var(--accent); color: white; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .step-box.gray { background: #718096; }
+  .step-box.orange { background: #dd6b20; }
+  .step-box.green { background: #276749; }
+  .step-box.purple { background: #6b46c1; }
+  .step-box.red { background: #c53030; }
+  .step-arrow { color: #718096; font-size: 18px; }
+  /* QUOTE */
+  blockquote { border-left: 4px solid var(--accent2); padding: 12px 20px; background: #f0f4f8; margin: 16px 0; font-style: italic; color: #4a5568; font-size: 14px; }
+  /* DIVIDER */
+  .divider { border: none; border-top: 2px dashed var(--border); margin: 40px 0; }
+  /* TAG LINE */
+  .tag-line { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+  /* TIMELINE */
+  .timeline { position: relative; padding-left: 30px; }
+  .timeline::before { content: ''; position: absolute; left: 8px; top: 0; bottom: 0; width: 2px; background: var(--border); }
+  .timeline-item { position: relative; margin-bottom: 24px; }
+  .timeline-item::before { content: ''; position: absolute; left: -26px; top: 5px; width: 14px; height: 14px; border-radius: 50%; background: var(--accent); border: 2px solid #fff; box-shadow: 0 0 0 2px var(--accent); }
+  .timeline-item.p1::before { background: #e53e3e; box-shadow: 0 0 0 2px #e53e3e; }
+  .timeline-item.p2::before { background: #dd6b20; box-shadow: 0 0 0 2px #dd6b20; }
+  .timeline-item.p3::before { background: #d69e2e; box-shadow: 0 0 0 2px #d69e2e; }
+  .timeline-item.p4::before { background: #48bb78; box-shadow: 0 0 0 2px #48bb78; }
+  .timeline-item h4 { font-size: 14px; font-weight: 700; color: var(--text); }
+  .timeline-item p { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+  /* REF */
+  .ref-list { list-style: none; padding: 0; }
+  .ref-list li { padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .ref-list li span.ref-num { color: var(--accent2); font-weight: 700; margin-right: 8px; }
+  .ref-list li .ref-authors { color: var(--text-muted); }
+  .ref-list li .ref-title { font-style: italic; }
+  /* RESPONSIVE */
+  @media (max-width: 900px) { .card-grid.cols-3, .card-grid.cols-2 { grid-template-columns: 1fr; } .toc-sidebar { display: none; } .main-content { padding: 20px; } }
+  /* PRINT */
+  @media print { .toc-sidebar { display: none; } .main-content { padding: 20px; } }
+  /* MODULE DIAGRAM */
+  .module-diagram { background: white; border: 1px solid var(--border); border-radius: 10px; padding: 20px; overflow-x: auto; margin: 16px 0; }
+</style>
+</head>
+<body>
+
+<!-- TOC TOGGLE BUTTON -->
+<button class="toc-toggle" id="tocToggle" title="收起/展开目录">‹</button>
+
+<!-- SIDEBAR TOC -->
+<nav class="toc-sidebar" id="toc">
+  <h3>📋 目录</h3>
+  <a href="#abstract">摘要</a>
+  <a href="#s1">一、当前系统架构</a>
+  <a class="toc-sub" href="#s1-1">1.1 整体框架</a>
+  <a class="toc-sub" href="#s1-2">1.2 规划流水线</a>
+  <a class="toc-sub" href="#s1-3">1.3 记忆与反思</a>
+  <a class="toc-sub" href="#s1-4">1.4 协作vs独立涌现</a>
+  <a href="#s2">二、斯坦福小镇解析</a>
+  <a class="toc-sub" href="#s2-1">2.1 记忆流架构</a>
+  <a class="toc-sub" href="#s2-2">2.2 反思机制</a>
+  <a class="toc-sub" href="#s2-3">2.3 规划机制</a>
+  <a class="toc-sub" href="#s2-4">2.4 涌现行为</a>
+  <a href="#s3">三、主流框架对比</a>
+  <a href="#s4">四、差距分析</a>
+  <a href="#s5">五、记忆模块实现</a>
+  <a class="toc-sub" href="#s5-1">5.1 检索评分公式</a>
+  <a class="toc-sub" href="#s5-2">5.2 向量化实现</a>
+  <a href="#s6">六、反思模块实现</a>
+  <a href="#s7">七、新增模块设计</a>
+  <a class="toc-sub" href="#s7-1">7.1 自主目标生成</a>
+  <a class="toc-sub" href="#s7-2">7.2 社会关系图谱</a>
+  <a class="toc-sub" href="#s7-3">7.3 世界语义地图</a>
+  <a class="toc-sub" href="#s7-4">7.4 技能库</a>
+  <a class="toc-sub" href="#s7-5">7.5 人格特征系统</a>
+  <a class="toc-sub" href="#s7-6">7.6 时间感知</a>
+  <a href="#s8">八、涌现机制设计</a>
+  <a class="toc-sub" href="#s8-4">8.4 无人机协作涌现模型</a>
+  <a href="#s9">九、架构演进全图</a>
+  <a href="#s_example">⭐ 端到端实战案例</a>
+  <a href="#s_example2">⭐ 自主日常案例（无注入）</a>
+  <a href="#s10">十、实施路线图</a>
+  <a href="#refs">参考文献</a>
+</nav>
+
+<!-- MAIN -->
+<div class="main-content">
+
+<!-- HEADER -->
+<div class="doc-header">
+  <div class="badge">技术研究报告 · 多智能体仿真系统</div>
+  <h1>面向自主涌现的多智能体仿真系统<br>架构演进研究报告</h1>
+  <div class="subtitle">基于生成式智能体（Generative Agents）范式的架构分析、差距识别与系统演进方案</div>
+  <div class="meta">
+    <span>📅 2026年4月</span>
+    <span>🏗️ 基于现有 UnityLLM 项目分析</span>
+    <span>📚 参考文献 12+ 篇</span>
+    <span>🎯 目标：Stanford Town 级自治涌现</span>
+  </div>
+</div>
+
+<!-- ABSTRACT -->
+<section id="abstract" class="section">
+  <h2 class="section-title">摘要</h2>
+  <div class="abstract-box">
+    本报告对现有基于 Unity3D 的多智能体协同仿真系统进行全面架构审查，对标 <strong>Park et al. (2023)</strong> 提出的"生成式智能体"（Generative Agents，即"斯坦福小镇"）研究范式，系统分析实现<strong>自主行为与涌现</strong>所需的模块、机制和架构改造方案。当前系统已具备完善的约束驱动多智能体协作、LLM 规划流水线与 MAD 辩论机制，但在<strong>自主目标生成、记忆检索评分、层级反思机制、社会关系建模</strong>等方面存在显著差距。
+    <br><br>
+    <strong>⚠ 核心洞察（本次报告更新重点）：</strong>无人机协同系统与斯坦福小镇存在根本差异——前者需要<strong>物理协作（时序严格、方向互斥、角色分工）</strong>，后者仅需社交涌现。因此，当前系统的<strong>分组机制与Slot系统是正确且必要的</strong>，不应追求纯粹独立涌现。正确的演进方向是：保留角色框架层（LLM#1/2/3），去掉固定步骤预生成层（LLM#4），将执行层（LLM#5/ADM）升级为响应式感知-决策循环，并引入记忆/反思/社会关系等上下文模块为其提供「燃料」。
+    <br><br>
+    本报告围绕以下核心问题展开：（1）分组和Slot选择对于无人机协作的必要性分析；（2）<strong>记忆模块与反思模块</strong>如何升级为符合研究范式的完整实现；（3）除现有模块外，还需新增哪些关键模块及其集成方式；（4）通过<strong>端到端实战案例</strong>说明每个模块的实际贡献。研究引用了 Generative Agents、CoALA、VOYAGER、ReAct、MemoryBank 等 12 篇代表性论文，并结合当前代码库的具体实现细节提出可落地的改造方案。
+  </div>
+  <div class="tag-line">
+    <span class="badge-tag blue">Generative Agents</span>
+    <span class="badge-tag blue">CoALA</span>
+    <span class="badge-tag blue">VOYAGER</span>
+    <span class="badge-tag blue">ReAct</span>
+    <span class="badge-tag blue">MemoryBank</span>
+    <span class="badge-tag orange">Multi-Agent Debate</span>
+    <span class="badge-tag purple">Emergent Behavior</span>
+    <span class="badge-tag green">Unity3D</span>
+    <span class="badge-tag green">LLM Planning</span>
+  </div>
+</section>
+
+<hr class="divider">
+
+<!-- SECTION 1: CURRENT ARCHITECTURE -->
+<section id="s1" class="section">
+  <h2 class="section-title">一、当前系统架构分析</h2>
+
+  <h3 id="s1-1" class="sub-title">1.1 整体框架概览</h3>
+  <p style="margin-bottom:16px;">现有系统是一个生产级多智能体 LLM 控制框架，以任务驱动为核心范式。下图展示其整体层次结构：</p>
+
+  <!-- CURRENT ARCH DIAGRAM -->
+  <div class="module-diagram">
+    <svg width="100%" viewBox="0 0 900 420" xmlns="http://www.w3.org/2000/svg" style="max-width:900px;display:block;margin:auto;">
+      <defs>
+        <marker id="arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#718096"/>
+        </marker>
+        <marker id="arr-r" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#e53e3e"/>
+        </marker>
+      </defs>
+
+      <!-- Layer labels -->
+      <text x="14" y="60" font-size="11" fill="#718096" transform="rotate(-90,14,60)" text-anchor="middle">输入层</text>
+      <text x="14" y="160" font-size="11" fill="#718096" transform="rotate(-90,14,160)" text-anchor="middle">规划层</text>
+      <text x="14" y="270" font-size="11" fill="#718096" transform="rotate(-90,14,270)" text-anchor="middle">执行层</text>
+      <text x="14" y="380" font-size="11" fill="#718096" transform="rotate(-90,14,380)" text-anchor="middle">底层</text>
+
+      <!-- Row 1: Input -->
+      <rect x="30" y="30" width="840" height="50" rx="6" fill="#e2e8f0" stroke="#a0aec0" stroke-width="1"/>
+      <text x="450" y="50" text-anchor="middle" font-size="13" fill="#2d3748" font-weight="600">🧑 人类操作员</text>
+      <text x="450" y="68" text-anchor="middle" font-size="11" fill="#718096">注入任务文本（自然语言）· 设置地图紧急事件 · 配置智能体属性</text>
+
+      <!-- Row 2: Planning modules -->
+      <rect x="30" y="110" width="190" height="80" rx="6" fill="#ebf8ff" stroke="#63b3ed" stroke-width="1.5"/>
+      <text x="125" y="135" text-anchor="middle" font-size="12" fill="#2b6cb0" font-weight="700">LLM#1</text>
+      <text x="125" y="153" text-anchor="middle" font-size="11" fill="#4a5568">任务解析</text>
+      <text x="125" y="168" text-anchor="middle" font-size="10" fill="#718096">ParsedMission</text>
+      <text x="125" y="182" text-anchor="middle" font-size="10" fill="#718096">C1/C2/C3约束</text>
+
+      <rect x="240" y="110" width="190" height="80" rx="6" fill="#ebf8ff" stroke="#63b3ed" stroke-width="1.5"/>
+      <text x="335" y="135" text-anchor="middle" font-size="12" fill="#2b6cb0" font-weight="700">LLM#2</text>
+      <text x="335" y="153" text-anchor="middle" font-size="11" fill="#4a5568">槽位分配</text>
+      <text x="335" y="168" text-anchor="middle" font-size="10" fill="#718096">SlotBroadcast</text>
+      <text x="335" y="182" text-anchor="middle" font-size="10" fill="#718096">Leader选举</text>
+
+      <rect x="450" y="110" width="190" height="80" rx="6" fill="#ebf8ff" stroke="#63b3ed" stroke-width="1.5"/>
+      <text x="545" y="135" text-anchor="middle" font-size="12" fill="#2b6cb0" font-weight="700">LLM#4</text>
+      <text x="545" y="153" text-anchor="middle" font-size="11" fill="#4a5568">步骤分解</text>
+      <text x="545" y="168" text-anchor="middle" font-size="10" fill="#718096">StepResult</text>
+      <text x="545" y="182" text-anchor="middle" font-size="10" fill="#718096">约束绑定</text>
+
+      <rect x="660" y="110" width="210" height="80" rx="6" fill="#faf5ff" stroke="#9f7aea" stroke-width="1.5"/>
+      <text x="765" y="135" text-anchor="middle" font-size="12" fill="#6b46c1" font-weight="700">MAD辩论</text>
+      <text x="765" y="153" text-anchor="middle" font-size="11" fill="#4a5568">事故协调</text>
+      <text x="765" y="168" text-anchor="middle" font-size="10" fill="#718096">Proposer/Critic</text>
+      <text x="765" y="182" text-anchor="middle" font-size="10" fill="#718096">DebateConsensus</text>
+
+      <!-- Row 3: Execution modules -->
+      <rect x="30" y="220" width="190" height="80" rx="6" fill="#f0fff4" stroke="#68d391" stroke-width="1.5"/>
+      <text x="125" y="248" text-anchor="middle" font-size="12" fill="#276749" font-weight="700">ActionDecision</text>
+      <text x="125" y="264" text-anchor="middle" font-size="11" fill="#4a5568">滚动循环</text>
+      <text x="125" y="280" text-anchor="middle" font-size="10" fill="#718096">Max 30次迭代</text>
+      <text x="125" y="294" text-anchor="middle" font-size="10" fill="#718096">原子动作生成</text>
+
+      <rect x="240" y="220" width="190" height="80" rx="6" fill="#f0fff4" stroke="#68d391" stroke-width="1.5"/>
+      <text x="335" y="248" text-anchor="middle" font-size="12" fill="#276749" font-weight="700">MemoryModule</text>
+      <text x="335" y="264" text-anchor="middle" font-size="11" fill="#4a5568">结构化记忆</text>
+      <text x="335" y="280" text-anchor="middle" font-size="10" fill="#718096">512条容量</text>
+      <text x="335" y="294" text-anchor="middle" font-size="10" fill="#718096">10种记忆类型</text>
+
+      <rect x="450" y="220" width="190" height="80" rx="6" fill="#fffaf0" stroke="#f6ad55" stroke-width="1.5"/>
+      <text x="545" y="248" text-anchor="middle" font-size="12" fill="#c05621" font-weight="700">ReflectionModule</text>
+      <text x="545" y="264" text-anchor="middle" font-size="11" fill="#4a5568">结果驱动反思</text>
+      <text x="545" y="280" text-anchor="middle" font-size="10" fill="#718096">90s冷却</text>
+      <text x="545" y="294" text-anchor="middle" font-size="10" fill="#718096">失败触发</text>
+
+      <rect x="660" y="220" width="210" height="80" rx="6" fill="#fff5f5" stroke="#fc8181" stroke-width="1.5"/>
+      <text x="765" y="248" text-anchor="middle" font-size="12" fill="#c53030" font-weight="700">SharedWhiteboard</text>
+      <text x="765" y="264" text-anchor="middle" font-size="11" fill="#4a5568">约束协同</text>
+      <text x="765" y="280" text-anchor="middle" font-size="10" fill="#718096">C1/C2/C3信号</text>
+      <text x="765" y="294" text-anchor="middle" font-size="10" fill="#718096">互斥/同步/等待</text>
+
+      <!-- Row 4: Infra -->
+      <rect x="30" y="330" width="200" height="50" rx="6" fill="#1a202c" stroke="#4a5568" stroke-width="1"/>
+      <text x="130" y="352" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">CampusGrid2D + A*</text>
+      <text x="130" y="368" text-anchor="middle" font-size="10" fill="#a0aec0">GeoJSON地图导航</text>
+
+      <rect x="250" y="330" width="200" height="50" rx="6" fill="#1a202c" stroke="#4a5568" stroke-width="1"/>
+      <text x="350" y="352" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">AgentMotionExecutor</text>
+      <text x="350" y="368" text-anchor="middle" font-size="10" fill="#a0aec0">PD控制器 · 弹簧悬停</text>
+
+      <rect x="470" y="330" width="200" height="50" rx="6" fill="#1a202c" stroke="#4a5568" stroke-width="1"/>
+      <text x="570" y="352" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">LLMInterface</text>
+      <text x="570" y="368" text-anchor="middle" font-size="10" fill="#a0aec0">DeepSeek API · 重试3次</text>
+
+      <rect x="690" y="330" width="180" height="50" rx="6" fill="#1a202c" stroke="#4a5568" stroke-width="1"/>
+      <text x="780" y="352" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">PerceptionModule</text>
+      <text x="780" y="368" text-anchor="middle" font-size="10" fill="#a0aec0">0.5s传感 · 共享注册表</text>
+
+      <!-- Arrows row1 → row2 -->
+      <line x1="450" y1="80" x2="450" y2="108" stroke="#718096" stroke-width="1.5" marker-end="url(#arr)"/>
+      <!-- Arrows row2 -->
+      <line x1="220" y1="150" x2="238" y2="150" stroke="#718096" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="430" y1="150" x2="448" y2="150" stroke="#718096" stroke-width="1.5" marker-end="url(#arr)"/>
+      <!-- Row2 → Row3 -->
+      <line x1="125" y1="190" x2="125" y2="218" stroke="#718096" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="335" y1="190" x2="335" y2="218" stroke="#718096" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="545" y1="190" x2="545" y2="218" stroke="#718096" stroke-width="1.5" marker-end="url(#arr)"/>
+      <!-- Row3 → Row4 -->
+      <line x1="125" y1="300" x2="125" y2="328" stroke="#718096" stroke-width="1.5" marker-end="url(#arr)"/>
+
+      <!-- Emergency signal -->
+      <line x1="765" y1="190" x2="765" y2="218" stroke="#e53e3e" stroke-width="1.5" stroke-dasharray="4" marker-end="url(#arr-r)"/>
+      <text x="775" y="210" font-size="10" fill="#e53e3e">紧急</text>
+    </svg>
+    <p style="text-align:center;font-size:12px;color:#718096;margin-top:8px;">图1：当前系统模块架构图（任务驱动范式）</p>
+  </div>
+
+  <h3 id="s1-2" class="sub-title">1.2 四阶段 LLM 规划流水线</h3>
+  <div class="step-flow">
+    <div class="step-box">🧑 人工注入任务</div>
+    <div class="step-arrow">→</div>
+    <div class="step-box">LLM#1<br><small>任务解析</small></div>
+    <div class="step-arrow">→</div>
+    <div class="step-box orange">LLM#2<br><small>槽位广播分配</small></div>
+    <div class="step-arrow">→</div>
+    <div class="step-box purple">LLM#4<br><small>步骤分解</small></div>
+    <div class="step-arrow">→</div>
+    <div class="step-box green">滚动循环 ADM<br><small>原子动作生成(×30)</small></div>
+  </div>
+
+  <div class="card-grid cols-2" style="margin-top:16px;">
+    <div class="card highlight">
+      <h4 class="sub-sub">约束体系（C1/C2/C3）</h4>
+      <ul style="font-size:13.5px;padding-left:18px;">
+        <li><strong>C1（资源独占）</strong>：agent_A 独占 target_X，通过白板互斥信号实现</li>
+        <li><strong>C2（完成同步）</strong>：等待 [agent_B, agent_C] 完成后继续，DoneSignal 驱动</li>
+        <li><strong>C3+（单向等待）</strong>：A 等 B 的 ReadySignal 后才行动</li>
+        <li><strong>C3−（动态互斥）</strong>：多 agent 竞争同一目标，先到先得</li>
+      </ul>
+    </div>
+    <div class="card highlight">
+      <h4 class="sub-sub">原子动作类型（6种）</h4>
+      <ul style="font-size:13.5px;padding-left:18px;">
+        <li><code>MoveTo</code> — 导航至命名地点（A*）</li>
+        <li><code>PatrolAround</code> — 在位置附近循环巡逻</li>
+        <li><code>Observe</code> — 扫描特定对象</li>
+        <li><code>Wait</code> — 暂停指定时长</li>
+        <li><code>FormationHold</code> — 保持与另一智能体相对位置</li>
+        <li><code>Evade</code> — 紧急逃避机动</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3 id="s1-3" class="sub-title">1.3 现有记忆与反思能力</h3>
+  <div class="card-grid cols-2">
+    <div class="card">
+      <h4 class="sub-sub">MemoryModule 现状</h4>
+      <table>
+        <tr><th>属性</th><th>当前实现</th></tr>
+        <tr><td>存储容量</td><td>512条记忆 + 64条洞察</td></tr>
+        <tr><td>记忆类型</td><td>10种（Observation/Goal/Plan/ Decision/Outcome/Coordination/ Reflection/Policy/WorldState/ Relationship）</td></tr>
+        <tr><td>检索方式</td><td>关键词过滤 + 标签匹配</td></tr>
+        <tr><td>重要性</td><td>硬编码常量（0.68–0.72）</td></tr>
+        <tr><td>检索评分</td><td>❌ 无多维度评分公式</td></tr>
+        <tr><td>向量化</td><td>❌ 无嵌入向量</td></tr>
+        <tr><td>时效衰减</td><td>△ 72小时 TTL（二值）</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h4 class="sub-sub">ReflectionModule 现状</h4>
+      <table>
+        <tr><th>属性</th><th>当前实现</th></tr>
+        <tr><td>触发机制</td><td>失败次数≥2 / 被阻塞 / 重要观测</td></tr>
+        <tr><td>冷却时间</td><td>90秒（防止频繁触发）</td></tr>
+        <tr><td>反思层级</td><td>❌ 单层（仅直接从事件推断）</td></tr>
+        <tr><td>重要性累积</td><td>❌ 无累积阈值触发</td></tr>
+        <tr><td>递归反思</td><td>❌ 不能对反思本身再反思</td></tr>
+        <tr><td>日常总结</td><td>❌ 无每日/定期总结</td></tr>
+        <tr><td>输出结构</td><td>△ ReflectionInsight（有结构）</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="alert warn">
+    <strong>⚠ 核心瓶颈：</strong>当前所有任务均由人工注入（IntelligentAgent.cs 中 <code>HasActiveMission()</code> 轮询），智能体无法自主产生目标意图。这是与斯坦福小镇范式的根本差距。
+  </div>
+
+  <h3 id="s1-4" class="sub-title">1.4 无人机协作的涌现悖论：Slot系统不是约束，而是协作基础</h3>
+
+  <div class="alert key">
+    <strong>核心疑问解析：</strong>「如果想实现斯坦福小镇式涌现，分组和选Slot有没有用？每个智能体都各自涌现的话，他们怎么协作，不就变成独立个体了？」—— 这个问题触及了<strong>协作型多智能体系统的核心矛盾</strong>。
+  </div>
+
+  <div class="card-grid cols-2">
+    <div class="card danger">
+      <h4 class="sub-sub">🏘️ 斯坦福小镇：为什么可以独立涌现？</h4>
+      <p style="font-size:13.5px;">斯坦福小镇的智能体<strong>天然不需要物理协作</strong>：</p>
+      <ul style="font-size:13px;padding-left:16px;margin-top:8px;">
+        <li>Isabella「想办情人节派对」— 不需要Bob同一时刻在特定位置做特定动作</li>
+        <li>社会协调通过<strong>对话</strong>自然发生，时间窗口极其宽松</li>
+        <li>错过某次互动代价很低，可以明天再谈</li>
+        <li><strong>根本没有物理同步需求</strong>，因此独立涌现不会导致任务失败</li>
+      </ul>
+    </div>
+    <div class="card warning">
+      <h4 class="sub-sub">🚁 无人机：为什么必须物理协调？</h4>
+      <p style="font-size:13.5px;">无人机协作任务有<strong>硬性物理同步约束</strong>：</p>
+      <ul style="font-size:13px;padding-left:16px;margin-top:8px;">
+        <li>三机包围目标 — 必须<strong>同时</strong>在三个方向，缺一不可</li>
+        <li>拦截任务 — 侦察机确认后拦截机才能接近，时序严格</li>
+        <li>若全员自由涌现去「侦察」→ <strong>没有人拦截</strong>，任务直接失败</li>
+        <li>A和B同方向接近 → 目标逃脱，且南侧无人封锁</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card success" style="margin-top:16px;">
+    <h4 class="sub-sub">✅ 正确理解：「涌现」发生在哪一层？</h4>
+    <p style="font-size:13.5px;margin-bottom:14px;">涌现可以在<strong>不同层级</strong>发生。无人机系统选择在<em>执行层</em>涌现，而不是角色层：</p>
+    <div class="card-grid cols-3">
+      <div style="background:#f0fff4;border:1px solid #9ae6b4;border-radius:8px;padding:14px;">
+        <strong style="color:#276749;font-size:13px;">层1：角色层（结构化，必要）</strong>
+        <p style="font-size:12px;margin-top:6px;color:#4a5568;">Slot系统定义「这次任务需要 Scout + Interceptor + Perimeter Guard」。这是协作的<em>框架</em>，不能涌现——否则全员做同一件事，协作崩溃。</p>
+        <div class="tag-line" style="margin-top:8px;"><span class="badge-tag green">保留 LLM#2</span></div>
+      </div>
+      <div style="background:#ebf8ff;border:1px solid #63b3ed;border-radius:8px;padding:14px;">
+        <strong style="color:#2b6cb0;font-size:13px;">层2：角色认领（轻度涌现）</strong>
+        <p style="font-size:12px;margin-top:6px;color:#4a5568;">每架无人机基于<em>自身当前状态</em>（位置、电量、技能历史）自主选择最适合自己的Slot。UAV-1电量满且在北门附近 → 自然选 Scout。</p>
+        <div class="tag-line" style="margin-top:8px;"><span class="badge-tag blue">优化 LLM#3</span></div>
+      </div>
+      <div style="background:#faf5ff;border:1px solid #9f7aea;border-radius:8px;padding:14px;">
+        <strong style="color:#6b46c1;font-size:13px;">层3：执行层（完全涌现）</strong>
+        <p style="font-size:12px;margin-top:6px;color:#4a5568;">Scout 从哪个高度观察、何时切换到悬停、遇到障碍怎么绕行——完全由 ADM 响应式决策，<em>不预先规定步骤</em>。这与斯坦福小镇的涌现机制完全相同。</p>
+        <div class="tag-line" style="margin-top:8px;"><span class="badge-tag orange">替换 LLM#4 → 升级 LLM#5</span></div>
+      </div>
+    </div>
+  </div>
+
+  <blockquote>
+    足球队需要前锋、中场、后卫（角色层，结构化）。球员争抢哪个位置（角色认领，轻度涌现）。球员在场上如何跑位传球（执行，完全涌现）。<strong>没有角色分工的球队不叫「涌现」，叫「混乱」。</strong>
+  </blockquote>
+
+  <div class="card-grid cols-2" style="margin-top:16px;">
+    <div class="card highlight">
+      <h4 class="sub-sub">✅ 当前系统中值得保留的部分</h4>
+      <ul class="check-list">
+        <li class="yes"><strong>分组（Grouping）</strong>：正确。定义团队边界，竞争/合作场景中必要。</li>
+        <li class="yes"><strong>Slot 生成（LLM#2）</strong>：正确。描述任务的角色需求，是协作不退化为独立个体的核心。</li>
+        <li class="yes"><strong>Slot 认领（LLM#3 + Whiteboard）</strong>：基本正确。可进一步优化为基于实时状态的自主竞标。</li>
+        <li class="yes"><strong>C2/C3 约束系统</strong>：正确。物理同步的保障——等价于斯坦福小镇中的时空隐式约束。</li>
+        <li class="yes"><strong>SharedWhiteboard</strong>：正确。共享感知基础设施，类似斯坦福小镇的「共享环境状态」。</li>
+      </ul>
+    </div>
+    <div class="card warning">
+      <h4 class="sub-sub">⚡ 需要改进以实现「执行层涌现」</h4>
+      <ul class="check-list">
+        <li class="no"><strong>LLM#4（步骤预生成）</strong>：最大改进点。提前生成固定Steps，环境变化时计划立即过时。建议去掉，改为响应式ADM。</li>
+        <li class="partial"><strong>LLM#3（槽位选择）</strong>：可优化。由集中式LLM决策改为基于实时状态的自主选择（白板先到先得）。</li>
+        <li class="partial"><strong>感知→记忆链路</strong>：待完善。感知结果目前不自动写入记忆流，影响ADM实时决策质量。</li>
+      </ul>
+      <div class="alert info" style="margin-top:12px;font-size:12.5px;">
+        <strong>改进核心：</strong>去掉 LLM#4，升级 LLM#5（ADM）为主决策引擎。输入从「固定步骤序号」改为「Slot角色描述 + 实时感知 + 白板状态 + 记忆上下文」，输出为下一个原子动作。
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider">
+
+<!-- SECTION 2: STANFORD TOWN -->
+<section id="s2" class="section">
+  <h2 class="section-title">二、斯坦福小镇（Generative Agents）核心机制解析</h2>
+
+  <blockquote>
+    "We introduce generative agents, believable proxies of human behavior that are dynamically realistic as they produce believable individual and emergent social behaviors."<br>
+    — Park et al., <em>Generative Agents: Interactive Simulacra of Human Behavior</em>, CHI 2023
+  </blockquote>
+
+  <h3 id="s2-1" class="sub-title">2.1 记忆流（Memory Stream）架构</h3>
+
+  <div class="module-diagram">
+    <svg width="100%" viewBox="0 0 860 300" xmlns="http://www.w3.org/2000/svg" style="max-width:860px;display:block;margin:auto;">
+      <defs>
+        <marker id="a2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#4a5568"/>
+        </marker>
+      </defs>
+
+      <!-- Environment Perception -->
+      <rect x="20" y="30" width="140" height="240" rx="8" fill="#f0fff4" stroke="#68d391" stroke-width="2"/>
+      <text x="90" y="54" text-anchor="middle" font-size="12" fill="#276749" font-weight="700">环境感知</text>
+      <rect x="32" y="65" width="116" height="28" rx="4" fill="#c6f6d5" stroke="#9ae6b4"/>
+      <text x="90" y="83" text-anchor="middle" font-size="10" fill="#22543d">自然语言观察</text>
+      <rect x="32" y="100" width="116" height="28" rx="4" fill="#c6f6d5" stroke="#9ae6b4"/>
+      <text x="90" y="118" text-anchor="middle" font-size="10" fill="#22543d">他人对话</text>
+      <rect x="32" y="135" width="116" height="28" rx="4" fill="#c6f6d5" stroke="#9ae6b4"/>
+      <text x="90" y="153" text-anchor="middle" font-size="10" fill="#22543d">自身行动记录</text>
+      <rect x="32" y="170" width="116" height="28" rx="4" fill="#c6f6d5" stroke="#9ae6b4"/>
+      <text x="90" y="188" text-anchor="middle" font-size="10" fill="#22543d">对象状态变化</text>
+      <rect x="32" y="205" width="116" height="28" rx="4" fill="#c6f6d5" stroke="#9ae6b4"/>
+      <text x="90" y="223" text-anchor="middle" font-size="10" fill="#22543d">反思（高阶）</text>
+
+      <!-- Arrow -->
+      <line x1="162" y1="150" x2="188" y2="150" stroke="#4a5568" stroke-width="2" marker-end="url(#a2)"/>
+
+      <!-- Memory Stream -->
+      <rect x="190" y="30" width="170" height="240" rx="8" fill="#ebf8ff" stroke="#63b3ed" stroke-width="2"/>
+      <text x="275" y="54" text-anchor="middle" font-size="12" fill="#2b6cb0" font-weight="700">记忆流</text>
+      <text x="275" y="70" text-anchor="middle" font-size="10" fill="#4a5568">Memory Stream</text>
+      <rect x="202" y="78" width="146" height="18" rx="3" fill="#bee3f8"/>
+      <text x="275" y="91" text-anchor="middle" font-size="10" fill="#2b6cb0">创建时间 createdAt</text>
+      <rect x="202" y="100" width="146" height="18" rx="3" fill="#bee3f8"/>
+      <text x="275" y="113" text-anchor="middle" font-size="10" fill="#2b6cb0">重要性分数 1–10</text>
+      <rect x="202" y="122" width="146" height="18" rx="3" fill="#bee3f8"/>
+      <text x="275" y="135" text-anchor="middle" font-size="10" fill="#2b6cb0">自然语言描述</text>
+      <rect x="202" y="144" width="146" height="18" rx="3" fill="#bee3f8"/>
+      <text x="275" y="157" text-anchor="middle" font-size="10" fill="#2b6cb0">嵌入向量 embedding</text>
+      <rect x="202" y="166" width="146" height="18" rx="3" fill="#bee3f8"/>
+      <text x="275" y="179" text-anchor="middle" font-size="10" fill="#2b6cb0">关联记忆 ID</text>
+      <rect x="202" y="188" width="146" height="18" rx="3" fill="#bee3f8"/>
+      <text x="275" y="201" text-anchor="middle" font-size="10" fill="#2b6cb0">最后访问时间</text>
+      <rect x="202" y="210" width="146" height="40" rx="3" fill="#2b6cb0"/>
+      <text x="275" y="228" text-anchor="middle" font-size="10" fill="white" font-weight="700">score = α₁·recency</text>
+      <text x="275" y="244" text-anchor="middle" font-size="10" fill="white" font-weight="700">+ α₂·importance + α₃·relevance</text>
+
+      <!-- Arrow to retrieval -->
+      <line x1="362" y1="150" x2="388" y2="150" stroke="#4a5568" stroke-width="2" marker-end="url(#a2)"/>
+
+      <!-- Retrieval -->
+      <rect x="390" y="80" width="150" height="140" rx="8" fill="#faf5ff" stroke="#9f7aea" stroke-width="2"/>
+      <text x="465" y="104" text-anchor="middle" font-size="12" fill="#6b46c1" font-weight="700">检索模块</text>
+      <text x="465" y="120" text-anchor="middle" font-size="10" fill="#4a5568">Top-K 相关记忆</text>
+      <line x1="415" y1="130" x2="515" y2="130" stroke="#e9d8fd" stroke-width="1"/>
+      <text x="465" y="148" text-anchor="middle" font-size="10" fill="#6b46c1">时效性衰减</text>
+      <text x="465" y="163" text-anchor="middle" font-size="10" fill="#6b46c1">exp(−λ·Δt)</text>
+      <text x="465" y="181" text-anchor="middle" font-size="10" fill="#6b46c1">重要性 LLM评分</text>
+      <text x="465" y="196" text-anchor="middle" font-size="10" fill="#6b46c1">语义相关性余弦</text>
+
+      <!-- Arrow -->
+      <line x1="542" y1="150" x2="568" y2="150" stroke="#4a5568" stroke-width="2" marker-end="url(#a2)"/>
+
+      <!-- Cognitive Functions -->
+      <rect x="570" y="30" width="140" height="240" rx="8" fill="#fffaf0" stroke="#f6ad55" stroke-width="2"/>
+      <text x="640" y="54" text-anchor="middle" font-size="12" fill="#c05621" font-weight="700">认知功能</text>
+      <rect x="582" y="65" width="116" height="35" rx="4" fill="#feebc8" stroke="#f6ad55"/>
+      <text x="640" y="80" text-anchor="middle" font-size="11" fill="#7b341e" font-weight="600">规划 Planning</text>
+      <text x="640" y="94" text-anchor="middle" font-size="9" fill="#7b341e">日计划→小时→5分钟</text>
+      <rect x="582" y="108" width="116" height="35" rx="4" fill="#feebc8" stroke="#f6ad55"/>
+      <text x="640" y="123" text-anchor="middle" font-size="11" fill="#7b341e" font-weight="600">反思 Reflection</text>
+      <text x="640" y="137" text-anchor="middle" font-size="9" fill="#7b341e">重要性≥150触发</text>
+      <rect x="582" y="151" width="116" height="35" rx="4" fill="#feebc8" stroke="#f6ad55"/>
+      <text x="640" y="166" text-anchor="middle" font-size="11" fill="#7b341e" font-weight="600">对话 Dialogue</text>
+      <text x="640" y="180" text-anchor="middle" font-size="9" fill="#7b341e">自然语言交互</text>
+      <rect x="582" y="194" width="116" height="35" rx="4" fill="#feebc8" stroke="#f6ad55"/>
+      <text x="640" y="209" text-anchor="middle" font-size="11" fill="#7b341e" font-weight="600">行动决策</text>
+      <text x="640" y="223" text-anchor="middle" font-size="9" fill="#7b341e">基于当前状态+计划</text>
+
+      <!-- Arrow -->
+      <line x1="712" y1="150" x2="738" y2="150" stroke="#4a5568" stroke-width="2" marker-end="url(#a2)"/>
+
+      <!-- Behavior -->
+      <rect x="740" y="80" width="105" height="140" rx="8" fill="#fff5f5" stroke="#fc8181" stroke-width="2"/>
+      <text x="792" y="106" text-anchor="middle" font-size="11" fill="#c53030" font-weight="700">行为输出</text>
+      <text x="792" y="124" text-anchor="middle" font-size="10" fill="#4a5568">移动</text>
+      <text x="792" y="142" text-anchor="middle" font-size="10" fill="#4a5568">对话</text>
+      <text x="792" y="160" text-anchor="middle" font-size="10" fill="#4a5568">对象操作</text>
+      <text x="792" y="178" text-anchor="middle" font-size="10" fill="#4a5568">社会互动</text>
+      <text x="792" y="196" text-anchor="middle" font-size="10" fill="#4a5568">涌现事件</text>
+    </svg>
+    <p style="text-align:center;font-size:12px;color:#718096;margin-top:8px;">图2：斯坦福小镇 Generative Agents 记忆流架构（Park et al., 2023）</p>
+  </div>
+
+  <h3 id="s2-2" class="sub-title">2.2 反思机制（Reflection Mechanism）</h3>
+  <div class="card-grid cols-2">
+    <div class="card">
+      <h4 class="sub-sub">触发条件</h4>
+      <p style="font-size:13.5px;">当最近若干记忆的<strong>重要性分数之和超过阈值 150</strong> 时，自动触发反思。这意味着一系列日常小事不足以触发，但一次重要事件（或多次中等重要事件）累积后会引发更高层次的思考。</p>
+      <div class="formula-box" style="margin-top:12px;">
+        <div class="formula-label">反思触发条件</div>
+        <div class="formula-main">Σ importance(eᵢ) ≥ 150</div>
+        <div class="formula-sub">eᵢ 为最近 N 条记忆，每条 LLM 打分 1–10</div>
+      </div>
+    </div>
+    <div class="card">
+      <h4 class="sub-sub">层级反思树</h4>
+      <div class="module-diagram" style="padding:12px;">
+        <svg width="100%" viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg">
+          <!-- Level 3 root -->
+          <rect x="100" y="10" width="120" height="30" rx="5" fill="#553c9a" stroke="#6b46c1"/>
+          <text x="160" y="30" text-anchor="middle" font-size="10" fill="white" font-weight="600">抽象洞察（L3）</text>
+          <!-- Lines -->
+          <line x1="120" y1="40" x2="60" y2="80" stroke="#a0aec0" stroke-width="1.5"/>
+          <line x1="200" y1="40" x2="260" y2="80" stroke="#a0aec0" stroke-width="1.5"/>
+          <line x1="160" y1="40" x2="160" y2="80" stroke="#a0aec0" stroke-width="1.5"/>
+          <!-- Level 2 -->
+          <rect x="20" y="80" width="80" height="28" rx="5" fill="#2b6cb0" stroke="#63b3ed"/>
+          <text x="60" y="98" text-anchor="middle" font-size="9" fill="white">反思（L2）</text>
+          <rect x="120" y="80" width="80" height="28" rx="5" fill="#2b6cb0" stroke="#63b3ed"/>
+          <text x="160" y="98" text-anchor="middle" font-size="9" fill="white">反思（L2）</text>
+          <rect x="220" y="80" width="80" height="28" rx="5" fill="#2b6cb0" stroke="#63b3ed"/>
+          <text x="260" y="98" text-anchor="middle" font-size="9" fill="white">反思（L2）</text>
+          <!-- Lines to L1 -->
+          <line x1="40" y1="108" x2="20" y2="148" stroke="#a0aec0" stroke-width="1"/>
+          <line x1="80" y1="108" x2="100" y2="148" stroke="#a0aec0" stroke-width="1"/>
+          <line x1="140" y1="108" x2="120" y2="148" stroke="#a0aec0" stroke-width="1"/>
+          <line x1="180" y1="108" x2="200" y2="148" stroke="#a0aec0" stroke-width="1"/>
+          <line x1="240" y1="108" x2="220" y2="148" stroke="#a0aec0" stroke-width="1"/>
+          <line x1="280" y1="108" x2="300" y2="148" stroke="#a0aec0" stroke-width="1"/>
+          <!-- Level 1 observations -->
+          <rect x="0" y="148" width="60" height="24" rx="4" fill="#68d391" stroke="#9ae6b4"/>
+          <text x="30" y="164" text-anchor="middle" font-size="8" fill="#22543d">观察1</text>
+          <rect x="70" y="148" width="60" height="24" rx="4" fill="#68d391" stroke="#9ae6b4"/>
+          <text x="100" y="164" text-anchor="middle" font-size="8" fill="#22543d">观察2</text>
+          <rect x="140" y="148" width="60" height="24" rx="4" fill="#68d391" stroke="#9ae6b4"/>
+          <text x="170" y="164" text-anchor="middle" font-size="8" fill="#22543d">观察3</text>
+          <rect x="210" y="148" width="60" height="24" rx="4" fill="#68d391" stroke="#9ae6b4"/>
+          <text x="240" y="164" text-anchor="middle" font-size="8" fill="#22543d">观察4</text>
+          <rect x="280" y="148" width="40" height="24" rx="4" fill="#68d391" stroke="#9ae6b4"/>
+          <text x="300" y="164" text-anchor="middle" font-size="8" fill="#22543d">观察5</text>
+          <text x="160" y="195" text-anchor="middle" font-size="10" fill="#718096">叶节点→中间层→抽象概念</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <h3 id="s2-3" class="sub-title">2.3 层级规划机制</h3>
+  <div class="step-flow">
+    <div class="step-box">人格描述<br><small>personality seed</small></div>
+    <div class="step-arrow">→</div>
+    <div class="step-box orange">日计划 (5–8块)<br><small>wake up, work, lunch…</small></div>
+    <div class="step-arrow">→</div>
+    <div class="step-box purple">小时计划<br><small>hourly schedule</small></div>
+    <div class="step-arrow">→</div>
+    <div class="step-box green">5–15分钟动作<br><small>specific actions</small></div>
+    <div class="step-arrow">→</div>
+    <div class="step-box red">实时执行<br><small>environment tree</small></div>
+  </div>
+  <div class="alert info" style="margin-top:12px;">
+    <strong>关键设计：</strong>初始触发仅是<strong>人格描述字符串</strong>（非任务指令），智能体基于人格 + 昨日记忆自主生成今日计划。这是实现自治的核心机制。
+  </div>
+
+  <h3 id="s2-4" class="sub-title">2.4 涌现行为案例分析</h3>
+  <div class="card success">
+    <h4 class="sub-sub">Valentine's Day 案例</h4>
+    <p style="font-size:13.5px;margin-bottom:12px;">研究者仅向一名智能体注入一条倾向信息：<em>"想办一个情人节派对"</em>。随后系统中自发涌现出：</p>
+    <ol class="numbered-list">
+      <li><div><strong>信息扩散</strong>：该智能体在两天内主动邀请其他智能体参加派对，形成口耳相传链</div></li>
+      <li><div><strong>社会协调</strong>：智能体之间自发互相认识，询问对方是否参加</div></li>
+      <li><div><strong>情感响应</strong>：部分智能体在日记中记录对派对的期待感</div></li>
+      <li><div><strong>自主安排</strong>：智能体提前调整日程，预留时间参加派对</div></li>
+      <li><div><strong>社会关系演化</strong>：多对智能体形成新的"约会"关系，超出原始设计预期</div></li>
+    </ol>
+    <div class="alert key" style="margin-top:12px;">
+      以上所有行为均无任何显式编程，完全由记忆流、反思和规划的交互涌现而来。
+    </div>
+  </div>
+</section>
+
+<hr class="divider">
+
+<!-- SECTION 3: FRAMEWORK COMPARISON -->
+<section id="s3" class="section">
+  <h2 class="section-title">三、主流框架对比分析</h2>
+  <p style="margin-bottom:18px;font-size:14px;">下表综合对比了当前影响力最大的自主智能体研究范式，分析其在记忆、反思、自主性与涌现能力等维度的设计差异：</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>框架 / 论文</th>
+        <th>记忆机制</th>
+        <th>自主性来源</th>
+        <th>涌现能力</th>
+        <th>核心创新</th>
+        <th>局限</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Generative Agents</strong><br><small>Park et al., CHI 2023</small></td>
+        <td>记忆流（观察+反思+计划）<br>三维检索评分</td>
+        <td>人格描述 → 自主日计划 → 自主行动</td>
+        <td>⭐⭐⭐⭐⭐ 高<br>社会涌现已验证</td>
+        <td>层级反思树、记忆检索公式、自主规划</td>
+        <td>2D精灵世界；无物理交互；LLM调用频繁</td>
+      </tr>
+      <tr>
+        <td><strong>CoALA</strong><br><small>Sumers et al., 2023</small></td>
+        <td>工作记忆+情节+语义+程序四层</td>
+        <td>行动空间设计（外部+内部）</td>
+        <td>⭐⭐⭐ 中<br>框架性研究</td>
+        <td>统一认知架构分类；内部行动（检索/推理/学习）</td>
+        <td>理论框架为主，无完整实现</td>
+      </tr>
+      <tr>
+        <td><strong>VOYAGER</strong><br><small>Wang et al., 2023</small></td>
+        <td>技能库（程序记忆）+ 自动课程</td>
+        <td>自动课程生成子目标；无人工任务</td>
+        <td>⭐⭐⭐⭐ 较高<br>技能涌现已验证</td>
+        <td>可复用技能代码库；迭代提示精炼；自导学习</td>
+        <td>单智能体；Minecraft封闭世界</td>
+      </tr>
+      <tr>
+        <td><strong>ReAct</strong><br><small>Yao et al., 2022</small></td>
+        <td>工作记忆（上下文窗口）</td>
+        <td>推理驱动行动选择</td>
+        <td>⭐⭐ 低<br>任务导向</td>
+        <td>思考→行动→观察循环；减少幻觉</td>
+        <td>无长期记忆；无自主目标生成</td>
+      </tr>
+      <tr>
+        <td><strong>MemoryBank</strong><br><small>Zhong et al., 2023</small></td>
+        <td>艾宾浩斯遗忘曲线记忆更新</td>
+        <td>用户画像驱动个性化响应</td>
+        <td>⭐⭐⭐ 中<br>伴侣AI场景</td>
+        <td>遗忘曲线仿真；持续记忆更新；人格适应</td>
+        <td>单智能体；对话场景为主</td>
+      </tr>
+      <tr>
+        <td><strong>BabyAGI</strong><br><small>Nakajima, 2023</small></td>
+        <td>向量数据库存储任务结果</td>
+        <td>任务完成 → 自动生成新任务</td>
+        <td>⭐⭐⭐ 中<br>任务链涌现</td>
+        <td>执行→创建→优先化三角循环</td>
+        <td>易陷入重复循环；无社会交互</td>
+      </tr>
+      <tr>
+        <td><strong>AgentNet</strong><br><small>preprints, 2025</small></td>
+        <td>分布式个体记忆</td>
+        <td>智能体自主演化能力和连接</td>
+        <td>⭐⭐⭐⭐ 较高<br>集体涌现</td>
+        <td>DAG任务路由；动态专化；无中心协调</td>
+        <td>工程复杂度高；仍在研究阶段</td>
+      </tr>
+      <tr style="background:#ebf8ff;">
+        <td><strong>当前系统（本项目）</strong></td>
+        <td>结构化记忆512条；无向量检索</td>
+        <td>❌ 全部任务人工注入</td>
+        <td>⭐ 极低<br>无自主涌现</td>
+        <td>MAD辩论；C1/C2/C3约束；滚动规划</td>
+        <td>缺乏自主性；记忆检索简单；无社会关系</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="card-grid cols-3" style="margin-top:20px;">
+    <div class="card purple">
+      <h4 class="sub-sub">CoALA 四层记忆模型</h4>
+      <p style="font-size:13px;">Sumers et al. 将智能体记忆归纳为四类：<br>
+      • <strong>工作记忆</strong>：当前上下文暂存区<br>
+      • <strong>情节记忆</strong>：过去事件时序记录<br>
+      • <strong>语义记忆</strong>：世界知识与事实<br>
+      • <strong>程序记忆</strong>：如何执行任务的知识</p>
+      <div class="tag-line"><span class="badge-tag purple">CoALA 2023</span></div>
+    </div>
+    <div class="card highlight">
+      <h4 class="sub-sub">VOYAGER 技能库机制</h4>
+      <p style="font-size:13px;">Wang et al. 实现了可执行代码形式的程序记忆：<br>
+      • 技能<strong>可组合</strong>（新技能调用旧技能）<br>
+      • 技能<strong>可解释</strong>（源代码可读）<br>
+      • 防止<strong>灾难性遗忘</strong><br>
+      • 自动课程选择挑战难度</p>
+      <div class="tag-line"><span class="badge-tag blue">VOYAGER 2023</span></div>
+    </div>
+    <div class="card warning">
+      <h4 class="sub-sub">MemoryBank 遗忘曲线</h4>
+      <p style="font-size:13px;">仿照艾宾浩斯遗忘曲线更新记忆强度：<br>
+      • 记忆强度随时间指数衰减<br>
+      • 重复访问增强记忆强度<br>
+      • 更真实的记忆演化仿真<br>
+      • 适合长期陪伴型 AI 场景</p>
+      <div class="tag-line"><span class="badge-tag orange">MemoryBank 2023</span></div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider">
+
+<!-- SECTION 4: GAP ANALYSIS -->
+<section id="s4" class="section">
+  <h2 class="section-title">四、差距分析：当前系统 vs. 斯坦福小镇范式</h2>
+
+  <div class="alert warn" style="margin-bottom:20px;">
+    本节从自主性、记忆、反思、社会交互、涌现能力五个维度对当前系统与 Generative Agents 范式进行量化对比，识别改造优先级。
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>能力维度</th>
+        <th>斯坦福小镇要求</th>
+        <th>当前系统状态</th>
+        <th>差距等级</th>
+        <th>影响范围</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>🎯 目标自主生成</strong></td>
+        <td>基于人格+昨日记忆自主生成日计划</td>
+        <td>全部由人工注入任务文本</td>
+        <td><span class="badge-tag red">🔴 致命缺失</span></td>
+        <td>IntelligentAgent.cs<br>PlanningModule.cs</td>
+      </tr>
+      <tr>
+        <td><strong>🧠 记忆检索评分</strong></td>
+        <td>recency × importance × relevance 三维加权</td>
+        <td>仅关键词+标签过滤，无评分公式</td>
+        <td><span class="badge-tag red">🔴 严重缺失</span></td>
+        <td>MemoryModule.cs</td>
+      </tr>
+      <tr>
+        <td><strong>💭 反思层级</strong></td>
+        <td>多层递归（观察→反思→抽象概念）</td>
+        <td>单层，仅从事件直接推断</td>
+        <td><span class="badge-tag red">🔴 严重缺失</span></td>
+        <td>ReflectionModule.cs</td>
+      </tr>
+      <tr>
+        <td><strong>📅 时间感知</strong></td>
+        <td>感知时刻（早/午/晚/周几）并影响决策</td>
+        <td>无时间感知，无时段相关行为</td>
+        <td><span class="badge-tag red">🔴 严重缺失</span></td>
+        <td>需新建模块</td>
+      </tr>
+      <tr>
+        <td><strong>🤝 社会关系图谱</strong></td>
+        <td>记录与其他智能体的关系、信任、情感</td>
+        <td>仅有 Relationship 类型记忆，无结构化社会图</td>
+        <td><span class="badge-tag orange">🟠 显著缺失</span></td>
+        <td>需新建模块</td>
+      </tr>
+      <tr>
+        <td><strong>🗺️ 世界语义地图</strong></td>
+        <td>环境树（世界→区域→对象），支持自然语言定位</td>
+        <td>仅有 CampusGrid2D 网格 + SmallNode POI</td>
+        <td><span class="badge-tag orange">🟠 显著缺失</span></td>
+        <td>CampusGrid2D.cs</td>
+      </tr>
+      <tr>
+        <td><strong>🔄 持续观察调度</strong></td>
+        <td>主动感知环境，将观察写入记忆流</td>
+        <td>被动传感，检测结果不自动进入记忆</td>
+        <td><span class="badge-tag orange">🟠 显著缺失</span></td>
+        <td>PerceptionModule.cs</td>
+      </tr>
+      <tr>
+        <td><strong>🎭 人格特征系统</strong></td>
+        <td>每个智能体有稳定的人格描述，驱动所有决策</td>
+        <td>仅有 role/type 字段，无完整人格建模</td>
+        <td><span class="badge-tag orange">🟠 显著缺失</span></td>
+        <td>AgentProperties</td>
+      </tr>
+      <tr>
+        <td><strong>📚 程序记忆/技能库</strong></td>
+        <td>VOYAGER风格：可复用行为片段积累</td>
+        <td>无技能积累机制</td>
+        <td><span class="badge-tag yellow" style="background:#fefcbf;color:#744210;">🟡 中等缺失</span></td>
+        <td>需新建模块</td>
+      </tr>
+      <tr>
+        <td><strong>💬 自然对话交互</strong></td>
+        <td>智能体间自发对话，对话写入记忆</td>
+        <td>消息协议化（56种类型），非自然语言</td>
+        <td><span class="badge-tag yellow" style="background:#fefcbf;color:#744210;">🟡 中等缺失</span></td>
+        <td>CommunicationModule.cs</td>
+      </tr>
+      <tr>
+        <td><strong>⚡ 多智能体协调</strong></td>
+        <td>间接协调（通过共享环境感知）</td>
+        <td>✅ 完善（白板/约束/MAD辩论）</td>
+        <td><span class="badge-tag green">✅ 超过要求</span></td>
+        <td>SharedWhiteboard.cs</td>
+      </tr>
+      <tr>
+        <td><strong>🗺️ 路径规划</strong></td>
+        <td>基本导航能力</td>
+        <td>✅ 完整 A* + 物理控制器</td>
+        <td><span class="badge-tag green">✅ 超过要求</span></td>
+        <td>CampusGrid2D.cs</td>
+      </tr>
+      <tr>
+        <td><strong>⚡ 执行层响应式决策</strong></td>
+        <td>每个决策点基于当前感知重新生成动作（类斯坦福）</td>
+        <td>LLM#4预生成固定Steps，环境变化时计划过时，需人工触发重规划</td>
+        <td><span class="badge-tag orange">🟠 建议改进</span></td>
+        <td>PlanningModule.cs<br>ActionDecisionModule.cs</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="card-grid cols-2" style="margin-top:24px;">
+    <div class="card danger">
+      <h4 class="sub-sub">🔴 P0 致命缺失（阻断自治）</h4>
+      <ul class="check-list">
+        <li class="no">自主目标生成器 — 当前系统根本无法自治</li>
+        <li class="no">记忆检索评分公式 — 检索质量严重影响决策</li>
+        <li class="no">层级反思机制 — 无法形成高阶认知</li>
+        <li class="no">时间感知模块 — 无法模拟日常生活节律</li>
+      </ul>
+    </div>
+    <div class="card warning">
+      <h4 class="sub-sub">🟠 P1 重要缺失（制约涌现）</h4>
+      <ul class="check-list">
+        <li class="no">社会关系图谱 — 无法产生社会网络涌现</li>
+        <li class="no">人格特征系统 — 智能体行为缺乏个性分化</li>
+        <li class="no">世界语义地图 — 无法语言化环境感知</li>
+        <li class="no">持续观察调度 — 感知不写入记忆，形成断层</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card success" style="margin-top:16px;">
+    <h4 class="sub-sub">✅ 当前系统相对于斯坦福小镇的优势（无需重构）</h4>
+    <div class="card-grid cols-3" style="gap:10px;margin-top:8px;">
+      <div style="background:#f0fff4;border-radius:6px;padding:10px;">
+        <strong style="color:#276749;font-size:12.5px;">分组 + Slot系统</strong>
+        <p style="font-size:12px;margin-top:4px;color:#4a5568;">斯坦福小镇没有这个。这是无人机协作型系统<strong>独有且必须的</strong>优势，防止执行层涌现退化为「全员乱飞」。</p>
+      </div>
+      <div style="background:#f0fff4;border-radius:6px;padding:10px;">
+        <strong style="color:#276749;font-size:12.5px;">MAD辩论系统</strong>
+        <p style="font-size:12px;margin-top:4px;color:#4a5568;">斯坦福小镇仅有LLM对话，无结构化辩论。当前MAD框架已超越论文水平，可直接保留。</p>
+      </div>
+      <div style="background:#f0fff4;border-radius:6px;padding:10px;">
+        <strong style="color:#276749;font-size:12.5px;">C1/C2/C3约束体系</strong>
+        <p style="font-size:12px;margin-top:4px;color:#4a5568;">斯坦福小镇没有显式约束（依赖隐式时间冲突解决）。当前约束体系是物理协作的保障，是真正的技术壁垒。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider">
+
+<!-- SECTION 5: MEMORY MODULE -->
+<section id="s5" class="section">
+  <h2 class="section-title">五、记忆模块升级实现方案</h2>
+
+  <p style="margin-bottom:16px;font-size:14px;">本节提出将现有 <code>MemoryModule.cs</code> 从"结构化存储"升级为"生成式智能体级别记忆流"的完整实现方案，并给出可在现有 C# 代码库中落地的设计。</p>
+
+  <h3 id="s5-1" class="sub-title">5.1 三维检索评分公式</h3>
+
+  <div class="formula-box">
+    <div class="formula-label">Generative Agents 检索评分公式（Park et al., 2023）</div>
+    <div class="formula-main">score(m, q) = α₁ · recency(m) + α₂ · importance(m) + α₃ · relevance(m, q)</div>
+    <div class="formula-sub" style="margin-top:16px;text-align:left;max-width:640px;margin-left:auto;margin-right:auto;">
+      其中各分量归一化至 [0, 1]，α₁ = α₂ = α₃ = 1.0（原论文设定）
+    </div>
+  </div>
+
+  <div class="card-grid cols-3" style="margin-top:20px;">
+    <div class="card highlight">
+      <h4 class="sub-sub">recency(m) — 时效性</h4>
+      <div class="formula-box" style="margin:10px 0;">
+        <div class="formula-main" style="font-size:15px;">recency(m) = e<sup>−λ·Δt</sup></div>
+        <div class="formula-sub">λ = 0.995（每小时衰减）<br>Δt = 距上次访问的小时数</div>
+      </div>
+      <p style="font-size:13px;color:#4a5568;">最近的记忆权重高，越久远的记忆越难被检索到。指数衰减模拟人类遗忘曲线特征。</p>
+      <pre style="font-size:11px;padding:10px;margin-top:8px;">float Recency(Memory m) {
+  float hours = (Time.time - m.lastAccessedAt) / 3600f;
+  return Mathf.Exp(-0.995f * hours);
+}</pre>
+    </div>
+    <div class="card" style="border-left:4px solid #805ad5;">
+      <h4 class="sub-sub">importance(m) — 重要性</h4>
+      <div class="formula-box" style="margin:10px 0;">
+        <div class="formula-main" style="font-size:15px;">importance(m) = LLM_score(m) / 10.0</div>
+        <div class="formula-sub">LLM 评分 1–10，归一化至 [0,1]<br>1=日常琐事，10=极为重要</div>
+      </div>
+      <p style="font-size:13px;color:#4a5568;">每次创建记忆时，异步调用 LLM 对其重要性打分并缓存。重要的事件（紧急事故、关键决策）得高分。</p>
+      <pre style="font-size:11px;padding:10px;margin-top:8px;">// LLM Prompt:
+"On a scale of 1 to 10, how
+ important is this memory?
+ 1=mundane, 10=critical.
+ Memory: {summary}
+ Output: {\"score\": N}"</pre>
+    </div>
+    <div class="card success">
+      <h4 class="sub-sub">relevance(m, q) — 相关性</h4>
+      <div class="formula-box" style="margin:10px 0;">
+        <div class="formula-main" style="font-size:15px;">relevance = cos(embed(m), embed(q))</div>
+        <div class="formula-sub">余弦相似度<br>embed() = 文本向量化函数</div>
+      </div>
+      <p style="font-size:13px;color:#4a5568;">将记忆描述和查询问题都转为嵌入向量，计算余弦相似度。在不支持云端嵌入时可用 TF-IDF 近似。</p>
+      <pre style="font-size:11px;padding:10px;margin-top:8px;">float Cosine(float[] a, float[] b) {
+  float dot = 0, na = 0, nb = 0;
+  for (int i=0; i&lt;a.Length; i++) {
+    dot += a[i]*b[i];
+    na += a[i]*a[i]; nb += b[i]*b[i];
+  }
+  return dot / (Sqrt(na)*Sqrt(nb));
+}</pre>
+    </div>
+  </div>
+
+  <h3 class="sub-title">5.2 重要性累积触发机制</h3>
+  <div class="card-grid cols-2">
+    <div class="card warning">
+      <h4 class="sub-sub">反思触发累积器</h4>
+      <p style="font-size:13.5px;margin-bottom:10px;">每次新增记忆后，累加其重要性分数。当累计超过阈值 <strong>150</strong> 时，触发一次反思循环（完成后清零计数器）。</p>
+      <pre style="font-size:11px;padding:10px;">private float _importanceAccumulator = 0f;
+private const float REFLECT_THRESHOLD = 150f;
+
+public void AddMemory(Memory m) {
+  _memories.Add(m);
+  _importanceAccumulator += m.importance * 10f;
+  if (_importanceAccumulator >= REFLECT_THRESHOLD) {
+    _importanceAccumulator = 0f;
+    TriggerReflection(); // 触发层级反思
+  }
+}</pre>
+    </div>
+    <div class="card">
+      <h4 class="sub-sub">记忆流数据结构（升级版）</h4>
+      <pre style="font-size:11px;padding:10px;">[Serializable]
+public class MemoryEntry {
+  public string id;
+  public MemoryKind kind;        // 10种类型
+  public string summary;         // 自然语言摘要
+  public float[] embedding;      // 语义嵌入向量
+  public float importanceScore;  // LLM评分 1-10
+  public float createdAt;        // Time.time
+  public float lastAccessedAt;   // 最近访问时间
+  public string[] relatedIds;    // 关联记忆ID
+  // 新增字段
+  public int reflectionDepth;    // 0=观察,1=反思,2=抽象
+  public float strengthScore;    // 艾宾浩斯强度 [0,1]
+  public string[] agentRefs;     // 相关智能体ID
+}</pre>
+    </div>
+  </div>
+
+  <h3 id="s5-2" class="sub-title">5.3 向量化实现方案（Unity 环境适配）</h3>
+  <div class="alert info">
+    <strong>Unity 环境约束：</strong>不能直接调用 Python ML 库，以下提供三种从简到完整的嵌入方案。
+  </div>
+
+  <div class="card-grid cols-3">
+    <div class="card">
+      <h4 class="sub-sub">方案A：TF-IDF 近似（离线）</h4>
+      <p style="font-size:13px;">在内存中维护词频-逆文档频率矩阵，适合词汇有限的领域（校园地点、任务类型）。实现简单，性能好，但语义理解有限。</p>
+      <div class="tag-line"><span class="badge-tag green">推荐：快速上线</span></div>
+    </div>
+    <div class="card highlight">
+      <h4 class="sub-sub">方案B：DeepSeek Embedding API</h4>
+      <p style="font-size:13px;">调用 DeepSeek 或 OpenAI 的 <code>/embeddings</code> 接口，在创建记忆时异步获取 1536维向量并缓存到本地。精度最高。</p>
+      <pre style="font-size:11px;padding:8px;">POST /v1/embeddings
+{
+  "input": "agent观察到building_A被占用",
+  "model": "text-embedding-ada-002"
+}</pre>
+      <div class="tag-line"><span class="badge-tag blue">推荐：生产环境</span></div>
+    </div>
+    <div class="card">
+      <h4 class="sub-sub">方案C：本地 ONNX 模型</h4>
+      <p style="font-size:13px;">将 MiniLM-L6（384维，约23MB）转为 ONNX 格式，通过 Unity 的 Sentis（ML 推理框架）本地推理，无需网络请求。</p>
+      <div class="tag-line"><span class="badge-tag purple">推荐：离线场景</span></div>
+    </div>
+  </div>
+
+  <h3 class="sub-title">5.4 艾宾浩斯遗忘曲线集成（来自 MemoryBank）</h3>
+  <div class="card">
+    <p style="font-size:14px;margin-bottom:12px;">参照 Zhong et al. (2023) MemoryBank 的设计，为每条记忆维护<strong>记忆强度</strong>（memory strength），模拟人类记忆的遗忘与巩固：</p>
+    <div class="formula-box">
+      <div class="formula-label">记忆强度更新公式（基于艾宾浩斯遗忘曲线）</div>
+      <div class="formula-main">strength(t) = e<sup>−t / (stability · e<sup>0.1·difficulty</sup>)</sup></div>
+      <div class="formula-sub">t = 距上次记忆的时间；stability = 基础稳定性；difficulty = 内容复杂度<br>每次访问/检索：stability += Δstability（记忆被强化）</div>
+    </div>
+    <pre style="font-size:12px;padding:12px;margin-top:10px;">// 在 MemoryModule.cs 中新增
+public void AccessMemory(string memoryId) {
+  var m = _memories.Find(x => x.id == memoryId);
+  m.lastAccessedAt = Time.time;
+  m.stabilityScore += 0.1f;  // 访问增强记忆稳定性
+  m.strengthScore = ComputeStrength(m);
+}
+
+float ComputeStrength(MemoryEntry m) {
+  float t = (Time.time - m.lastAccessedAt) / 3600f;
+  return Mathf.Exp(-t / (m.stabilityScore * Mathf.Exp(0.1f * m.difficulty)));
+}</pre>
+  </div>
+</section>
+
+<hr class="divider">
+
+<!-- SECTION 6: REFLECTION MODULE -->
+<section id="s6" class="section">
+  <h2 class="section-title">六、反思模块升级实现方案</h2>
+
+  <h3 class="sub-title">6.1 层级反思流程</h3>
+
+  <div class="module-diagram">
+    <svg width="100%" viewBox="0 0 800 360" xmlns="http://www.w3.org/2000/svg" style="max-width:800px;display:block;margin:auto;">
+      <defs>
+        <marker id="a3" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#4a5568"/>
+        </marker>
+      </defs>
+
+      <!-- Step 1: Trigger -->
+      <rect x="20" y="20" width="160" height="60" rx="8" fill="#e53e3e" stroke="#fc8181" stroke-width="2"/>
+      <text x="100" y="46" text-anchor="middle" font-size="12" fill="white" font-weight="700">① 重要性累积触发</text>
+      <text x="100" y="64" text-anchor="middle" font-size="10" fill="#fed7d7">Σimportance ≥ 150</text>
+
+      <line x1="180" y1="50" x2="210" y2="50" stroke="#4a5568" stroke-width="1.5" marker-end="url(#a3)"/>
+
+      <!-- Step 2: Query -->
+      <rect x="212" y="20" width="160" height="60" rx="8" fill="#dd6b20" stroke="#f6ad55" stroke-width="2"/>
+      <text x="292" y="42" text-anchor="middle" font-size="12" fill="white" font-weight="700">② 取最近100条记忆</text>
+      <text x="292" y="58" text-anchor="middle" font-size="10" fill="#feebc8">Query top-K by score</text>
+      <text x="292" y="72" text-anchor="middle" font-size="10" fill="#feebc8">recency+importance</text>
+
+      <line x1="372" y1="50" x2="402" y2="50" stroke="#4a5568" stroke-width="1.5" marker-end="url(#a3)"/>
+
+      <!-- Step 3: Generate Questions -->
+      <rect x="404" y="20" width="170" height="60" rx="8" fill="#2b6cb0" stroke="#63b3ed" stroke-width="2"/>
+      <text x="489" y="42" text-anchor="middle" font-size="12" fill="white" font-weight="700">③ LLM 生成反思问题</text>
+      <text x="489" y="58" text-anchor="middle" font-size="10" fill="#bee3f8">"最重要的3个高阶问题"</text>
+      <text x="489" y="72" text-anchor="middle" font-size="10" fill="#bee3f8">What are high-level insights?</text>
+
+      <line x1="574" y1="50" x2="604" y2="50" stroke="#4a5568" stroke-width="1.5" marker-end="url(#a3)"/>
+
+      <!-- Step 4: Answer -->
+      <rect x="606" y="20" width="174" height="60" rx="8" fill="#276749" stroke="#68d391" stroke-width="2"/>
+      <text x="693" y="42" text-anchor="middle" font-size="12" fill="white" font-weight="700">④ LLM 回答+引用</text>
+      <text x="693" y="58" text-anchor="middle" font-size="10" fill="#c6f6d5">生成洞察+来源记忆ID</text>
+      <text x="693" y="72" text-anchor="middle" font-size="10" fill="#c6f6d5">confidence + applyWhen</text>
+
+      <!-- Arrow down from step 4 -->
+      <line x1="693" y1="80" x2="693" y2="110" stroke="#4a5568" stroke-width="1.5" marker-end="url(#a3)"/>
+
+      <!-- Step 5: Store as Reflection Memory -->
+      <rect x="550" y="112" width="286" height="60" rx="8" fill="#553c9a" stroke="#9f7aea" stroke-width="2"/>
+      <text x="693" y="138" text-anchor="middle" font-size="12" fill="white" font-weight="700">⑤ 写入记忆流（depth=1）</text>
+      <text x="693" y="156" text-anchor="middle" font-size="10" fill="#e9d8fd">kind=Reflection, reflectionDepth=1</text>
+      <text x="693" y="170" text-anchor="middle" font-size="10" fill="#e9d8fd">derivedFromMemoryIds[] 关联来源</text>
+
+      <!-- Recursive arrow -->
+      <line x1="693" y1="172" x2="693" y2="200" stroke="#9f7aea" stroke-width="1.5" stroke-dasharray="4" marker-end="url(#a3)"/>
+      <text x="705" y="192" font-size="10" fill="#9f7aea">递归</text>
+
+      <!-- Step 6: Second level reflection -->
+      <rect x="550" y="202" width="286" height="60" rx="8" fill="#322659" stroke="#9f7aea" stroke-width="2"/>
+      <text x="693" y="228" text-anchor="middle" font-size="12" fill="white" font-weight="700">⑥ 对反思再反思（depth=2）</text>
+      <text x="693" y="244" text-anchor="middle" font-size="10" fill="#e9d8fd">抽象概念层，如"行为模式"</text>
+      <text x="693" y="258" text-anchor="middle" font-size="10" fill="#e9d8fd">触发条件：depth=1记忆重要性累积</text>
+
+      <!-- Left side: Reflection content examples -->
+      <rect x="20" y="112" width="510" height="150" rx="8" fill="#f7fafc" stroke="#e2e8f0" stroke-width="1.5"/>
+      <text x="265" y="136" text-anchor="middle" font-size="12" fill="#2d3748" font-weight="700">反思洞察示例（对比：当前 vs. 升级后）</text>
+
+      <!-- Current -->
+      <rect x="30" y="148" width="228" height="100" rx="6" fill="#fff5f5" stroke="#fc8181" stroke-width="1"/>
+      <text x="144" y="166" text-anchor="middle" font-size="11" fill="#c53030" font-weight="600">当前系统（单层）</text>
+      <text x="144" y="182" text-anchor="middle" font-size="10" fill="#4a5568">触发：失败≥2次</text>
+      <text x="144" y="198" text-anchor="middle" font-size="10" fill="#4a5568">输出："避免在广场使用MoveTo"</text>
+      <text x="144" y="214" text-anchor="middle" font-size="10" fill="#4a5568">层级：仅1层</text>
+      <text x="144" y="230" text-anchor="middle" font-size="10" fill="#4a5568">无关联记忆溯源</text>
+
+      <!-- Upgraded -->
+      <rect x="272" y="148" width="248" height="100" rx="6" fill="#f0fff4" stroke="#68d391" stroke-width="1"/>
+      <text x="396" y="166" text-anchor="middle" font-size="11" fill="#276749" font-weight="600">升级后（层级）</text>
+      <text x="396" y="182" text-anchor="middle" font-size="10" fill="#4a5568">L1："agent_A偏好早晨执行巡逻"</text>
+      <text x="396" y="198" text-anchor="middle" font-size="10" fill="#4a5568">L2："A与B形成协作习惯"</text>
+      <text x="396" y="214" text-anchor="middle" font-size="10" fill="#4a5568">L3："团队在压力下更高效"</text>
+      <text x="396" y="230" text-anchor="middle" font-size="10" fill="#4a5568">含置信度+适用场景+来源</text>
+
+      <!-- Day summary box -->
+      <rect x="20" y="278" width="510" height="60" rx="8" fill="#ebf8ff" stroke="#63b3ed" stroke-width="1.5"/>
+      <text x="265" y="300" text-anchor="middle" font-size="12" fill="#2b6cb0" font-weight="700">⑦ 每日总结反思（新增）</text>
+      <text x="265" y="316" text-anchor="middle" font-size="10" fill="#4a5568">每个模拟日结束时，对当天所有记忆生成"日记式"摘要，写入 Memory（kind=Reflection, depth=1）</text>
+      <text x="265" y="332" text-anchor="middle" font-size="10" fill="#718096">为次日的自主目标生成提供上下文基础</text>
+    </svg>
+    <p style="text-align:center;font-size:12px;color:#718096;margin-top:8px;">图3：升级后的层级反思流程图</p>
+  </div>
+
+  <h3 class="sub-title">6.2 反思提示词设计（Prompt Engineering）</h3>
+  <div class="card">
+    <pre style="font-size:12.5px;padding:16px;">// ReflectionModule.cs - 层级反思 LLM 提示词模板
+
+// 第一步：生成反思问题
+string questionPrompt = $@"
+以下是 {agentName} 最近观察到的事件（按相关性排序，最多100条）：
+{FormatMemories(recentMemories)}
+
+基于以上信息，提出3个最值得深思的高阶问题，这些问题应能帮助理解：
+- 行为模式与规律
+- 与其他智能体的关系变化
+- 对环境的新认识
+
+以JSON格式输出：{{""questions"": [""问题1"", ""问题2"", ""问题3""]}}";
+
+// 第二步：回答反思问题（附带引用）
+string insightPrompt = $@"
+智能体 {agentName} 提出了以下问题：{question}
+相关记忆（用于回答）：
+{FormatMemories(relevantMemories)}
+
+请给出：
+1. 具体洞察（1-2句话）
+2. 置信度（0.0-1.0）
+3. 适用场景（applyWhen）
+4. 引用的记忆ID列表
+
+JSON输出：
+{{
+  ""insight"": ""洞察内容"",
+  ""confidence"": 0.85,
+  ""applyWhen"": ""当执行协作任务时"",
+  ""sourceIds"": [""mem_001"", ""mem_003""]
+}}";</pre>
+  </div>
+
+  <h3 class="sub-title">6.3 与现有 ReflectionModule.cs 的改造对比</h3>
+  <table>
+    <thead>
+      <tr><th>特性</th><th>当前实现</th><th>升级方案</th><th>修改位置</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>触发机制</td><td>失败≥2次 / 被阻塞</td><td>重要性累积 ≥ 150 OR 事件触发</td><td>MemoryModule.cs AddMemory()</td></tr>
+      <tr><td>冷却时间</td><td>硬编码 90s</td><td>基于重要性自适应（0–120s）</td><td>ReflectionModule.cs</td></tr>
+      <tr><td>反思层级</td><td>1层</td><td>3层（观察→反思→抽象）</td><td>ReflectionModule.cs 新增递归</td></tr>
+      <tr><td>输入记忆</td><td>最近几条事件</td><td>按检索评分 Top-K（最多100条）</td><td>MemoryModule.cs Query()</td></tr>
+      <tr><td>日常总结</td><td>无</td><td>每模拟日触发一次</td><td>IntelligentAgent.cs Update()</td></tr>
+      <tr><td>输出格式</td><td>ReflectionInsight（有结构）</td><td>升级字段：depth, sourceIds, confidence</td><td>ReflectionModule.cs 数据类</td></tr>
+    </tbody>
+  </table>
+</section>
+
+
+<hr class="divider">
+
+<!-- SECTION 7: NEW MODULES -->
+<section id="s7" class="section">
+  <h2 class="section-title">七、需要新增的关键模块设计</h2>
+  <p style="margin-bottom:18px;font-size:14px;">除记忆与反思模块的升级外，还需新建以下 6 个模块才能实现斯坦福小镇级别的自治系统。每个模块均有明确的接口定义和与现有系统的集成点。</p>
+
+  <!-- MODULE 1: AUTONOMOUS GOAL GENERATOR -->
+  <h3 id="s7-1" class="sub-title">7.1 自主目标生成器（AutonomousGoalGenerator）</h3>
+  <div class="alert key">
+    <strong>这是最核心的新模块。</strong>它完全替代"人工注入任务"机制，让每个智能体基于自身人格、当前状态、记忆和环境感知，自主产生今日计划与行动意图。
+  </div>
+
+  <div class="card-grid cols-2" style="margin-top:16px;">
+    <div class="card">
+      <h4 class="sub-sub">输入：驱动日计划生成的上下文</h4>
+      <pre style="font-size:12px;padding:14px;">{
+  "agentName": "Agent_Alpha",
+  "personality": "尽职的巡逻队长，重视团队安全，
+                  性格谨慎但富有责任感",
+  "currentStatus": {
+    "battery": 0.85,
+    "location": "北门附近",
+    "timeOfDay": "早晨 08:30"
+  },
+  "recentMemories": [...],     // Top-K检索
+  "reflections": [...],         // 最近反思洞察
+  "knownIncidents": [...],      // 注入的紧急事件
+  "socialContext": {             // 来自关系图谱
+    "friendlyAgents": ["B","C"],
+    "lastInteraction": "昨晚巡逻时碰面了Agent_B"
+  },
+  "yesterdayUnfinished": [...]  // 未完成事项
+}</pre>
+    </div>
+    <div class="card">
+      <h4 class="sub-sub">输出：自主生成的日计划</h4>
+      <pre style="font-size:12px;padding:14px;">{
+  "date": "Day_3",
+  "dailyGoal": "确保北区安全，与B协作完成巡逻",
+  "hourlyPlan": [
+    {"time":"08:00","activity":"早晨例行检查北门"},
+    {"time":"09:00","activity":"与Agent_B碰头交流昨日情况"},
+    {"time":"10:00","activity":"巡逻东区，重点关注仓库"},
+    {"time":"12:00","activity":"休息补充电量"},
+    {"time":"14:00","activity":"处理未完成任务：水塔检查"},
+    {"time":"17:00","activity":"向指挥中心汇报今日情况"}
+  ],
+  "primaryUrge": "想了解Agent_B是否发现了新的异常",
+  "flexibility": 0.4
+}</pre>
+    </div>
+  </div>
+
+  <div class="card">
+    <h4 class="sub-sub">与现有代码的集成点</h4>
+    <pre style="font-size:12.5px;padding:14px;">// IntelligentAgent.cs - 修改 HasActiveMission() 逻辑
+// 原来：等待人工注入任务
+// 改为：如果无活跃任务 && 距上次目标生成超过N分钟 → 触发自主生成
+
+private IEnumerator AutonomousDailyPlanCoroutine() {
+    // 1. 从 MemoryModule 检索相关记忆
+    var memories = _memory.QueryForPlanning(topK: 20);
+    var reflections = _memory.QueryByKind(MemoryKind.Reflection, topK: 5);
+    var social = _socialGraph.GetContext(agentId);
+
+    // 2. 构建上下文 → 调用 LLM 生成日计划
+    var context = BuildDailyPlanContext(memories, reflections, social);
+    yield return _llm.SendRequest(dailyPlanOptions, result => {
+        var plan = JsonUtility.FromJson&lt;DailyPlan&gt;(result);
+        // 3. 将日计划写入记忆
+        _memory.Remember(new Memory { kind=MemoryKind.Plan, summary=plan.dailyGoal });
+        // 4. 提交给 PlanningModule 执行（替代人工任务注入）
+        _planning.SubmitAutonomousGoal(plan);
+    });
+}</pre>
+  </div>
+
+  <!-- MODULE 2: SOCIAL RELATIONSHIP GRAPH -->
+  <h3 id="s7-2" class="sub-title">7.2 社会关系图谱（SocialRelationshipGraph）</h3>
+  <div class="card-grid cols-2">
+    <div class="card highlight">
+      <h4 class="sub-sub">数据结构</h4>
+      <pre style="font-size:12px;padding:12px;">[Serializable]
+public class AgentRelationship {
+  public string agentIdA;
+  public string agentIdB;
+  public float familiarity;     // 熟悉度 [0,1]
+  public float trust;           // 信任度 [-1,1]
+  public float sentiment;       // 情感倾向 [-1,1]
+  public string relationshipType; // colleague/friend/rival
+  public List&lt;string&gt; sharedMemoryIds; // 共同经历
+  public float lastInteractionTime;
+  public string lastInteractionSummary;
+}
+
+// 单例图谱
+public class SocialRelationshipGraph {
+  private Dictionary&lt;string, List&lt;AgentRelationship&gt;&gt; _graph;
+
+  // 更新关系（每次对话/协作后调用）
+  public void UpdateRelationship(string a, string b,
+      float familiarityDelta, float trustDelta,
+      string interactionSummary) { ... }
+
+  // 获取社会上下文（用于目标生成）
+  public SocialContext GetContext(string agentId) { ... }
+}</pre>
+    </div>
+    <div class="card">
+      <h4 class="sub-sub">涌现效果</h4>
+      <p style="font-size:13.5px;margin-bottom:12px;">社会关系图谱是产生<strong>社会网络涌现</strong>的基础设施：</p>
+      <ul class="check-list">
+        <li class="yes">智能体主动寻找熟悉的同伴协作</li>
+        <li class="yes">高信任度智能体间形成长期搭档关系</li>
+        <li class="yes">信息通过关系网络传播（谣言/消息扩散）</li>
+        <li class="yes">情感负向关系导致智能体刻意回避</li>
+        <li class="yes">关系强度影响 MAD 辩论中的投票倾向</li>
+      </ul>
+      <div class="alert info" style="margin-top:12px;">
+        <strong>与现有系统集成：</strong>在 CommunicationModule 每次消息路由后，调用 <code>SocialGraph.UpdateRelationship()</code> 更新双方关系强度。
+      </div>
+    </div>
+  </div>
+
+  <!-- MODULE 3: WORLD SEMANTIC MAP -->
+  <h3 id="s7-3" class="sub-title">7.3 世界语义地图（WorldSemanticMap）</h3>
+  <div class="card">
+    <p style="font-size:13.5px;margin-bottom:14px;">在现有 <code>CampusGrid2D</code> 的物理导航网格之上，构建语义层，支持自然语言定位和环境状态更新：</p>
+    <div class="module-diagram" style="padding:14px;">
+      <svg width="100%" viewBox="0 0 760 220" xmlns="http://www.w3.org/2000/svg" style="max-width:760px;display:block;margin:auto;">
+        <defs>
+          <marker id="a4" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#4a5568"/>
+          </marker>
+        </defs>
+        <!-- World root -->
+        <rect x="300" y="10" width="160" height="36" rx="6" fill="#1a365d"/>
+        <text x="380" y="32" text-anchor="middle" font-size="12" fill="white" font-weight="700">世界（校园）</text>
+        <!-- Arrows down -->
+        <line x1="340" y1="46" x2="130" y2="76" stroke="#a0aec0" stroke-width="1.5" marker-end="url(#a4)"/>
+        <line x1="380" y1="46" x2="380" y2="76" stroke="#a0aec0" stroke-width="1.5" marker-end="url(#a4)"/>
+        <line x1="420" y1="46" x2="630" y2="76" stroke="#a0aec0" stroke-width="1.5" marker-end="url(#a4)"/>
+        <!-- Areas -->
+        <rect x="30" y="78" width="200" height="36" rx="6" fill="#2b6cb0"/>
+        <text x="130" y="100" text-anchor="middle" font-size="11" fill="white" font-weight="600">北区（教学楼/宿舍）</text>
+        <rect x="280" y="78" width="200" height="36" rx="6" fill="#2b6cb0"/>
+        <text x="380" y="100" text-anchor="middle" font-size="11" fill="white" font-weight="600">中心区（广场/食堂）</text>
+        <rect x="530" y="78" width="200" height="36" rx="6" fill="#2b6cb0"/>
+        <text x="630" y="100" text-anchor="middle" font-size="11" fill="white" font-weight="600">南区（运动场/仓库）</text>
+        <!-- Arrows to objects -->
+        <line x1="80" y1="114" x2="60" y2="148" stroke="#a0aec0" stroke-width="1" marker-end="url(#a4)"/>
+        <line x1="130" y1="114" x2="130" y2="148" stroke="#a0aec0" stroke-width="1" marker-end="url(#a4)"/>
+        <line x1="180" y1="114" x2="200" y2="148" stroke="#a0aec0" stroke-width="1" marker-end="url(#a4)"/>
+        <line x1="340" y1="114" x2="320" y2="148" stroke="#a0aec0" stroke-width="1" marker-end="url(#a4)"/>
+        <line x1="380" y1="114" x2="380" y2="148" stroke="#a0aec0" stroke-width="1" marker-end="url(#a4)"/>
+        <line x1="420" y1="114" x2="440" y2="148" stroke="#a0aec0" stroke-width="1" marker-end="url(#a4)"/>
+        <!-- Objects -->
+        <rect x="20" y="150" width="80" height="28" rx="4" fill="#276749"/>
+        <text x="60" y="168" text-anchor="middle" font-size="9" fill="white">北门入口</text>
+        <rect x="108" y="150" width="80" height="28" rx="4" fill="#276749"/>
+        <text x="148" y="168" text-anchor="middle" font-size="9" fill="white">A栋教室</text>
+        <rect x="196" y="150" width="80" height="28" rx="4" fill="#276749"/>
+        <text x="236" y="168" text-anchor="middle" font-size="9" fill="white">充电站_1</text>
+        <rect x="280" y="150" width="80" height="28" rx="4" fill="#276749"/>
+        <text x="320" y="168" text-anchor="middle" font-size="9" fill="white">主广场中心</text>
+        <rect x="368" y="150" width="80" height="28" rx="4" fill="#276749"/>
+        <text x="408" y="168" text-anchor="middle" font-size="9" fill="white">食堂入口</text>
+        <rect x="456" y="150" width="80" height="28" rx="4" fill="#276749"/>
+        <text x="496" y="168" text-anchor="middle" font-size="9" fill="white">仓库B</text>
+        <!-- State annotations -->
+        <rect x="20" y="186" width="80" height="22" rx="3" fill="#fed7d7"/>
+        <text x="60" y="200" text-anchor="middle" font-size="8" fill="#742a2a">状态: 开放</text>
+        <rect x="108" y="186" width="80" height="22" rx="3" fill="#feebc8"/>
+        <text x="148" y="200" text-anchor="middle" font-size="8" fill="#7b341e">状态: 有课</text>
+        <rect x="196" y="186" width="80" height="22" rx="3" fill="#c6f6d5"/>
+        <text x="236" y="200" text-anchor="middle" font-size="8" fill="#22543d">状态: 空闲</text>
+        <rect x="280" y="186" width="80" height="22" rx="3" fill="#feebc8"/>
+        <text x="320" y="200" text-anchor="middle" font-size="8" fill="#7b341e">状态: 拥挤</text>
+        <rect x="368" y="186" width="80" height="22" rx="3" fill="#c6f6d5"/>
+        <text x="408" y="200" text-anchor="middle" font-size="8" fill="#22543d">状态: 开放</text>
+        <rect x="456" y="186" width="80" height="22" rx="3" fill="#fed7d7"/>
+        <text x="496" y="200" text-anchor="middle" font-size="8" fill="#742a2a">状态: 被占用</text>
+        <text x="380" y="218" text-anchor="middle" font-size="10" fill="#718096">每个位置节点含：名称、坐标、当前状态、上次更新时间、关联智能体</text>
+      </svg>
+    </div>
+    <p style="font-size:13.5px;margin-top:12px;"><strong>与 CampusGrid2D 集成：</strong>在现有 <code>featureSpatialProfileByUid</code> 字典的基础上，增加语义描述层和动态状态字段。智能体可以用自然语言描述目标位置（如"找一个空闲的充电站"），WorldSemanticMap 解析后返回具体坐标供 A* 导航使用。</p>
+  </div>
+
+  <!-- MODULE 4: SKILL LIBRARY -->
+  <h3 id="s7-4" class="sub-title">7.4 技能库（SkillLibrary）—— 参照 VOYAGER</h3>
+  <div class="card-grid cols-2">
+    <div class="card purple">
+      <h4 class="sub-sub">技能库设计</h4>
+      <p style="font-size:13.5px;margin-bottom:10px;">参照 Wang et al. (2023) VOYAGER，将成功执行过的复合动作序列封装为可复用技能：</p>
+      <pre style="font-size:12px;padding:12px;">[Serializable]
+public class Skill {
+  public string skillId;
+  public string name;           // "双人夹击搜索"
+  public string description;    // 自然语言描述
+  public string[] prerequisites;// 前置技能
+  public float successRate;     // 历史成功率
+  public float avgDuration;     // 平均耗时
+  public string[] requiredAtomicActions; // 包含的原子动作
+  public string llmStepTemplate; // 可参数化的步骤模板
+  public int usageCount;
+  public float lastUsedAt;
+}</pre>
+    </div>
+    <div class="card">
+      <h4 class="sub-sub">技能积累流程</h4>
+      <ol class="numbered-list">
+        <li><div>智能体执行一系列步骤并<strong>成功完成</strong>任务</div></li>
+        <li><div>ReflectionModule 检测到成功模式，提取步骤序列</div></li>
+        <li><div>LLM 将步骤序列抽象为参数化技能模板</div></li>
+        <li><div>技能写入 SkillLibrary（程序记忆）</div></li>
+        <li><div>下次遇到类似场景时，优先从技能库检索</div></li>
+        <li><div>技能可<strong>组合</strong>（新技能调用已有技能）</div></li>
+      </ol>
+      <div class="alert info" style="margin-top:10px; font-size:12.5px;">
+        技能库本质是 VOYAGER 技能库的 C# 版本，防止智能体每次从零学习同类任务。
+      </div>
+    </div>
+  </div>
+
+  <!-- MODULE 5: PERSONALITY SYSTEM -->
+  <h3 id="s7-5" class="sub-title">7.5 人格特征系统（PersonalitySystem）</h3>
+  <div class="card-grid cols-2">
+    <div class="card warning">
+      <h4 class="sub-sub">人格建模（Big Five + 领域特征）</h4>
+      <pre style="font-size:12px;padding:12px;">[Serializable]
+public class AgentPersonality {
+  // Big Five 人格维度 [0,1]
+  public float openness;        // 开放性：探索vs保守
+  public float conscientiousness; // 尽责性：严谨vs随意
+  public float extraversion;    // 外向性：主动vs内向
+  public float agreeableness;   // 宜人性：合作vs竞争
+  public float neuroticism;     // 神经质：焦虑vs稳定
+
+  // 领域特定特征
+  public string[] coreValues;   // ["安全", "效率", "团队"]
+  public string[] habits;       // ["早起巡逻", "定时汇报"]
+  public string[] dislikes;     // ["人多拥挤", "任务模糊"]
+
+  // 生成人格描述（用于 LLM 上下文）
+  public string ToNarrativeDescription() {
+    return $"{name}是一名{role}，性格{GetTraitDescription()}，
+             重视{string.Join('、', coreValues)}，
+             有{habits[0]}等习惯。";
+  }
+}</pre>
+    </div>
+    <div class="card">
+      <h4 class="sub-sub">人格对决策的影响</h4>
+      <table style="font-size:12.5px;">
+        <tr><th>人格维度</th><th>对自主行为的影响</th></tr>
+        <tr><td>高开放性</td><td>更愿意探索新区域，尝试新策略</td></tr>
+        <tr><td>高尽责性</td><td>定时完成计划任务，不轻易跳过</td></tr>
+        <tr><td>高外向性</td><td>主动发起与其他智能体的交流</td></tr>
+        <tr><td>高宜人性</td><td>更倾向于在 MAD 中投票支持他人</td></tr>
+        <tr><td>高神经质</td><td>对紧急事件反应更强烈，更早触发反思</td></tr>
+      </table>
+      <div class="alert key" style="margin-top:10px; font-size:12.5px;">
+        人格差异是产生<strong>智能体个性分化</strong>的根本来源，也是涌现行为多样性的前提。
+      </div>
+    </div>
+  </div>
+
+  <!-- MODULE 6: TIME AWARENESS -->
+  <h3 id="s7-6" class="sub-title">7.6 时间感知模块（SimulatedTimeModule）</h3>
+  <div class="card">
+    <p style="font-size:13.5px;margin-bottom:12px;">斯坦福小镇中，智能体的日常行为与时间段强相关（早晨吃饭、下午工作、晚上休息）。当前系统完全缺乏时间感知，需新建模拟时钟：</p>
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div>
+        <pre style="font-size:12px;padding:12px;">public class SimulatedTimeModule : MonoBehaviour {
+  public float timeScale = 60f; // 1秒=1分钟
+  public float currentHour;     // 0-24
+  public int dayCount;
+
+  public TimeOfDay GetPeriod() => currentHour switch {
+    < 7 => TimeOfDay.EarlyMorning,
+    < 12 => TimeOfDay.Morning,
+    < 14 => TimeOfDay.Noon,
+    < 18 => TimeOfDay.Afternoon,
+    < 21 => TimeOfDay.Evening,
+    _ => TimeOfDay.Night
+  };
+
+  // 时段变化事件
+  public event Action&lt;TimeOfDay&gt; OnPeriodChanged;
+  public event Action OnNewDay; // 触发日计划生成
+}</pre>
+      </div>
+      <div>
+        <h4 class="sub-sub" style="margin-top:0;">时间段对行为的影响</h4>
+        <table style="font-size:12px;">
+          <tr><th>时段</th><th>典型行为模式</th></tr>
+          <tr><td>早晨 (7–12)</td><td>启动日常巡逻、与同伴碰头</td></tr>
+          <tr><td>中午 (12–14)</td><td>补充电量、处理非紧急通信</td></tr>
+          <tr><td>下午 (14–18)</td><td>执行主要任务、探索新区域</td></tr>
+          <tr><td>傍晚 (18–21)</td><td>汇报日志、与团队总结</td></tr>
+          <tr><td>夜晚 (21–7)</td><td>守备模式、低功耗巡逻</td></tr>
+          <tr><td>新的一天</td><td>触发自主日计划生成</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider">
+
+<!-- SECTION 8: EMERGENCE DESIGN -->
+<section id="s8" class="section">
+  <h2 class="section-title">八、自主行为与涌现机制设计</h2>
+
+  <h3 class="sub-title">8.1 自主行为生成循环</h3>
+  <p style="font-size:14px;margin-bottom:16px;">下图展示引入上述模块后，单个智能体的完整自主行为循环，彻底取代原来的"人工注入任务"范式：</p>
+
+  <div class="module-diagram">
+    <svg width="100%" viewBox="0 0 820 480" xmlns="http://www.w3.org/2000/svg" style="max-width:820px;display:block;margin:auto;">
+      <defs>
+        <marker id="a5" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#4a5568"/>
+        </marker>
+        <marker id="a5b" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#6b46c1"/>
+        </marker>
+      </defs>
+
+      <!-- Center: Agent -->
+      <circle cx="410" cy="240" r="58" fill="#1a365d" stroke="#63b3ed" stroke-width="3"/>
+      <text x="410" y="234" text-anchor="middle" font-size="13" fill="white" font-weight="700">🤖 智能体</text>
+      <text x="410" y="252" text-anchor="middle" font-size="11" fill="#90cdf4">人格驱动</text>
+      <text x="410" y="268" text-anchor="middle" font-size="10" fill="#90cdf4">自主决策</text>
+
+      <!-- Top: Time Module -->
+      <rect x="300" y="20" width="220" height="44" rx="8" fill="#276749" stroke="#68d391" stroke-width="1.5"/>
+      <text x="410" y="40" text-anchor="middle" font-size="12" fill="white" font-weight="700">⏰ 时间感知模块</text>
+      <text x="410" y="58" text-anchor="middle" font-size="10" fill="#c6f6d5">新的一天 → 触发日计划生成</text>
+      <line x1="410" y1="64" x2="410" y2="180" stroke="#4a5568" stroke-width="1.5" marker-end="url(#a5)"/>
+
+      <!-- Left: Memory -->
+      <rect x="20" y="180" width="200" height="60" rx="8" fill="#2b6cb0" stroke="#63b3ed" stroke-width="1.5"/>
+      <text x="120" y="204" text-anchor="middle" font-size="12" fill="white" font-weight="700">🧠 记忆流</text>
+      <text x="120" y="222" text-anchor="middle" font-size="10" fill="#bee3f8">三维评分检索</text>
+      <text x="120" y="236" text-anchor="middle" font-size="10" fill="#bee3f8">上下文注入</text>
+      <line x1="220" y1="210" x2="350" y2="230" stroke="#4a5568" stroke-width="1.5" marker-end="url(#a5)"/>
+
+      <!-- Right: Social Graph -->
+      <rect x="600" y="180" width="200" height="60" rx="8" fill="#553c9a" stroke="#9f7aea" stroke-width="1.5"/>
+      <text x="700" y="204" text-anchor="middle" font-size="12" fill="white" font-weight="700">🤝 社会关系图谱</text>
+      <text x="700" y="222" text-anchor="middle" font-size="10" fill="#e9d8fd">熟悉度/信任/情感</text>
+      <text x="700" y="236" text-anchor="middle" font-size="10" fill="#e9d8fd">社会上下文注入</text>
+      <line x1="600" y1="210" x2="470" y2="230" stroke="#4a5568" stroke-width="1.5" marker-end="url(#a5)"/>
+
+      <!-- Bottom Left: Goal Generator -->
+      <rect x="20" y="360" width="200" height="60" rx="8" fill="#c05621" stroke="#f6ad55" stroke-width="1.5"/>
+      <text x="120" y="384" text-anchor="middle" font-size="12" fill="white" font-weight="700">🎯 自主目标生成器</text>
+      <text x="120" y="402" text-anchor="middle" font-size="10" fill="#feebc8">人格+记忆+反思</text>
+      <text x="120" y="416" text-anchor="middle" font-size="10" fill="#feebc8">→ 日/时计划</text>
+      <line x1="190" y1="370" x2="370" y2="295" stroke="#4a5568" stroke-width="1.5" marker-end="url(#a5)"/>
+
+      <!-- Bottom Right: Action Execution -->
+      <rect x="600" y="360" width="200" height="60" rx="8" fill="#276749" stroke="#68d391" stroke-width="1.5"/>
+      <text x="700" y="384" text-anchor="middle" font-size="12" fill="white" font-weight="700">⚡ 行动执行</text>
+      <text x="700" y="402" text-anchor="middle" font-size="10" fill="#c6f6d5">滚动循环ADM</text>
+      <text x="700" y="416" text-anchor="middle" font-size="10" fill="#c6f6d5">原子动作→物理执行</text>
+      <line x1="468" y1="290" x2="612" y2="365" stroke="#4a5568" stroke-width="1.5" marker-end="url(#a5)"/>
+
+      <!-- Bottom Center: Reflection -->
+      <rect x="300" y="400" width="220" height="60" rx="8" fill="#6b46c1" stroke="#9f7aea" stroke-width="1.5"/>
+      <text x="410" y="424" text-anchor="middle" font-size="12" fill="white" font-weight="700">💭 层级反思模块</text>
+      <text x="410" y="442" text-anchor="middle" font-size="10" fill="#e9d8fd">观察→反思→抽象</text>
+      <text x="410" y="456" text-anchor="middle" font-size="10" fill="#e9d8fd">洞察写回记忆流</text>
+      <line x1="410" y1="400" x2="410" y2="300" stroke="#6b46c1" stroke-width="1.5" stroke-dasharray="5" marker-end="url(#a5b)"/>
+
+      <!-- Perception input -->
+      <rect x="680" y="70" width="120" height="50" rx="8" fill="#1a202c" stroke="#4a5568" stroke-width="1.5"/>
+      <text x="740" y="92" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">环境感知</text>
+      <text x="740" y="108" text-anchor="middle" font-size="9" fill="#a0aec0">→ 写入记忆流</text>
+      <line x1="700" y1="120" x2="460" y2="195" stroke="#4a5568" stroke-width="1" stroke-dasharray="3" marker-end="url(#a5)"/>
+
+      <!-- Human inject incidents only -->
+      <rect x="10" y="70" width="140" height="50" rx="8" fill="#742a2a" stroke="#fc8181" stroke-width="1.5"/>
+      <text x="80" y="90" text-anchor="middle" font-size="11" fill="white" font-weight="600">🧑 人类注入</text>
+      <text x="80" y="108" text-anchor="middle" font-size="9" fill="#fed7d7">仅限：紧急事件+倾向</text>
+      <line x1="130" y1="120" x2="330" y2="190" stroke="#e53e3e" stroke-width="1.5" stroke-dasharray="4" marker-end="url(#a5)"/>
+
+      <!-- Observation loop back to memory -->
+      <path d="M 700 420 Q 780 420 780 210 Q 780 180 740 120" stroke="#276749" stroke-width="1" fill="none" stroke-dasharray="3" marker-end="url(#a5)"/>
+      <text x="790" y="300" font-size="9" fill="#68d391">结果→记忆</text>
+    </svg>
+    <p style="text-align:center;font-size:12px;color:#718096;margin-top:8px;">图4：引入新模块后的智能体自主行为循环（人类仅注入紧急事件与倾向）</p>
+  </div>
+
+  <h3 class="sub-title">8.2 涌现行为产生路径</h3>
+  <div class="card-grid cols-2">
+    <div class="card success">
+      <h4 class="sub-sub">涌现路径一：信息扩散</h4>
+      <ol class="numbered-list">
+        <li><div>Agent_A 感知到"仓库B门未锁"，写入记忆流</div></li>
+        <li><div>日计划生成时，A 的目标包含"告知熟悉的同伴"</div></li>
+        <li><div>A 主动找到高熟悉度的 Agent_B，通过自然语言消息传递</div></li>
+        <li><div>B 将此信息写入自己的记忆，调整下午计划去检查仓库</div></li>
+        <li><div><strong>无人编程</strong>，信息在智能体网络中自然扩散</div></li>
+      </ol>
+    </div>
+    <div class="card highlight">
+      <h4 class="sub-sub">涌现路径二：协作模式形成</h4>
+      <ol class="numbered-list">
+        <li><div>A 与 B 多次共同执行巡逻任务（记忆中积累共同经历）</div></li>
+        <li><div>反思：A 认识到"与B协作时效率更高"，B 有类似洞察</div></li>
+        <li><div>双方社会关系图谱中信任度持续上升</div></li>
+        <li><div>日计划生成时，两者越来越倾向于同时段规划同区域活动</div></li>
+        <li><div><strong>搭档关系自然涌现</strong>，无需任务分配约束</div></li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="card-grid cols-2" style="margin-top:12px;">
+    <div class="card warning">
+      <h4 class="sub-sub">涌现路径三：紧急事件级联响应</h4>
+      <ol class="numbered-list" style="font-size:13px;">
+        <li><div>人类注入：紧急事件"北门出现未知入侵者"</div></li>
+        <li><div>感知到事件的 Agent_A 提升此记忆重要性，触发反思</div></li>
+        <li><div>A 的日计划重新排序，优先处理安全任务</div></li>
+        <li><div>A 通过社会关系主动联络高信任度同伴</div></li>
+        <li><div>多个智能体自发形成响应协作，无需中央调度</div></li>
+      </ol>
+    </div>
+    <div class="card" style="border-left:4px solid #e53e3e;">
+      <h4 class="sub-sub">涌现路径四：规范形成（Norm Emergence）</h4>
+      <ol class="numbered-list" style="font-size:13px;">
+        <li><div>某个时段多个智能体频繁使用同一充电站</div></li>
+        <li><div>经历冲突后，通过 MAD 辩论形成非正式优先级规则</div></li>
+        <li><div>各智能体将规则写入程序记忆（SkillLibrary）</div></li>
+        <li><div>后续智能体观察到这种行为模式，通过反思习得规范</div></li>
+        <li><div><strong>群体规范自发形成</strong>，无需预先定义</div></li>
+      </ol>
+    </div>
+  </div>
+
+  <h3 class="sub-title">8.3 人类控制接口设计（最小干预原则）</h3>
+  <div class="card success">
+    <p style="font-size:14px;margin-bottom:14px;">参照斯坦福小镇设计，人类干预仅限于以下两种形式，不破坏智能体自治性：</p>
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div style="background:#f0fff4;border:1px solid #9ae6b4;border-radius:8px;padding:14px;">
+        <h4 class="sub-sub" style="color:#276749;">注入倾向（Tendency Injection）</h4>
+        <p style="font-size:13px;">向智能体写入一条<strong>人格倾向记忆</strong>，重要性分数设为 8–10，影响后续日计划生成。</p>
+        <pre style="font-size:11.5px;padding:10px;margin-top:8px;">// 例：让某智能体更关注安全
+_memory.Remember(new Memory {
+  kind = MemoryKind.Policy,
+  summary = "接到指示：近期需特别关注北区安全状况",
+  importanceScore = 9.0f,
+  source = "HumanOperator"
+});</pre>
+      </div>
+      <div style="background:#fff5f5;border:1px solid #fc8181;border-radius:8px;padding:14px;">
+        <h4 class="sub-sub" style="color:#c53030;">注入紧急事件（Emergency Injection）</h4>
+        <p style="font-size:13px;">通过 IncidentCoordinator 注入紧急事件，触发 MAD 辩论机制（现有系统已支持），智能体自主决策响应方案。</p>
+        <pre style="font-size:11.5px;padding:10px;margin-top:8px;">// 现有接口，保持不变
+_incidentCoordinator.ReportIncident(new IncidentReport {
+  incidentType = IncidentType.AgentUnavailable,
+  severity = Severity.Critical,
+  description = "北门检测到异常热源"
+});</pre>
+      </div>
+    </div>
+  </div>
+
+  <h3 id="s8-4" class="sub-title">8.4 无人机协作系统的专属涌现模型</h3>
+  <p style="font-size:14px;margin-bottom:16px;">相比斯坦福小镇（纯社交涌现），无人机系统需要在<strong>保持物理协作约束的同时</strong>实现执行层涌现。引入新模块后，涌现发生在以下路径：</p>
+
+  <div class="card-grid cols-2">
+    <div class="card success">
+      <h4 class="sub-sub">🧠 记忆驱动的Slot偏好涌现</h4>
+      <ol class="numbered-list" style="font-size:13px;">
+        <li><div>UAV-1 历史上多次担任Scout，记忆流中积累「侦察成功」经历（importance高）</div></li>
+        <li><div>LLM#3做Slot选择时，从MemoryModule检索到高相关性侦察记忆</div></li>
+        <li><div>UAV-1 自然倾向于选择Scout Slot（基于经验，非硬编码）</div></li>
+        <li><div><strong>角色专精自发形成</strong>——没有任何预设，纯粹由记忆驱动</div></li>
+      </ol>
+    </div>
+    <div class="card highlight">
+      <h4 class="sub-sub">⚡ 响应式执行层涌现（升级后ADM）</h4>
+      <ol class="numbered-list" style="font-size:13px;">
+        <li><div>Scout UAV-1 在移动途中，PerceptionModule检测到目标位置改变</div></li>
+        <li><div>ADM在下一个决策周期读取白板+最新感知（无预定步骤）</div></li>
+        <li><div>LLM#5重新生成动作：「目标移动到东门，调整飞行路线」</div></li>
+        <li><div><strong>实时自适应</strong>，不需要触发MAD辩论，也不需要等待LLM#4重新规划</div></li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="card-grid cols-2" style="margin-top:12px;">
+    <div class="card purple">
+      <h4 class="sub-sub">🤝 社会关系驱动的自发协作</h4>
+      <ol class="numbered-list" style="font-size:13px;">
+        <li><div>UAV-1和UAV-2曾多次协作成功，SocialGraph中信任度累积到0.8+</div></li>
+        <li><div>下次任务中，UAV-1在Slot认领时广播：「我是Scout，我信任UAV-2做Interceptor」</div></li>
+        <li><div>UAV-2优先响应，白板协调速度更快</div></li>
+        <li><div><strong>搭档关系自然涌现</strong>，无需任何预设配对</div></li>
+      </ol>
+    </div>
+    <div class="card" style="border-left:4px solid #c05621;">
+      <h4 class="sub-sub">📚 技能库驱动的协调效率提升</h4>
+      <ol class="numbered-list" style="font-size:13px;">
+        <li><div>第一次三机拦截，ADM从零决策，耗时较长</div></li>
+        <li><div>ReflectionModule检测到成功模式，提取为「三机夹击拦截技能」</div></li>
+        <li><div>第二次类似任务，LLM#5直接调用技能模板，跳过大量探索</div></li>
+        <li><div><strong>协调效率随经验积累不断提升</strong>——VOYAGER式技能涌现</div></li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="alert info" style="margin-top:16px;">
+    <strong>核心结论：</strong>斯坦福小镇的涌现靠「每个个体自由行动然后碰撞产生社会现象」。无人机系统的涌现靠「角色框架约束整体，执行层自由感知-决策，新模块提供上下文燃料（记忆/关系/技能）」。两者都是涌现，但机制不同，都是正确的选择。
+  </div>
+</section>
+
+
+<hr class="divider">
+
+<!-- SECTION 9: ARCHITECTURE EVOLUTION -->
+<section id="s9" class="section">
+  <h2 class="section-title">九、目标架构全景图（演进后）</h2>
+  <p style="font-size:14px;margin-bottom:18px;">下图展示引入全部新模块后的完整目标架构，标注了新增模块（绿色边框）和需要改造的现有模块（橙色边框）：</p>
+
+  <div class="module-diagram">
+    <svg width="100%" viewBox="0 0 960 580" xmlns="http://www.w3.org/2000/svg" style="max-width:960px;display:block;margin:auto;">
+      <defs>
+        <marker id="a6" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">
+          <polygon points="0 0, 7 2.5, 0 5" fill="#a0aec0"/>
+        </marker>
+        <marker id="a6g" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">
+          <polygon points="0 0, 7 2.5, 0 5" fill="#68d391"/>
+        </marker>
+      </defs>
+
+      <!-- Layer 0: Human Input (minimal) -->
+      <rect x="10" y="10" width="940" height="44" rx="6" fill="#742a2a" stroke="#fc8181" stroke-width="1.5"/>
+      <text x="480" y="28" text-anchor="middle" font-size="12" fill="white" font-weight="700">🧑 人类输入层（最小干预）</text>
+      <text x="480" y="46" text-anchor="middle" font-size="10" fill="#fed7d7">仅注入：倾向政策（PolicyMemory）· 地图紧急事件（IncidentReport）· 初始人格描述（一次性）</text>
+
+      <!-- Layer 1: Perception + Time -->
+      <rect x="10" y="66" width="220" height="54" rx="6" fill="#1a202c" stroke="#4a5568" stroke-width="1.5"/>
+      <text x="120" y="88" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">PerceptionModule</text>
+      <text x="120" y="104" text-anchor="middle" font-size="10" fill="#a0aec0">0.5s传感 → 自动写入记忆流 ⚡改</text>
+
+      <rect x="244" y="66" width="220" height="54" rx="6" fill="#276749" stroke="#68d391" stroke-width="2"/>
+      <text x="354" y="88" text-anchor="middle" font-size="11" fill="white" font-weight="700">⏰ SimulatedTimeModule 🆕</text>
+      <text x="354" y="104" text-anchor="middle" font-size="10" fill="#c6f6d5">时段感知 · 新日触发 · 活动调度</text>
+
+      <rect x="478" y="66" width="220" height="54" rx="6" fill="#276749" stroke="#68d391" stroke-width="2"/>
+      <text x="588" y="88" text-anchor="middle" font-size="11" fill="white" font-weight="700">🗺️ WorldSemanticMap 🆕</text>
+      <text x="588" y="104" text-anchor="middle" font-size="10" fill="#c6f6d5">语义环境树 · 自然语言定位 · 状态跟踪</text>
+
+      <rect x="712" y="66" width="238" height="54" rx="6" fill="#276749" stroke="#68d391" stroke-width="2"/>
+      <text x="831" y="88" text-anchor="middle" font-size="11" fill="white" font-weight="700">🎭 PersonalitySystem 🆕</text>
+      <text x="831" y="104" text-anchor="middle" font-size="10" fill="#c6f6d5">Big Five · 价值观 · 习惯 · 人格描述</text>
+
+      <!-- Layer 2: Core Cognitive -->
+      <rect x="10" y="136" width="300" height="70" rx="6" fill="#2b6cb0" stroke="#f6ad55" stroke-width="2"/>
+      <text x="160" y="158" text-anchor="middle" font-size="11" fill="white" font-weight="700">🧠 MemoryModule ⚡升级</text>
+      <text x="160" y="174" text-anchor="middle" font-size="10" fill="#bee3f8">三维检索评分 · 向量嵌入 · 艾宾浩斯强度</text>
+      <text x="160" y="190" text-anchor="middle" font-size="10" fill="#bee3f8">重要性累积触发 · 10种记忆类型 · depth字段</text>
+
+      <rect x="326" y="136" width="300" height="70" rx="6" fill="#6b46c1" stroke="#f6ad55" stroke-width="2"/>
+      <text x="476" y="158" text-anchor="middle" font-size="11" fill="white" font-weight="700">💭 ReflectionModule ⚡升级</text>
+      <text x="476" y="174" text-anchor="middle" font-size="10" fill="#e9d8fd">层级反思(L1/L2/L3) · 重要性累积触发</text>
+      <text x="476" y="190" text-anchor="middle" font-size="10" fill="#e9d8fd">每日总结 · 递归抽象 · 置信度+来源</text>
+
+      <rect x="642" y="136" width="308" height="70" rx="6" fill="#276749" stroke="#68d391" stroke-width="2"/>
+      <text x="796" y="158" text-anchor="middle" font-size="11" fill="white" font-weight="700">🤝 SocialRelationshipGraph 🆕</text>
+      <text x="796" y="174" text-anchor="middle" font-size="10" fill="#c6f6d5">熟悉度/信任/情感 · 共同经历记录</text>
+      <text x="796" y="190" text-anchor="middle" font-size="10" fill="#c6f6d5">关系演化 · 社会上下文输出</text>
+
+      <!-- Layer 3: Planning Autonomous -->
+      <rect x="10" y="222" width="460" height="70" rx="6" fill="#c05621" stroke="#68d391" stroke-width="2"/>
+      <text x="240" y="246" text-anchor="middle" font-size="11" fill="white" font-weight="700">🎯 AutonomousGoalGenerator 🆕</text>
+      <text x="240" y="262" text-anchor="middle" font-size="10" fill="#feebc8">人格+记忆+反思+社会上下文 → 自主日计划/时计划</text>
+      <text x="240" y="278" text-anchor="middle" font-size="10" fill="#feebc8">无需人工任务注入 · 驱动 PlanningModule</text>
+
+      <rect x="486" y="222" width="460" height="70" rx="6" fill="#276749" stroke="#68d391" stroke-width="2"/>
+      <text x="716" y="246" text-anchor="middle" font-size="11" fill="white" font-weight="700">📚 SkillLibrary 🆕</text>
+      <text x="716" y="262" text-anchor="middle" font-size="10" fill="#c6f6d5">程序记忆 · 成功模式封装 · 技能组合</text>
+      <text x="716" y="278" text-anchor="middle" font-size="10" fill="#c6f6d5">VOYAGER风格 · 防止重复学习</text>
+
+      <!-- Layer 4: Existing Planning Pipeline (modified) -->
+      <rect x="10" y="308" width="220" height="54" rx="6" fill="#2b6cb0" stroke="#f6ad55" stroke-width="1.5"/>
+      <text x="120" y="330" text-anchor="middle" font-size="11" fill="white" font-weight="600">PlanningModule ⚡改</text>
+      <text x="120" y="346" text-anchor="middle" font-size="10" fill="#bee3f8">接受自主目标 · 4阶段流水线</text>
+
+      <rect x="244" y="308" width="220" height="54" rx="6" fill="#2b6cb0" stroke="#4a5568" stroke-width="1.5"/>
+      <text x="354" y="330" text-anchor="middle" font-size="11" fill="white" font-weight="600">ActionDecisionModule</text>
+      <text x="354" y="346" text-anchor="middle" font-size="10" fill="#bee3f8">滚动循环 · 30次迭代 · ReAct思维链</text>
+
+      <rect x="478" y="308" width="220" height="54" rx="6" fill="#553c9a" stroke="#4a5568" stroke-width="1.5"/>
+      <text x="588" y="330" text-anchor="middle" font-size="11" fill="white" font-weight="600">MAD 辩论系统</text>
+      <text x="588" y="346" text-anchor="middle" font-size="10" fill="#e9d8fd">Proposer/Critic/Voter · 社会权重加持</text>
+
+      <rect x="712" y="308" width="238" height="54" rx="6" fill="#2d3748" stroke="#4a5568" stroke-width="1.5"/>
+      <text x="831" y="330" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">SharedWhiteboard</text>
+      <text x="831" y="346" text-anchor="middle" font-size="10" fill="#a0aec0">C1/C2/C3约束 · 语义地图同步</text>
+
+      <!-- Layer 5: Execution -->
+      <rect x="10" y="378" width="460" height="44" rx="6" fill="#1a202c" stroke="#4a5568" stroke-width="1.5"/>
+      <text x="240" y="398" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">AgentMotionExecutor + CampusGrid2D A*</text>
+      <text x="240" y="414" text-anchor="middle" font-size="10" fill="#a0aec0">6种原子动作 · PD控制器 · 物理导航</text>
+
+      <rect x="486" y="378" width="460" height="44" rx="6" fill="#1a202c" stroke="#4a5568" stroke-width="1.5"/>
+      <text x="716" y="398" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">LLMInterface（DeepSeek）</text>
+      <text x="716" y="414" text-anchor="middle" font-size="10" fill="#a0aec0">JSON模式 · 重试3次 · Embedding接口 · JSONL日志</text>
+
+      <!-- Layer 6: Communication -->
+      <rect x="10" y="436" width="940" height="44" rx="6" fill="#1a202c" stroke="#4a5568" stroke-width="1.5"/>
+      <text x="480" y="458" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">CommunicationModule（56种消息类型）+ 自然语言对话扩展</text>
+      <text x="480" y="472" text-anchor="middle" font-size="10" fill="#a0aec0">DirectAgent · Team · Public · 社会网络感知 · 对话写入记忆</text>
+
+      <!-- Legend -->
+      <rect x="10" y="492" width="940" height="80" rx="6" fill="#f7fafc" stroke="#e2e8f0" stroke-width="1"/>
+      <text x="480" y="512" text-anchor="middle" font-size="11" fill="#2d3748" font-weight="700">图例</text>
+      <rect x="30" y="522" width="14" height="14" fill="#276749" stroke="#68d391" stroke-width="2"/>
+      <text x="52" y="534" font-size="11" fill="#276749" font-weight="600">🆕 新建模块</text>
+      <rect x="160" y="522" width="14" height="14" fill="#2b6cb0" stroke="#f6ad55" stroke-width="2"/>
+      <text x="182" y="534" font-size="11" fill="#c05621" font-weight="600">⚡改 需升级改造的现有模块</text>
+      <rect x="360" y="522" width="14" height="14" fill="#2b6cb0" stroke="#4a5568" stroke-width="1.5"/>
+      <text x="382" y="534" font-size="11" fill="#4a5568">保持或微调的现有模块</text>
+      <text x="30" y="558" font-size="10" fill="#718096">核心变化：① 自主目标生成器取代人工任务注入；② 记忆模块升级三维检索；③ 反思模块升级为层级递归；</text>
+      <text x="30" y="572" font-size="10" fill="#718096">④ 新增社会关系图谱/技能库/人格系统/语义地图/时间感知，共同支撑自主涌现行为。</text>
+    </svg>
+    <p style="text-align:center;font-size:12px;color:#718096;margin-top:8px;">图5：目标架构全景图（演进后完整版）</p>
+  </div>
+</section>
+
+<hr class="divider">
+
+<!-- SECTION EXAMPLE: END-TO-END WALKTHROUGH -->
+<section id="s_example" class="section">
+  <h2 class="section-title">⭐ 端到端实战案例：三机协同拦截入侵者</h2>
+  <p style="font-size:14px;margin-bottom:8px;">本节以一个完整的真实场景，逐模块展示每个组件在系统中的实际作用——包括现有模块和建议新增模块。</p>
+
+  <div class="card" style="background:linear-gradient(135deg,#1a365d,#2c5282);color:white;margin-bottom:24px;">
+    <h4 style="color:#90cdf4;font-size:14px;margin-bottom:10px;">📋 场景设定</h4>
+    <div class="card-grid cols-3" style="gap:12px;">
+      <div style="background:rgba(255,255,255,0.1);border-radius:8px;padding:12px;">
+        <strong style="color:#68d391;">任务</strong>
+        <p style="font-size:12px;margin-top:4px;color:#e2e8f0;">「北门出现可疑入侵者，请3架无人机协同拦截」（人类操作员注入）</p>
+      </div>
+      <div style="background:rgba(255,255,255,0.1);border-radius:8px;padding:12px;">
+        <strong style="color:#f6ad55;">初始状态</strong>
+        <p style="font-size:12px;margin-top:4px;color:#e2e8f0;">UAV-1 在充电站（电量100%），UAV-2 在操场（电量72%），UAV-3 在教学楼（电量85%）</p>
+      </div>
+      <div style="background:rgba(255,255,255,0.1);border-radius:8px;padding:12px;">
+        <strong style="color:#fc8181;">期望结果</strong>
+        <p style="font-size:12px;margin-top:4px;color:#e2e8f0;">三机从不同方向同时形成包围，拦截并上报目标，防止逃脱</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 1 -->
+  <div class="card" style="border-left:4px solid #2b6cb0;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#2b6cb0;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">1</div>
+      <div>
+        <strong style="font-size:14px;color:#2b6cb0;">LLM#1（PlanningModule）— 任务解析</strong>
+        <span class="badge-tag blue" style="margin-left:8px;">现有模块</span>
+      </div>
+    </div>
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div>
+        <p style="font-size:13px;color:#4a5568;margin-bottom:8px;"><strong>输入：</strong>自然语言任务 + 3架可用无人机ID</p>
+        <pre style="font-size:11.5px;padding:12px;">{
+  "mission": "北门出现可疑入侵者，三机协同拦截",
+  "agentIds": ["UAV-1", "UAV-2", "UAV-3"]
+}</pre>
+      </div>
+      <div>
+        <p style="font-size:13px;color:#4a5568;margin-bottom:8px;"><strong>输出：ParsedMission</strong></p>
+        <pre style="font-size:11.5px;padding:12px;">{
+  "relType": "Cooperation",
+  "groupCnt": 1,
+  "groupMsns": ["协同拦截北门可疑人员"],
+  "constraints": [
+    {"cType":"C3","sign":1,
+     "watchAgent":"UAV-1",
+     "desc":"UAV-2等待UAV-1确认目标"},
+    {"cType":"C3","sign":-1,
+     "desc":"不同无人机不能同方向接近"}
+  ]
+}</pre>
+      </div>
+    </div>
+    <div class="alert info" style="margin-top:8px;font-size:12.5px;">
+      <strong>此处的作用：</strong>把模糊的自然语言转化为结构化协作约束。C3+约束确保时序（先侦察再拦截），C3-约束防止多机同方向导致目标逃脱。
+    </div>
+  </div>
+
+  <!-- STEP 2 -->
+  <div class="card" style="border-left:4px solid #48bb78;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#276749;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">2</div>
+      <div>
+        <strong style="font-size:14px;color:#276749;">分组（AssignGroups）— 团队组建</strong>
+        <span class="badge-tag green" style="margin-left:8px;">现有模块</span>
+      </div>
+    </div>
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div>
+        <p style="font-size:13px;margin-bottom:6px;"><strong>执行逻辑：</strong></p>
+        <pre style="font-size:11.5px;padding:12px;">// relType=Cooperation → groupCnt=1
+// 所有3架无人机进入同一组
+Group G0 = {
+  groupId: "G0",
+  leaderId: "UAV-1",   // 第一个agent为leader
+  memberIds: ["UAV-1", "UAV-2", "UAV-3"],
+  mission: "协同拦截北门可疑人员"
+}
+// 广播GroupBootstrap到所有成员</pre>
+      </div>
+      <div>
+        <p style="font-size:13px;margin-bottom:6px;"><strong>此步骤的作用：</strong></p>
+        <ul class="check-list" style="font-size:13px;">
+          <li class="yes">定义团队边界：三机知道彼此是队友</li>
+          <li class="yes">确定 UAV-1 为 leader（负责协调Slot认领）</li>
+          <li class="yes">所有约束（C3+, C3-）广播到组内全员</li>
+          <li class="yes">初始化 GroupMonitor（监控任务完成状态）</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 3 -->
+  <div class="card" style="border-left:4px solid #63b3ed;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#2b6cb0;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">3</div>
+      <div>
+        <strong style="font-size:14px;color:#2b6cb0;">LLM#2（SlotGen）— 角色槽位生成</strong>
+        <span class="badge-tag blue" style="margin-left:8px;">现有模块</span>
+      </div>
+    </div>
+    <pre style="font-size:11.5px;padding:12px;">// 输出三个角色槽位
+slots: [
+  { slotId:"S0", role:"Scout",
+    desc:"飞至北门上空，识别并追踪目标，确认身份后发送ReadySignal",
+    constraintIds:["C3+_watch"] },
+  { slotId:"S1", role:"Interceptor",
+    desc:"收到Scout的ReadySignal后，从<b>侧翼</b>接近目标进行拦截悬停",
+    constraintIds:["C3+_wait","C3-_mutex"] },
+  { slotId:"S2", role:"Perimeter",
+    desc:"独立封锁南侧出口，执行PatrolAround，防止目标逃脱",
+    constraintIds:["C3-_mutex"] }
+]</pre>
+    <div class="alert info" style="margin-top:8px;font-size:12.5px;">
+      <strong>此步骤的作用：</strong>这是「防止涌现崩溃」的关键。没有Slot定义，三机各自涌现可能全部去侦察，没人拦截，没人封锁。Slot给每架无人机划定了「涌现边界」。
+    </div>
+  </div>
+
+  <!-- STEP 4 -->
+  <div class="card" style="border-left:4px solid #9f7aea;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#6b46c1;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">4</div>
+      <div>
+        <strong style="font-size:14px;color:#6b46c1;">LLM#3 + Whiteboard — Slot认领协调</strong>
+        <span class="badge-tag blue" style="margin-left:8px;">现有模块（可优化）</span>
+        <span class="badge-tag purple" style="margin-left:4px;">MemoryModule参与</span>
+      </div>
+    </div>
+    <div class="card-grid cols-3" style="gap:10px;">
+      <div style="background:#ebf8ff;border-radius:8px;padding:12px;">
+        <strong style="color:#2b6cb0;font-size:12px;">UAV-1（Leader）</strong>
+        <p style="font-size:11.5px;margin-top:6px;color:#4a5568;">
+          MemoryModule检索：「历史上多次执行Scout成功」<br>
+          LLM#3决策 → 选 S0 (Scout)<br>
+          写白板：<code>Scout → UAV-1</code>
+        </p>
+      </div>
+      <div style="background:#ebf8ff;border-radius:8px;padding:12px;">
+        <strong style="color:#2b6cb0;font-size:12px;">UAV-2</strong>
+        <p style="font-size:11.5px;margin-top:6px;color:#4a5568;">
+          读白板：Scout已被UAV-1占领<br>
+          LLM#3决策 → 选 S1 (Interceptor)<br>
+          发送 SlotSelect → UAV-1确认
+        </p>
+      </div>
+      <div style="background:#ebf8ff;border-radius:8px;padding:12px;">
+        <strong style="color:#2b6cb0;font-size:12px;">UAV-3</strong>
+        <p style="font-size:11.5px;margin-top:6px;color:#4a5568;">
+          读白板：Scout+Interceptor已满<br>
+          LLM#3决策 → 选 S2 (Perimeter)<br>
+          发送 SlotSelect → UAV-1确认
+        </p>
+      </div>
+    </div>
+    <p style="font-size:12.5px;margin-top:10px;color:#4a5568;">UAV-1广播 <code>SlotConfirm</code> + <code>StartExec</code>，三机开始各自的ADM决策循环。</p>
+  </div>
+
+  <!-- STEP 5 -->
+  <div class="card" style="border-left:4px solid #f6ad55;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#c05621;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">5</div>
+      <div>
+        <strong style="font-size:14px;color:#c05621;">响应式ADM — 执行层涌现（替代固定Steps）</strong>
+        <span class="badge-tag orange" style="margin-left:8px;">改进点：去掉LLM#4</span>
+      </div>
+    </div>
+    <p style="font-size:13px;margin-bottom:12px;color:#4a5568;">三架无人机<strong>并行进入各自的ADM决策循环</strong>（每2秒一次），无需预先生成步骤列表：</p>
+
+    <div class="card-grid cols-3" style="gap:10px;">
+      <div>
+        <strong style="font-size:12px;color:#276749;">🔭 UAV-1 (Scout) 的决策循环</strong>
+        <pre style="font-size:10.5px;padding:10px;margin-top:6px;">// 决策周期 T=0
+输入 → LLM#5:
+  role: "Scout侦察"
+  位置: "充电站"
+  感知: "北门方向有人员活动"
+  白板: "C3+约束：需发ReadySignal"
+
+输出: MoveTo("北门上空50m")
+
+// 决策周期 T=1（到达后）
+输入 → LLM#5:
+  感知: "发现男性疑似入侵者"
+  白板: "目标位置确认"
+
+输出: Observe("疑似入侵者")
+    + WriteWhiteboard(ReadySignal{
+        "target_confirmed": "北门东侧",
+        "target_desc": "黑色上衣男性"
+      })</pre>
+      </div>
+      <div>
+        <strong style="font-size:12px;color:#2b6cb0;">🎯 UAV-2 (Interceptor) 的决策循环</strong>
+        <pre style="font-size:10.5px;padding:10px;margin-top:6px;">// 决策周期 T=0~T=1
+输入 → LLM#5:
+  role: "Interceptor拦截"
+  白板: "C3+: 等待UAV-1 ReadySignal"
+  ReadySignal: 未到
+
+输出: Wait() // 原地等待
+
+// 决策周期 T=2（ReadySignal到达）
+输入 → LLM#5:
+  白板ReadySignal: "目标在北门东侧"
+  白板IntentAnnounce:
+    "UAV-1在目标北侧"
+  C3-约束: "不与UAV-1同侧"
+
+输出: MoveTo("北门西侧")
+    + WriteWhiteboard(IntentAnnounce{
+        direction: "西侧接近"
+      })</pre>
+      </div>
+      <div>
+        <strong style="font-size:12px;color:#6b46c1;">🛡️ UAV-3 (Perimeter) 的决策循环</strong>
+        <pre style="font-size:10.5px;padding:10px;margin-top:6px;">// 独立并行，不等ReadySignal
+// 决策周期 T=0
+输入 → LLM#5:
+  role: "Perimeter周界"
+  位置: "教学楼"
+  白板: "C3-: 不与其他机同侧"
+
+输出: MoveTo("南侧出口")
+
+// 决策周期 T=1（到达后）
+输入 → LLM#5:
+  感知: "南侧出口空旷"
+  role: "封锁出口"
+
+输出: PatrolAround("南侧出口")
+    + WriteWhiteboard(IntentAnnounce{
+        direction: "南侧封锁"
+      })</pre>
+      </div>
+    </div>
+
+    <div class="alert key" style="margin-top:12px;font-size:12.5px;">
+      <strong>响应式ADM的关键优势演示：</strong>假设目标突然向东移动——在<em>固定步骤（LLM#4）</em>方案下，UAV-2会继续执行预定步骤「到达北门入口」（步骤已失效）；在<em>响应式ADM</em>方案下，下一个决策周期UAV-2会读到UAV-1白板上更新的位置信息，LLM#5直接输出「调整目标为东门东侧」。<strong>无需触发重规划，实时自适应。</strong>
+    </div>
+  </div>
+
+  <!-- STEP 6 -->
+  <div class="card" style="border-left:4px solid #e53e3e;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#c53030;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">6</div>
+      <div>
+        <strong style="font-size:14px;color:#c53030;">SharedWhiteboard + C2/C3约束 — 时序协调</strong>
+        <span class="badge-tag red" style="margin-left:8px;">现有模块（核心）</span>
+      </div>
+    </div>
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div>
+        <h4 class="sub-sub" style="font-size:13px;">白板状态时序（任务执行中）</h4>
+        <pre style="font-size:11px;padding:10px;">T=0: UAV-1写入 IntentAnnounce {
+       "MoveTo 北门上空"
+     }
+T=1: UAV-1写入 ReadySignal {
+       "target_confirmed: 北门东侧"
+     }
+     （→ 触发UAV-2的C3+等待解除）
+T=2: UAV-2写入 IntentAnnounce {
+       "从西侧接近"
+     }
+T=2: UAV-3写入 IntentAnnounce {
+       "南侧封锁"
+     }
+     （→ C3-检查：三个方向互不冲突✓）
+T=3: UAV-1写入 DoneSignal {
+       "目标已锁定追踪"
+     }
+T=4: UAV-2写入 DoneSignal {
+       "目标已拦截悬停"
+     }
+T=5: UAV-3写入 DoneSignal {
+       "南侧出口已封锁"
+     }</pre>
+      </div>
+      <div>
+        <h4 class="sub-sub" style="font-size:13px;">约束系统的具体作用</h4>
+        <table style="font-size:12px;">
+          <tr><th>约束</th><th>防止什么问题</th><th>触发时机</th></tr>
+          <tr><td><strong>C3+</strong><br>UAV-2等UAV-1</td><td>拦截机在目标未确认时乱飞，暴露意图</td><td>UAV-2 ADM每轮检查</td></tr>
+          <tr><td><strong>C3-</strong><br>互斥方向</td><td>两机从同侧夹击，目标从另一侧逃脱</td><td>IntentAnnounce写入时检查</td></tr>
+          <tr><td><strong>C2</strong><br>三机DoneSignal</td><td>GroupMonitor过早判定任务完成</td><td>GroupMonitor每5秒收集</td></tr>
+        </table>
+        <div class="alert info" style="margin-top:10px;font-size:12px;">
+          白板是「异步共享感知」层，让每架无人机的响应式ADM能感知整个团队的意图和状态，是协作的神经系统。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 7 -->
+  <div class="card" style="border-left:4px solid #68d391;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#276749;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">7</div>
+      <div>
+        <strong style="font-size:14px;color:#276749;">GroupMonitor — 任务完成评估</strong>
+        <span class="badge-tag green" style="margin-left:8px;">现有模块</span>
+      </div>
+    </div>
+    <p style="font-size:13px;margin-bottom:8px;color:#4a5568;">每5秒收集全组DoneSignal，调用LLM评估任务是否完成：</p>
+    <pre style="font-size:11.5px;padding:12px;">// GroupMonitor输入给LLM：
+{
+  "groupMission": "协同拦截北门可疑人员",
+  "doneSignals": [
+    "UAV-1: 目标已锁定追踪，位置：北门东侧",
+    "UAV-2: 目标已拦截，悬停于目标上方3m",
+    "UAV-3: 南侧出口已封锁，目标无法逃脱"
+  ]
+}
+// LLM输出: { "completed": true, "reason": "三机成功形成包围，目标已拦截" }
+// → 广播 MissionComplete → RefereeManager记录</pre>
+  </div>
+
+  <!-- STEP 8: New Modules -->
+  <div class="card" style="border-left:4px solid #d69e2e;background:#fffaf0;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#d69e2e;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">8</div>
+      <div>
+        <strong style="font-size:14px;color:#c05621;">任务完成后：新增模块的作用</strong>
+        <span class="badge-tag orange" style="margin-left:8px;">新增模块发挥作用</span>
+      </div>
+    </div>
+
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px;">
+        <strong style="color:#6b46c1;font-size:13px;">💭 ReflectionModule（升级后）— 任务后反思</strong>
+        <p style="font-size:12.5px;margin-top:8px;color:#4a5568;">任务完成，3个DoneSignal累积重要性 &gt; 150，触发层级反思：</p>
+        <pre style="font-size:11px;padding:8px;margin-top:6px;">L1观察：「UAV-1从北门上空50m观察，
+          识别速度比预期快」
+L2反思：「高空悬停观察比低飞扫描效率高」
+L3抽象：「制高点优先原则在侦察任务中普遍有效」
+→ 写入MemoryModule (reflectionDepth=2)</pre>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px;">
+        <strong style="color:#2b6cb0;font-size:13px;">🧠 MemoryModule（升级后）— 经验存储</strong>
+        <p style="font-size:12.5px;margin-top:8px;color:#4a5568;">三维评分检索确保此次经验在下次类似任务中被有效检索：</p>
+        <pre style="font-size:11px;padding:8px;margin-top:6px;">Memory: {
+  kind: Outcome,
+  summary: "三机拦截成功，
+            Scout从高空确认目标有效",
+  importanceScore: 8.5,  // LLM打分
+  recency: 1.0,          // 刚发生
+  embedding: [...]       // 语义向量
+}</pre>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px;">
+        <strong style="color:#553c9a;font-size:13px;">🤝 SocialRelationshipGraph（新增）— 关系更新</strong>
+        <p style="font-size:12.5px;margin-top:8px;color:#4a5568;">本次协作后，UAV-1和UAV-2的关系得到强化：</p>
+        <pre style="font-size:11px;padding:8px;margin-top:6px;">// CommunicationModule路由消息后自动调用
+SocialGraph.UpdateRelationship(
+  "UAV-1", "UAV-2",
+  familiarityDelta: +0.05,
+  trustDelta: +0.08,
+  summary: "三机拦截任务，UAV-2准时响应"
+)
+// 下次任务UAV-1会倾向于配合UAV-2</pre>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px;">
+        <strong style="color:#276749;font-size:13px;">📚 SkillLibrary（新增）— 技能积累</strong>
+        <p style="font-size:12.5px;margin-top:8px;color:#4a5568;">ReflectionModule检测到成功的协调模式，自动提取技能：</p>
+        <pre style="font-size:11px;padding:8px;margin-top:6px;">Skill: {
+  name: "三机分向拦截",
+  desc: "1侦察+1侧翼拦截+1封锁出口",
+  requiredRoles: ["Scout","Interceptor",
+                  "Perimeter"],
+  successRate: 1.0,
+  llmStepTemplate: "Scout确认→Interceptor
+    从{opposite_direction}接近→
+    Perimeter封锁{escape_route}"
+}
+// 下次类似任务直接调用，减少LLM调用</pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- SUMMARY TABLE -->
+  <h3 class="sub-title" style="margin-top:24px;">📊 案例中各模块的角色汇总</h3>
+  <table>
+    <thead>
+      <tr><th>模块</th><th>状态</th><th>在本案例中的具体作用</th><th>没有它会怎样</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>LLM#1 任务解析</strong></td>
+        <td><span class="badge-tag green">现有</span></td>
+        <td>将「拦截可疑人员」转化为C3+/C3-结构化约束</td>
+        <td>无法提取时序依赖，UAV-2乱飞暴露包围意图</td>
+      </tr>
+      <tr>
+        <td><strong>分组+LLM#2槽位生成</strong></td>
+        <td><span class="badge-tag green">现有</span></td>
+        <td>定义 Scout/Interceptor/Perimeter 三个角色，防止三机全部去侦察</td>
+        <td><strong>任务失败</strong>，三机各自涌现只做侦察，没人拦截</td>
+      </tr>
+      <tr>
+        <td><strong>LLM#3+Whiteboard Slot认领</strong></td>
+        <td><span class="badge-tag green">现有</span></td>
+        <td>UAV-1基于历史经验选Scout，其余两机自动填充其他角色</td>
+        <td>角色冲突，两机争抢同一角色，一机无角色</td>
+      </tr>
+      <tr>
+        <td><strong>响应式ADM（LLM#5升级）</strong></td>
+        <td><span class="badge-tag orange">改进</span></td>
+        <td>目标移动时实时调整，无需重新规划；读白板获取队友意图</td>
+        <td>固定步骤在目标移动后失效，只能等MAD辩论重规划</td>
+      </tr>
+      <tr>
+        <td><strong>SharedWhiteboard C2/C3</strong></td>
+        <td><span class="badge-tag green">现有</span></td>
+        <td>C3+确保UAV-2等待确认；C3-防止同方向夹击</td>
+        <td>UAV-2提前暴露，或两机从同方向让目标逃脱</td>
+      </tr>
+      <tr>
+        <td><strong>GroupMonitor</strong></td>
+        <td><span class="badge-tag green">现有</span></td>
+        <td>收集三机DoneSignal，LLM评估「任务是否完成」</td>
+        <td>无法知道任务何时结束，系统持续运行浪费资源</td>
+      </tr>
+      <tr>
+        <td><strong>MemoryModule（升级）</strong></td>
+        <td><span class="badge-tag blue">升级</span></td>
+        <td>Slot认领时检索历史侦察成功经验，提高角色选择质量</td>
+        <td>Slot选择随机化，专精无法形成，决策质量低</td>
+      </tr>
+      <tr>
+        <td><strong>ReflectionModule（升级）</strong></td>
+        <td><span class="badge-tag blue">升级</span></td>
+        <td>任务后提炼「高空侦察原则」，写入记忆供下次使用</td>
+        <td>每次任务独立，无法从经验中学习</td>
+      </tr>
+      <tr>
+        <td><strong>SocialRelationshipGraph（新增）</strong></td>
+        <td><span class="badge-tag purple">新增</span></td>
+        <td>强化UAV-1/UAV-2搭档关系，下次自然配合更顺畅</td>
+        <td>每次任务重新匹配，无法形成高效固定搭档</td>
+      </tr>
+      <tr>
+        <td><strong>SkillLibrary（新增）</strong></td>
+        <td><span class="badge-tag purple">新增</span></td>
+        <td>封装「三机分向拦截」技能，下次直接复用减少LLM调用</td>
+        <td>重复任务重复学习，没有经验积累</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<hr class="divider">
+
+<!-- SECTION EXAMPLE 2: AUTONOMOUS DAILY ROUTINE -->
+<section id="s_example2" class="section">
+  <h2 class="section-title">⭐ 端到端自主案例：普通工作日·三机无指令自治一天</h2>
+  <p style="font-size:14px;margin-bottom:8px;">本案例展示<strong>没有任何人类操作员介入</strong>的情况下，智能体如何像斯坦福小镇居民一样自主唤醒、产生目标、规划执行并从经验中成长——完整覆盖所有现有模块与预期新增模块。</p>
+
+  <!-- 与案例一对比提示 -->
+  <div class="alert info" style="margin-bottom:20px;font-size:13px;">
+    <strong>📌 与案例一的核心区别：</strong>案例一的驱动力是「人类注入任务」，案例二的驱动力是「时间流逝 + 自身性格 + 历史记忆」。任务从系统内部涌现，而非从外部输入。
+  </div>
+
+  <!-- 场景设定 Banner -->
+  <div class="card" style="background:linear-gradient(135deg,#1c4532,#276749,#2f855a);color:white;margin-bottom:24px;">
+    <h4 style="color:#9ae6b4;font-size:14px;margin-bottom:10px;">📋 场景设定</h4>
+    <div class="card-grid cols-3" style="gap:12px;">
+      <div style="background:rgba(255,255,255,0.1);border-radius:8px;padding:12px;">
+        <strong style="color:#68d391;">任务来源</strong>
+        <p style="font-size:12px;margin-top:4px;color:#e2e8f0;">无人类注入。系统时钟到达 06:00，SimulatedTimeModule 触发 OnNewDay，智能体自主产生当日目标</p>
+      </div>
+      <div style="background:rgba(255,255,255,0.1);border-radius:8px;padding:12px;">
+        <strong style="color:#f6ad55;">三机初始状态</strong>
+        <p style="font-size:12px;margin-top:4px;color:#e2e8f0;">
+          UAV-1「责任心型」— 充电站，电量100%，patrol专精<br>
+          UAV-2「协作型」— 操场，电量88%，support专精<br>
+          UAV-3「探索型」— 图书馆，电量91%，discovery专精
+        </p>
+      </div>
+      <div style="background:rgba(255,255,255,0.1);border-radius:8px;padding:12px;">
+        <strong style="color:#fc8181;">今日将发生</strong>
+        <p style="font-size:12px;margin-top:4px;color:#e2e8f0;">UAV-1/2 自主组队巡逻，中途发现东门未关并上报；UAV-3 独立探索发现新捷径；傍晚反思与技能积累</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 0: 夜间L3反思 -->
+  <div class="card" style="border-left:4px solid #4a5568;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#2d3748;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">0</div>
+      <div>
+        <strong style="font-size:14px;color:#2d3748;">05:55 — ReflectionModule（升级）— 夜间 L3 抽象反思</strong>
+        <span class="badge-tag blue" style="margin-left:8px;">升级模块</span>
+      </div>
+    </div>
+    <p style="font-size:13px;color:#4a5568;margin-bottom:10px;">每日 06:00 唤醒前5分钟，ReflectionModule 检测过去24小时内累积重要性 &gt; 阈值，自动触发 L3 抽象反思，生成供明天使用的高层洞察：</p>
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div>
+        <pre style="font-size:11px;padding:10px;">// UAV-1 夜间 L3 反思输出
+{
+  "depth": 3,
+  "insight": "本周北门和东门在
+    07:00~08:30 之间是安全盲区，
+    应优先安排清晨巡逻覆盖这两个区域",
+  "derivedFrom": [
+    "day-3: 北门07:15发现陌生人",
+    "day-5: 东门08:00发现未关"
+  ],
+  "priority": 9.2
+}
+// 写入 MemoryModule，reflectionDepth=3
+// 将在明早 AutonomousGoalGenerator 中被检索</pre>
+      </div>
+      <div>
+        <p style="font-size:12.5px;color:#4a5568;margin-bottom:8px;"><strong>为什么这步在「起床前」运行？</strong></p>
+        <ul class="check-list" style="font-size:12.5px;">
+          <li class="yes">L3 反思需要整合一整天的记忆流，计算量大，放在低活跃期执行不影响实时任务</li>
+          <li class="yes">生成的洞察立即可用于次日早晨的目标生成，形成「昨天经验 → 今天目标」的闭环</li>
+          <li class="yes">现有系统缺少此步骤，智能体每天从零开始，经验无法跨日积累</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 1: SimulatedTimeModule OnNewDay -->
+  <div class="card" style="border-left:4px solid #319795;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#2c7a7b;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">1</div>
+      <div>
+        <strong style="font-size:14px;color:#2c7a7b;">06:00 — SimulatedTimeModule（新增）— 时间感知与唤醒</strong>
+        <span class="badge-tag purple" style="margin-left:8px;">新增模块</span>
+      </div>
+    </div>
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div>
+        <pre style="font-size:11px;padding:10px;">// SimulatedTimeModule.cs
+// 系统仿真时间到达 06:00
+
+OnNewDay?.Invoke(new DayContext {
+  simDate: "2025-09-15",
+  simTime: "06:00",
+  period: TimePeriod.EarlyMorning,
+  seasonalContext: "工作日·秋季开学"
+});
+
+// 广播给所有 IntelligentAgent
+// → 每个 agent.OnReceiveNewDayEvent()
+//   → 触发 AutonomousGoalGenerator</pre>
+      </div>
+      <div>
+        <p style="font-size:12.5px;color:#4a5568;margin-bottom:8px;"><strong>时间感知的作用：</strong></p>
+        <ul class="check-list" style="font-size:12.5px;">
+          <li class="yes"><code>TimePeriod.EarlyMorning</code> 决定今天的行为模板（清晨与深夜的任务权重不同）</li>
+          <li class="yes">「工作日」vs「周末」影响 AutonomousGoalGenerator 的任务候选池（工作日更多安全巡逻，周末更多探索）</li>
+          <li class="yes">当前系统没有时间概念，所有时刻行为一致，无法模拟真实的作息节律</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 2: AutonomousGoalGenerator -->
+  <div class="card" style="border-left:4px solid #805ad5;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#553c9a;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">2</div>
+      <div>
+        <strong style="font-size:14px;color:#553c9a;">06:00–06:10 — AutonomousGoalGenerator（新增）+ PersonalitySystem（新增）+ MemoryModule — 自主目标生成</strong>
+        <span class="badge-tag purple" style="margin-left:8px;">新增模块</span>
+      </div>
+    </div>
+    <p style="font-size:13px;color:#4a5568;margin-bottom:10px;">每架无人机独立调用 LLM，输入「性格档案 + 昨日记忆 + 社会关系 + 当前状态 + 时间上下文」，输出今日自主目标。<strong>这是案例二最核心的「无注入」起点。</strong></p>
+    <div class="card-grid cols-3" style="gap:10px;">
+      <div style="background:#faf5ff;border:1px solid #d6bcfa;border-radius:8px;padding:12px;">
+        <strong style="color:#553c9a;font-size:12px;">UAV-1「责任心型」</strong>
+        <pre style="font-size:10px;padding:8px;margin-top:6px;">// PersonalitySystem
+personality: {
+  conscientiousness: 0.9,
+  agreeableness: 0.6,
+  openness: 0.4
+}
+// MemoryModule 检索 top-3:
+// [1] "北门07:15陌生人事件"(今)
+// [2] "东门未关 重要性8.5"(昨)
+// [3] "上周Scout成功率100%"
+
+// AutonomousGoalGenerator LLM输出:
+goal: "清晨优先巡逻北门+东门，
+  重点检查东门状态；
+  与UAV-2协作提高覆盖效率"
+submittedVia: SubmitAutonomousGoal()</pre>
+      </div>
+      <div style="background:#faf5ff;border:1px solid #d6bcfa;border-radius:8px;padding:12px;">
+        <strong style="color:#553c9a;font-size:12px;">UAV-2「协作型」</strong>
+        <pre style="font-size:10px;padding:8px;margin-top:6px;">// PersonalitySystem
+personality: {
+  conscientiousness: 0.7,
+  agreeableness: 0.95,
+  openness: 0.5
+}
+// SocialRelationshipGraph检索:
+// UAV-1 信任度 0.82 → 优先搭档
+// MemoryModule: "上次与UAV-1
+//   协作巡逻评分9.1"
+
+// AutonomousGoalGenerator LLM输出:
+goal: "协助UAV-1完成校园巡逻，
+  承担支援和记录工作；
+  关注操场和教学区安全"
+submittedVia: SubmitAutonomousGoal()</pre>
+      </div>
+      <div style="background:#faf5ff;border:1px solid #d6bcfa;border-radius:8px;padding:12px;">
+        <strong style="color:#553c9a;font-size:12px;">UAV-3「探索型」</strong>
+        <pre style="font-size:10px;padding:8px;margin-top:6px;">// PersonalitySystem
+personality: {
+  conscientiousness: 0.5,
+  agreeableness: 0.5,
+  openness: 0.95
+}
+// WorldSemanticMap: 图书馆北侧
+//   区域标记为"未完整探索"
+// MemoryModule: "发现新路径时
+//   管理员给予正向反馈 x3"
+
+// AutonomousGoalGenerator LLM输出:
+goal: "独立探索图书馆北侧未知区域，
+  更新语义地图，测试边界感知准确度"
+submittedVia: SubmitAutonomousGoal()</pre>
+      </div>
+    </div>
+    <div class="alert info" style="margin-top:10px;font-size:12.5px;">
+      <strong>关键设计：</strong><code>SubmitAutonomousGoal()</code> 是 PlanningModule 上新增的接口，与人类注入走<strong>完全相同的后续流程</strong>（LLM#1解析 → 分组 → Slot生成 → 认领 → ADM执行）。区别仅在于目标的来源：外部注入 vs 内部涌现。
+    </div>
+  </div>
+
+  <!-- STEP 3: LLM#1 解析自主目标 -->
+  <div class="card" style="border-left:4px solid #2b6cb0;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#2b6cb0;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">3</div>
+      <div>
+        <strong style="font-size:14px;color:#2b6cb0;">06:10 — LLM#1（PlanningModule）— 解析自主目标</strong>
+        <span class="badge-tag blue" style="margin-left:8px;">现有模块</span>
+        <span style="font-size:12px;color:#718096;margin-left:8px;">接口相同，来源不同</span>
+      </div>
+    </div>
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div>
+        <p style="font-size:13px;color:#4a5568;margin-bottom:8px;"><strong>输入：</strong>UAV-1 和 UAV-2 的目标文本（内容重叠 → 触发 Cooperation 分组）</p>
+        <pre style="font-size:11px;padding:10px;">{
+  "source": "AutonomousGoalGenerator",  // 新字段
+  "mission": "UAV-1：北门+东门巡逻；
+    UAV-2：协助巡逻+覆盖操场；
+    UAV-3：图书馆北侧独立探索",
+  "agentIds": ["UAV-1","UAV-2","UAV-3"]
+}</pre>
+      </div>
+      <div>
+        <p style="font-size:13px;color:#4a5568;margin-bottom:8px;"><strong>输出：ParsedMission</strong></p>
+        <pre style="font-size:11px;padding:10px;">{
+  "relType": "Cooperation+Independent",
+  "groupCnt": 2,
+  "groupMsns": [
+    "UAV-1+UAV-2: 协同校园安全巡逻",
+    "UAV-3: 独立地图探索任务"
+  ],
+  "constraints": [
+    {"cType":"C1",
+     "desc":"UAV-1负责北门/东门区域，
+       UAV-2负责操场/教学区域"},
+    {"cType":"C2",
+     "desc":"两机每30分钟同步一次状态"}
+  ]
+}</pre>
+      </div>
+    </div>
+    <div class="alert info" style="margin-top:8px;font-size:12.5px;">
+      <strong>此处的作用：</strong>LLM#1 识别出 UAV-1/2 目标存在自然协作关系（都在校园安全领域），自动将两机合并为 G0 巡逻组；UAV-3 目标独立，划入 G1 探索组。这种「自主分组」是当前系统不具备的能力。
+    </div>
+  </div>
+
+  <!-- STEP 4: 分组 + LLM#2 Slot生成 -->
+  <div class="card" style="border-left:4px solid #48bb78;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#276749;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">4</div>
+      <div>
+        <strong style="font-size:14px;color:#276749;">06:15 — 分组 + LLM#2（SlotGen）— 角色槽位生成</strong>
+        <span class="badge-tag green" style="margin-left:8px;">现有模块</span>
+      </div>
+    </div>
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div>
+        <pre style="font-size:11px;padding:10px;">// G0（巡逻组）槽位定义
+slots: [
+  {
+    slotId: "S0", role: "LeadScout",
+    desc: "主导北门/东门巡逻，
+      重点检查关键点位状态，
+      发现异常立即上报",
+    constraintIds: ["C1_north_east",
+                    "C2_sync_30min"]
+  },
+  {
+    slotId: "S1", role: "SupportPatrol",
+    desc: "覆盖操场/教学区，辅助
+      记录和区域状态更新，
+      接收并响应 LeadScout 的上报",
+    constraintIds: ["C1_playground",
+                    "C2_sync_30min"]
+  }
+]
+
+// G1（探索组）只有1人，直接进入ADM
+// UAV-3: role="Explorer"，无Slot竞争</pre>
+      </div>
+      <div>
+        <p style="font-size:12.5px;color:#4a5568;margin-bottom:8px;"><strong>日常任务的Slot与紧急任务的Slot有何不同？</strong></p>
+        <div style="background:#f0fff4;border-radius:6px;padding:10px;font-size:12px;color:#276749;margin-bottom:8px;">
+          <strong>紧急任务（案例一）：</strong>Scout / Interceptor / Perimeter<br>
+          硬时序约束（C3+/C3-），毫秒级同步，一旦错位任务失败
+        </div>
+        <div style="background:#ebf8ff;border-radius:6px;padding:10px;font-size:12px;color:#2b6cb0;">
+          <strong>日常任务（案例二）：</strong>LeadScout / SupportPatrol<br>
+          软协调约束（C1区域划分 + C2周期同步），容忍偏差，强调持续覆盖
+        </div>
+        <p style="font-size:12px;color:#718096;margin-top:8px;">Slot 机制的设计对两种场景同样适用，体现了槽位系统的通用性。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 5: LLM#3 + Whiteboard Slot认领 -->
+  <div class="card" style="border-left:4px solid #9f7aea;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#6b46c1;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">5</div>
+      <div>
+        <strong style="font-size:14px;color:#6b46c1;">06:20 — LLM#3 + SharedWhiteboard — Slot认领（自主协调）</strong>
+        <span class="badge-tag blue" style="margin-left:8px;">现有模块</span>
+        <span class="badge-tag purple" style="margin-left:4px;">MemoryModule + SocialGraph参与</span>
+      </div>
+    </div>
+    <div class="card-grid cols-2" style="gap:10px;">
+      <div style="background:#ebf8ff;border-radius:8px;padding:12px;">
+        <strong style="color:#2b6cb0;font-size:12px;">UAV-1 的决策过程</strong>
+        <pre style="font-size:10.5px;padding:8px;margin-top:6px;">// MemoryModule 检索：
+"历史LeadScout任务成功率: 94%"
+"东门昨日未关 → 需优先检查"
+
+// SocialRelationshipGraph：
+"UAV-2信任度0.82，协作顺畅"
+
+// LLM#3 决策：
+"选 S0 (LeadScout)"
+"负责北门/东门，擅长区域+记忆支撑"
+
+// 写白板：
+IntentAnnounce {
+  agentId: "UAV-1",
+  slotId: "S0",
+  reason: "北门专精+东门异常记忆"
+}</pre>
+      </div>
+      <div style="background:#ebf8ff;border-radius:8px;padding:12px;">
+        <strong style="color:#2b6cb0;font-size:12px;">UAV-2 的决策过程</strong>
+        <pre style="font-size:10.5px;padding:8px;margin-top:6px;">// 读白板：S0 已被 UAV-1 占领
+// SocialRelationshipGraph：
+"与UAV-1搭档历史评分高"
+
+// MemoryModule 检索：
+"上次支援UAV-1操场巡逻
+  效率评分8.7/10"
+
+// LLM#3 决策：
+"选 S1 (SupportPatrol)"
+"与UAV-1搭档、操场专精匹配"
+
+// 发送 SlotSelect → UAV-1确认
+// UAV-1广播 SlotConfirm + StartExec
+// 两机进入各自 ADM 执行循环</pre>
+      </div>
+    </div>
+    <div class="alert info" style="margin-top:10px;font-size:12.5px;">
+      <strong>与案例一的不同：</strong>案例一的 Slot 认领主要依据「当前状态（电量/位置）」；案例二还叠加了「历史成功率（MemoryModule）」+「社会关系偏好（SocialRelationshipGraph）」，使自主决策更具个性化和学习能力。
+    </div>
+  </div>
+
+  <!-- STEP 6: ADM 响应式巡逻 + 感知事件 -->
+  <div class="card" style="border-left:4px solid #f6ad55;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#c05621;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">6</div>
+      <div>
+        <strong style="font-size:14px;color:#c05621;">08:30 — 响应式ADM（LLM#5）+ PerceptionModule — 执行中感知异常</strong>
+        <span class="badge-tag orange" style="margin-left:8px;">改进模块</span>
+      </div>
+    </div>
+    <p style="font-size:13px;color:#4a5568;margin-bottom:10px;">两机已巡逻北门2小时，正常执行例行 ADM 决策循环。08:30，UAV-1 飞越东门区域，PerceptionModule 捕获到异常：</p>
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div>
+        <pre style="font-size:11px;padding:10px;">// PerceptionModule 感知输出 (0.5s一次)
+{
+  agentId: "UAV-1",
+  timestamp: "08:31:14",
+  observations: [
+    {
+      type: "AnomalyDetected",
+      desc: "东门铁门呈开启状态",
+      location: "east_gate",
+      importance: 8.5    // 高重要性
+    }
+  ]
+}
+// → 自动写入 MemoryModule
+//   (与昨日"东门未关"记忆关联,
+//    检索相关性得分↑)</pre>
+      </div>
+      <div>
+        <pre style="font-size:11px;padding:10px;">// ADM 下一决策周期自动获取感知
+// LLM#5 输入包含此感知:
+{
+  role: "LeadScout",
+  perception: "东门开启 (异常)",
+  memory_hit: "昨日同地点同类事件",
+  whiteboard: "当前无紧急任务"
+}
+
+// LLM#5 输出 (无需人类触发):
+nextActions: [
+  Observe("东门详细状态"),
+  ReportAnomaly("东门未关",
+    "east_gate", priority=HIGH),
+  WriteWhiteboard({
+    type: StatusUpdate,
+    desc: "东门异常，已上报",
+    constraintId: "C1_east_gate"
+  })
+]</pre>
+      </div>
+    </div>
+    <div class="alert warning" style="margin-top:8px;font-size:12.5px;">
+      <strong>这正是「执行层涌现」的体现：</strong>UAV-1 的 LeadScout 任务中<strong>没有</strong>「检查东门」这条预定步骤，但基于感知 + 记忆 + ADM 响应式决策，UAV-1 自主识别出异常并处理——不需要人类告知，也不需要重新规划。
+    </div>
+  </div>
+
+  <!-- STEP 7: WorldSemanticMap + SkillLibrary -->
+  <div class="card" style="border-left:4px solid #319795;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#2c7a7b;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">7</div>
+      <div>
+        <strong style="font-size:14px;color:#2c7a7b;">11:00 — WorldSemanticMap（新增）+ SkillLibrary（新增）— 地图更新与技能复用</strong>
+        <span class="badge-tag purple" style="margin-left:8px;">新增模块</span>
+      </div>
+    </div>
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div>
+        <strong style="font-size:13px;color:#2c7a7b;">UAV-3 的探索成果 → WorldSemanticMap</strong>
+        <pre style="font-size:10.5px;padding:10px;margin-top:8px;">// UAV-3 在图书馆北侧探索期间
+// 发现一条未记录的人行便道
+
+// WorldSemanticMap.UpdateNode():
+{
+  nodeId: "lib_north_path_01",
+  semanticLabel: "图书馆北侧捷径",
+  connectsTo: ["library_main",
+               "dormitory_area"],
+  traversalTime: 45,  // 秒
+  discoveredBy: "UAV-3",
+  note: "可减少图书馆→宿舍
+    区域间30%的飞行时间"
+}
+
+// 此更新立即对所有UAV可见
+// UAV-1/2 下次巡逻可利用此捷径</pre>
+      </div>
+      <div>
+        <strong style="font-size:13px;color:#2c7a7b;">G0 巡逻组 → SkillLibrary 复用</strong>
+        <pre style="font-size:10.5px;padding:10px;margin-top:8px;">// 巡逻组午前已完成一轮巡逻
+// SkillLibrary.Search():
+query: "两机协同校园安全巡逻"
+
+// 命中已有技能:
+{
+  name: "routine_campus_patrol",
+  desc: "双机分区巡逻，
+    周期同步状态，
+    LeadScout负责关键点检查",
+  successRate: 0.91,
+  avgDuration: "2h",
+  lastUsed: "3天前"
+}
+
+// 直接加载技能模板
+// ADM 使用技能中的步骤框架
+// 减少 LLM#5 调用次数约40%</pre>
+      </div>
+    </div>
+    <div class="alert info" style="margin-top:8px;font-size:12.5px;">
+      <strong>两个新增模块的协同：</strong>WorldSemanticMap 让 UAV-3 的探索成果惠及全体（共享世界模型），SkillLibrary 让 UAV-1/2 的成功经验提高执行效率（技能复用）。这两者都需要先有 MemoryModule + Reflection 的积累才能生效。
+    </div>
+  </div>
+
+  <!-- STEP 8: GroupMonitor + ReflectionModule 触发 -->
+  <div class="card" style="border-left:4px solid #d69e2e;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#b7791f;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">8</div>
+      <div>
+        <strong style="font-size:14px;color:#b7791f;">17:00 — GroupMonitor + ReflectionModule（升级）— 阶段性反思</strong>
+        <span class="badge-tag blue" style="margin-left:8px;">现有 + 升级</span>
+      </div>
+    </div>
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div>
+        <p style="font-size:13px;color:#4a5568;margin-bottom:8px;"><strong>GroupMonitor 状态评估：</strong></p>
+        <pre style="font-size:11px;padding:10px;">// GroupMonitor 收集全天白板信号
+{
+  "G0_巡逻组状态": {
+    completedCycles: 3,
+    anomaliesFound: 1,   // 东门未关
+    anomaliesResolved: 1,
+    coverageRate: "94%",
+    syncCompliance: "100%"
+  },
+  "G1_探索组状态": {
+    newNodesDiscovered: 1,
+    mapCoverageIncrease: "+3.2%",
+    perceptionAccuracy: "98.7%"
+  }
+}
+// LLM评估: 日常任务完成度 ✅
+// 触发: TaskStatus.DailyComplete</pre>
+      </div>
+      <div>
+        <p style="font-size:13px;color:#4a5568;margin-bottom:8px;"><strong>ReflectionModule L2 触发（重要性积累 &gt; 阈值）：</strong></p>
+        <pre style="font-size:11px;padding:10px;">// 今日事件重要性累积:
+// 东门异常(8.5) + 3次巡逻完成
+// (6.0×3) + 捷径发现(7.2) = 33.7
+// 阈值 30 → 触发 L2 反思
+
+// UAV-1 L2 反思输出:
+{
+  "depth": 2,
+  "insight": "东门在清晨连续两天
+    出现未关情况，建议将东门检查
+    纳入每日固定巡逻节点（优先级↑）",
+  "actionSuggestion": "明日
+    AutonomousGoalGenerator将此
+    insight纳入目标生成权重"
+}
+// 写入 MemoryModule，depth=2</pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 9: SocialRelationshipGraph + CommunicationModule -->
+  <div class="card" style="border-left:4px solid #ed64a6;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#b83280;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">9</div>
+      <div>
+        <strong style="font-size:14px;color:#b83280;">18:00 — SocialRelationshipGraph（新增）+ CommunicationModule — 关系强化与对话记忆</strong>
+        <span class="badge-tag purple" style="margin-left:8px;">新增模块</span>
+      </div>
+    </div>
+    <div class="card-grid cols-2" style="gap:12px;">
+      <div>
+        <pre style="font-size:11px;padding:10px;">// 任务结束后 CommunicationModule
+// UAV-1 → UAV-2 自然语言对话：
+Message {
+  type: DirectAgent,
+  from: "UAV-1",
+  to: "UAV-2",
+  content: "今天东门发现异常，
+    你在操场方向有看到什么吗？
+    下次可以加一个操场-东门
+    的联合检查点"
+}
+
+// UAV-2 回复：
+Message {
+  content: "同意，今天操场正常。
+    明天我可以在08:00顺路检查
+    东门外围，你继续主检。"
+}
+
+// 对话内容写入双方记忆流
+// importance = 6.5（协作规划意义高）</pre>
+      </div>
+      <div>
+        <p style="font-size:13px;color:#4a5568;margin-bottom:8px;"><strong>SocialRelationshipGraph 更新：</strong></p>
+        <pre style="font-size:11px;padding:10px;">// 今日协作评分 → 更新关系图谱
+SocialRelationshipGraph.Update({
+  agentA: "UAV-1",
+  agentB: "UAV-2",
+  event: "successful_joint_patrol",
+  trustDelta: +0.05,  // 信任度提升
+  familiarityDelta: +0.08,
+  cooperationScore: 9.1
+})
+
+// 更新后关系状态：
+{
+  UAV1_UAV2: {
+    trust: 0.87,      // 0.82 → 0.87
+    familiarity: 0.74,
+    preferredRole:
+      "UAV-1:Lead, UAV-2:Support",
+    sharedGoals: ["campus_safety"]
+  }
+}
+// 明日 SlotSelection 中
+// 此关系将直接影响搭档偏好</pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 10: 夜间记忆与L3反思 -->
+  <div class="card" style="border-left:4px solid #4a5568;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div style="background:#2d3748;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">10</div>
+      <div>
+        <strong style="font-size:14px;color:#2d3748;">23:55 — MemoryModule（升级）+ ReflectionModule L3 — 夜间沉淀，闭环形成</strong>
+        <span class="badge-tag blue" style="margin-left:8px;">升级模块</span>
+      </div>
+    </div>
+    <p style="font-size:13px;color:#4a5568;margin-bottom:10px;">一天结束，系统进入夜间低活跃期。MemoryModule 整理全天记忆流，ReflectionModule 准备次日 L3 抽象反思（对应 Step 0 的「下一天」），形成<strong>自主成长闭环</strong>：</p>
+    <div class="card-grid cols-3" style="gap:10px;">
+      <div style="background:#f7fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;">
+        <strong style="color:#2d3748;font-size:12px;">MemoryModule 今日写入汇总</strong>
+        <pre style="font-size:10px;padding:8px;margin-top:6px;">今日新增记忆:
+- 东门08:31开启异常 (imp=8.5)
+- 捷径lib_north_path_01(imp=7.2)
+- UAV-2协作对话(imp=6.5)
+- 3次例行巡逻完成(imp=6.0×3)
+- L2反思：加强东门巡逻(imp=9.0)
+
+总计: 12条新记忆
+旧记忆衰减: recency decay ×0.97
+检索索引更新完毕</pre>
+      </div>
+      <div style="background:#f7fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;">
+        <strong style="color:#2d3748;font-size:12px;">ReflectionModule L3（凌晨准备）</strong>
+        <pre style="font-size:10px;padding:8px;margin-top:6px;">// 输入: 今日所有imp>6.0的记忆
+// LLM生成L3抽象洞察:
+
+insight_L3: "东门安全薄弱点
+  已连续2日发现，形成稳定
+  模式。建议调整角色偏好：
+  UAV-1长期主导东门检查，
+  纳入LeadScout默认路径规划"
+
+// 写入 MemoryModule, depth=3
+// 将在明天06:00被
+// AutonomousGoalGenerator 检索
+// → 形成自主成长的完整闭环 ✅</pre>
+      </div>
+      <div style="background:#f0fff4;border:1px solid #9ae6b4;border-radius:8px;padding:12px;">
+        <strong style="color:#276749;font-size:12px;">明天早上的变化（演示闭环）</strong>
+        <ul style="font-size:10.5px;padding-left:14px;margin-top:8px;color:#4a5568;">
+          <li>AutonomousGoalGenerator 检索到「东门安全薄弱」L3洞察，自动将东门检查列入高优先级目标</li>
+          <li>UAV-1 的 Slot 偏好因 SocialGraph 更新，更倾向与 UAV-2 搭档</li>
+          <li>巡逻技能模板中加入东门专项检查节点</li>
+          <li>WorldSemanticMap 新捷径可被所有机使用，缩短路径15%</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- 系统自主性对比图 -->
+  <h3 class="sub-title" style="margin-top:28px;">🔄 自主成长闭环示意</h3>
+  <div style="background:#1a202c;border-radius:10px;padding:20px;margin-bottom:24px;overflow-x:auto;">
+    <svg viewBox="0 0 900 220" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:900px;">
+      <defs>
+        <marker id="arrowG" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#68d391"/>
+        </marker>
+      </defs>
+      <!-- Nodes -->
+      <rect x="10" y="80" width="130" height="50" rx="8" fill="#276749" stroke="#68d391" stroke-width="1.5"/>
+      <text x="75" y="102" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">SimulatedTime</text>
+      <text x="75" y="118" text-anchor="middle" font-size="10" fill="#9ae6b4">OnNewDay 触发</text>
+
+      <rect x="170" y="80" width="150" height="50" rx="8" fill="#553c9a" stroke="#d6bcfa" stroke-width="1.5"/>
+      <text x="245" y="99" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">AutonomousGoal</text>
+      <text x="245" y="115" text-anchor="middle" font-size="10" fill="#e9d8fd">Generator</text>
+      <text x="245" y="129" text-anchor="middle" font-size="9" fill="#b794f4">性格+记忆+社会关系</text>
+
+      <rect x="350" y="60" width="130" height="50" rx="8" fill="#2b6cb0" stroke="#63b3ed" stroke-width="1.5"/>
+      <text x="415" y="82" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">PlanningModule</text>
+      <text x="415" y="98" text-anchor="middle" font-size="10" fill="#bee3f8">LLM#1~3 + Slot</text>
+      <text x="415" y="112" text-anchor="middle" font-size="9" fill="#90cdf4">分组·槽位·认领</text>
+
+      <rect x="510" y="60" width="130" height="50" rx="8" fill="#c05621" stroke="#f6ad55" stroke-width="1.5"/>
+      <text x="575" y="82" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">ADM 执行循环</text>
+      <text x="575" y="98" text-anchor="middle" font-size="10" fill="#fbd38d">LLM#5 响应式</text>
+      <text x="575" y="112" text-anchor="middle" font-size="9" fill="#f6ad55">感知→决策→行动</text>
+
+      <rect x="670" y="60" width="130" height="50" rx="8" fill="#2c7a7b" stroke="#81e6d9" stroke-width="1.5"/>
+      <text x="735" y="82" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">Memory + Reflect</text>
+      <text x="735" y="98" text-anchor="middle" font-size="10" fill="#b2f5ea">记忆写入+反思</text>
+      <text x="735" y="112" text-anchor="middle" font-size="9" fill="#81e6d9">L1→L2→L3洞察</text>
+
+      <!-- Bottom row -->
+      <rect x="350" y="145" width="130" height="45" rx="8" fill="#b7791f" stroke="#f6e05e" stroke-width="1.5"/>
+      <text x="415" y="165" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">SkillLibrary</text>
+      <text x="415" y="181" text-anchor="middle" font-size="10" fill="#fefcbf">技能积累与复用</text>
+
+      <rect x="510" y="145" width="130" height="45" rx="8" fill="#702459" stroke="#f687b3" stroke-width="1.5"/>
+      <text x="575" y="165" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">SocialGraph</text>
+      <text x="575" y="181" text-anchor="middle" font-size="10" fill="#fed7e2">关系强化与偏好</text>
+
+      <!-- Arrows main flow -->
+      <line x1="140" y1="105" x2="168" y2="105" stroke="#68d391" stroke-width="2" marker-end="url(#arrowG)"/>
+      <line x1="320" y1="105" x2="348" y2="90" stroke="#68d391" stroke-width="2" marker-end="url(#arrowG)"/>
+      <line x1="480" y1="85" x2="508" y2="85" stroke="#68d391" stroke-width="2" marker-end="url(#arrowG)"/>
+      <line x1="640" y1="85" x2="668" y2="85" stroke="#68d391" stroke-width="2" marker-end="url(#arrowG)"/>
+      <!-- Feedback loop: Memory → AutonomousGoal (curved top) -->
+      <path d="M 735 60 Q 735 20 245 20 Q 170 20 245 78" stroke="#68d391" stroke-width="1.5" fill="none" stroke-dasharray="5,3" marker-end="url(#arrowG)"/>
+      <text x="490" y="14" text-anchor="middle" font-size="10" fill="#68d391">夜间反思 → 明日目标</text>
+      <!-- SkillLibrary → ADM -->
+      <line x1="480" y1="167" x2="510" y2="167" stroke="#f6e05e" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#arrowG)"/>
+      <line x1="575" y1="145" x2="575" y2="110" stroke="#f6e05e" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#arrowG)"/>
+      <!-- SocialGraph → AutonomousGoal -->
+      <line x1="575" y1="190" x2="245" y2="190" stroke="#f687b3" stroke-width="1.5" stroke-dasharray="4,2"/>
+      <line x1="245" y1="190" x2="245" y2="130" stroke="#f687b3" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#arrowG)"/>
+      <!-- ADM → Memory -->
+      <line x1="640" y1="100" x2="670" y2="100" stroke="#68d391" stroke-width="2" marker-end="url(#arrowG)"/>
+      <!-- Memory → SkillLibrary -->
+      <line x1="735" y1="110" x2="480" y2="155" stroke="#81e6d9" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#arrowG)"/>
+    </svg>
+  </div>
+
+  <!-- SUMMARY TABLE -->
+  <h3 class="sub-title">📊 案例中各模块的角色汇总（普通一天·自主模式）</h3>
+  <table>
+    <thead>
+      <tr><th>模块</th><th>状态</th><th>在本案例中的具体作用</th><th>没有它会怎样</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>SimulatedTimeModule</strong></td>
+        <td><span class="badge-tag purple">新增</span></td>
+        <td>06:00 触发 OnNewDay，驱动全体智能体自主启动；时间段(EarlyMorning)影响任务权重</td>
+        <td>无时间感知，智能体不知道「新的一天开始了」，无法自主启动</td>
+      </tr>
+      <tr>
+        <td><strong>AutonomousGoalGenerator</strong></td>
+        <td><span class="badge-tag purple">新增</span></td>
+        <td>每机调用LLM基于性格+记忆+社会关系自主生成当日目标，替代人类任务注入</td>
+        <td><strong>完全无法实现本案例</strong>，所有行为必须等待人类注入才能开始</td>
+      </tr>
+      <tr>
+        <td><strong>PersonalitySystem</strong></td>
+        <td><span class="badge-tag purple">新增</span></td>
+        <td>UAV-1高责任心→自主选择安全巡逻；UAV-3高开放性→自主选择探索；三机目标自然分化</td>
+        <td>三机生成相同目标，无法自然分工，分组毫无意义</td>
+      </tr>
+      <tr>
+        <td><strong>LLM#1 任务解析</strong></td>
+        <td><span class="badge-tag green">现有</span></td>
+        <td>将自主生成的目标文本解析为结构化约束和分组建议（与人类注入走完全相同流程）</td>
+        <td>自主目标无法被后续Slot系统消费，规划流程断裂</td>
+      </tr>
+      <tr>
+        <td><strong>分组+LLM#2 Slot生成</strong></td>
+        <td><span class="badge-tag green">现有</span></td>
+        <td>识别UAV-1/2目标重叠→合并巡逻组；UAV-3独立→探索组；生成日常任务的软约束Slot</td>
+        <td>无法识别协作机会，三机完全独立无协同；或无角色划分导致重复覆盖</td>
+      </tr>
+      <tr>
+        <td><strong>LLM#3+Whiteboard Slot认领</strong></td>
+        <td><span class="badge-tag green">现有</span></td>
+        <td>UAV-1基于历史成功率选LeadScout；UAV-2读白板+社会关系选SupportPatrol；无冲突确认</td>
+        <td>角色选择随机或冲突，两机可能都去巡逻北门，操场无人覆盖</td>
+      </tr>
+      <tr>
+        <td><strong>响应式ADM（LLM#5升级）</strong></td>
+        <td><span class="badge-tag orange">改进</span></td>
+        <td>东门未关异常被感知后，ADM在当前决策周期自动调整行为，无需预设步骤</td>
+        <td>固定步骤无东门检查节点，异常被忽视；或需人类告知才能处理</td>
+      </tr>
+      <tr>
+        <td><strong>PerceptionModule</strong></td>
+        <td><span class="badge-tag green">现有</span></td>
+        <td>0.5s周期感知东门状态，发现开启异常→写入记忆流→ADM下次决策周期自动获取</td>
+        <td>感知结果不写入记忆，ADM无法知道刚才发生了什么</td>
+      </tr>
+      <tr>
+        <td><strong>SharedWhiteboard</strong></td>
+        <td><span class="badge-tag green">现有</span></td>
+        <td>UAV-1将东门异常上报写入白板（C1_east_gate），UAV-2可感知并协调后续行动</td>
+        <td>异常上报仅存在于UAV-1本地，UAV-2不知情，无法协同处理</td>
+      </tr>
+      <tr>
+        <td><strong>WorldSemanticMap</strong></td>
+        <td><span class="badge-tag purple">新增</span></td>
+        <td>UAV-3探索新捷径后更新语义地图，全体UAV次日可直接使用，提升整体导航效率</td>
+        <td>探索成果只存在UAV-3记忆中，无法共享；其他机无法受益于新发现</td>
+      </tr>
+      <tr>
+        <td><strong>SkillLibrary</strong></td>
+        <td><span class="badge-tag purple">新增</span></td>
+        <td>命中已有「routine_campus_patrol」技能，ADM直接复用步骤框架，减少LLM调用40%</td>
+        <td>每次巡逻都从零规划，即使是重复任务也消耗相同计算资源，无法积累经验</td>
+      </tr>
+      <tr>
+        <td><strong>GroupMonitor</strong></td>
+        <td><span class="badge-tag green">现有</span></td>
+        <td>收集全天巡逻完成信号，LLM评估覆盖率94%，触发「日常任务完成」状态</td>
+        <td>系统不知道任务何时算「完成」，无法触发后续反思和关系更新</td>
+      </tr>
+      <tr>
+        <td><strong>MemoryModule（升级）</strong></td>
+        <td><span class="badge-tag blue">升级</span></td>
+        <td>三维评分确保东门异常（高重要性）、新捷径（高关联性）被优先检索，指导明日目标生成</td>
+        <td>关键经验被平等对待或被遗忘，AutonomousGoalGenerator无法从过去学习</td>
+      </tr>
+      <tr>
+        <td><strong>ReflectionModule（升级）</strong></td>
+        <td><span class="badge-tag blue">升级</span></td>
+        <td>L2反思提炼「加强东门巡逻」建议；夜间L3抽象出跨日模式，直接影响明日目标生成</td>
+        <td>经验无法提炼为洞察，智能体每天重蹈覆辙，无法成长</td>
+      </tr>
+      <tr>
+        <td><strong>SocialRelationshipGraph</strong></td>
+        <td><span class="badge-tag purple">新增</span></td>
+        <td>今日成功协作后UAV-1/2信任度+0.05，明日Slot选择时自然优先搭档，形成默契</td>
+        <td>每天重新匹配，UAV-1/2无法形成固定高效搭档，协作需反复磨合</td>
+      </tr>
+      <tr>
+        <td><strong>CommunicationModule</strong></td>
+        <td><span class="badge-tag green">现有</span></td>
+        <td>UAV-1/2任务后对话写入记忆流，包含明日联合检查东门的协议——跨日协作规划的起点</td>
+        <td>协作规划只发生在LLM内部，无法以自然语言形式固化为可检索记忆</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- 两案例对比 -->
+  <h3 class="sub-title" style="margin-top:28px;">📐 两个端到端案例对比</h3>
+  <table>
+    <thead>
+      <tr><th>对比维度</th><th>案例一：三机协同拦截（人类注入）</th><th>案例二：普通一天（自主涌现）</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>任务来源</strong></td>
+        <td>人类操作员注入自然语言任务</td>
+        <td>SimulatedTimeModule + AutonomousGoalGenerator 内部涌现</td>
+      </tr>
+      <tr>
+        <td><strong>规划触发</strong></td>
+        <td>外部突发事件（入侵者出现）</td>
+        <td>时间事件（每日06:00）+ 性格驱动</td>
+      </tr>
+      <tr>
+        <td><strong>约束类型</strong></td>
+        <td>硬物理约束（C3+时序等待、C3-方向互斥）</td>
+        <td>软行为约束（C1区域划分、C2周期同步）</td>
+      </tr>
+      <tr>
+        <td><strong>涌现层级</strong></td>
+        <td>执行层涌现（在固定角色内自主路径/时序）</td>
+        <td>目标层涌现（今天做什么本身是自主决定的）</td>
+      </tr>
+      <tr>
+        <td><strong>时间跨度</strong></td>
+        <td>~30分钟单次任务</td>
+        <td>18小时日常循环，跨日积累成长</td>
+      </tr>
+      <tr>
+        <td><strong>关键新增模块</strong></td>
+        <td>SocialGraph（关系）+ SkillLibrary（技能积累）</td>
+        <td>AutonomousGoalGenerator + PersonalitySystem + SimulatedTimeModule + WorldSemanticMap</td>
+      </tr>
+      <tr>
+        <td><strong>斯坦福小镇类比</strong></td>
+        <td>类比「消防演习」：有明确外部触发，协调解决具体问题</td>
+        <td>类比「普通一天」：居民自主决定今天做什么，在互动中自然涌现</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<hr class="divider">
+
+<!-- SECTION 10: ROADMAP -->
+<section id="s10" class="section">
+  <h2 class="section-title">十、实施路线图</h2>
+  <p style="font-size:14px;margin-bottom:20px;">按照"关键路径优先"原则，分四个阶段推进架构演进。每个阶段结束时，系统应可运行并体现该阶段的新能力。</p>
+
+  <div class="timeline">
+    <div class="timeline-item p1">
+      <h4>Phase 1：记忆与反思基础设施（P0，约2周）</h4>
+      <p>完成后效果：智能体能基于历史经验改善决策，反思质量显著提升</p>
+      <div class="card" style="margin-top:10px;padding:16px;">
+        <div class="card-grid cols-2" style="gap:10px;">
+          <div>
+            <strong style="font-size:13px;color:#c53030;">📌 必须完成</strong>
+            <ul style="font-size:13px;padding-left:16px;margin-top:6px;">
+              <li>升级 MemoryModule：添加 importanceScore + 指数衰减 recency</li>
+              <li>实现 DeepSeek Embedding 接口（方案B）</li>
+              <li>实现三维检索评分公式（替换现有关键词过滤）</li>
+              <li>升级 ReflectionModule：重要性累积触发 + 层级反思（L1/L2）</li>
+              <li>修改 PerceptionModule：感知结果自动写入记忆流</li>
+            </ul>
+          </div>
+          <div>
+            <strong style="font-size:13px;color:#718096;">📁 涉及文件</strong>
+            <ul style="font-size:13px;padding-left:16px;margin-top:6px;color:#4a5568;">
+              <li>LLM_Modules/MemoryModule.cs</li>
+              <li>LLM_Modules/ReflectionModule.cs</li>
+              <li>LLM_API/LLMInterface.cs（新增 /embeddings）</li>
+              <li>Perception/PerceptionModule.cs</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="timeline-item p2">
+      <h4>Phase 2：人格与时间感知（P0，约1.5周）</h4>
+      <p>完成后效果：智能体有个性分化，行为呈现时段规律性</p>
+      <div class="card" style="margin-top:10px;padding:16px;">
+        <div class="card-grid cols-2" style="gap:10px;">
+          <div>
+            <strong style="font-size:13px;color:#c05621;">📌 必须完成</strong>
+            <ul style="font-size:13px;padding-left:16px;margin-top:6px;">
+              <li>新建 PersonalitySystem.cs（Big Five + 领域特征）</li>
+              <li>新建 SimulatedTimeModule.cs（时钟 + 时段事件）</li>
+              <li>修改 AgentProperties 引用 PersonalitySystem</li>
+              <li>新建 WorldSemanticMap.cs（扩展 CampusGrid2D）</li>
+              <li>在 IntelligentAgent 订阅 OnNewDay 事件</li>
+            </ul>
+          </div>
+          <div>
+            <strong style="font-size:13px;color:#718096;">📁 涉及文件</strong>
+            <ul style="font-size:13px;padding-left:16px;margin-top:6px;color:#4a5568;">
+              <li>Agents/IntelligentAgent.cs</li>
+              <li>Agents/AgentProperties（新增人格字段）</li>
+              <li>Maps/CampusGrid2D.cs（新增语义层）</li>
+              <li>新建：LLM_Modules/PersonalitySystem.cs</li>
+              <li>新建：LLM_Modules/SimulatedTimeModule.cs</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="timeline-item p3">
+      <h4>Phase 3：自主目标生成（P0，约2周）</h4>
+      <p>完成后效果：智能体可在无人工干预下自主运行完整日计划，<strong>系统首次实现自治</strong></p>
+      <div class="card" style="margin-top:10px;padding:16px;">
+        <div class="card-grid cols-2" style="gap:10px;">
+          <div>
+            <strong style="font-size:13px;color:#c53030;">📌 必须完成</strong>
+            <ul style="font-size:13px;padding-left:16px;margin-top:6px;">
+              <li>新建 AutonomousGoalGenerator.cs</li>
+              <li>修改 PlanningModule：新增 SubmitAutonomousGoal() 接口</li>
+              <li>修改 IntelligentAgent：HasActiveMission() → 自主生成逻辑</li>
+              <li>新建 SocialRelationshipGraph.cs</li>
+              <li>修改 CommunicationModule：消息后更新社会图谱</li>
+            </ul>
+          </div>
+          <div>
+            <strong style="font-size:13px;color:#718096;">📁 涉及文件</strong>
+            <ul style="font-size:13px;padding-left:16px;margin-top:6px;color:#4a5568;">
+              <li>Agents/IntelligentAgent.cs（核心改造）</li>
+              <li>LLM_Modules/PlanningModule.cs</li>
+              <li>Communication_Module/CommunicationModule.cs</li>
+              <li>新建：LLM_Modules/AutonomousGoalGenerator.cs</li>
+              <li>新建：LLM_Modules/SocialRelationshipGraph.cs</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="timeline-item p4">
+      <h4>Phase 4：技能库与涌现优化（P1，约2周）</h4>
+      <p>完成后效果：智能体积累经验、技能复用、社会网络涌现，达到斯坦福小镇级别</p>
+      <div class="card" style="margin-top:10px;padding:16px;">
+        <div class="card-grid cols-2" style="gap:10px;">
+          <div>
+            <strong style="font-size:13px;color:#276749;">📌 增强功能</strong>
+            <ul style="font-size:13px;padding-left:16px;margin-top:6px;">
+              <li>新建 SkillLibrary.cs（VOYAGER 风格程序记忆）</li>
+              <li>ReflectionModule：成功模式检测 → 技能提取</li>
+              <li>MAD 辩论引入社会关系权重（信任度 → 投票影响）</li>
+              <li>自然语言对话扩展（对话消息写入记忆流）</li>
+              <li>每日总结反思（L3 抽象层）</li>
+            </ul>
+          </div>
+          <div>
+            <strong style="font-size:13px;color:#718096;">涌现验证实验</strong>
+            <ul style="font-size:13px;padding-left:16px;margin-top:6px;color:#4a5568;">
+              <li>运行24模拟小时，不注入任何任务</li>
+              <li>观察：是否形成自发巡逻路线分工</li>
+              <li>观察：信息是否在智能体间自然扩散</li>
+              <li>注入单一紧急事件，观察级联响应范围</li>
+              <li>记录不同人格智能体的行为多样性</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h3 class="sub-title">10.1 各阶段能力对比</h3>
+  <table>
+    <thead>
+      <tr><th>能力</th><th>当前</th><th>Phase 1后</th><th>Phase 2后</th><th>Phase 3后</th><th>Phase 4后</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>自主运行（无人工任务）</td><td>❌</td><td>❌</td><td>❌</td><td>✅</td><td>✅</td></tr>
+      <tr><td>记忆语义检索</td><td>❌</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+      <tr><td>层级反思</td><td>❌</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+      <tr><td>个性分化行为</td><td>❌</td><td>❌</td><td>✅</td><td>✅</td><td>✅</td></tr>
+      <tr><td>时段节律行为</td><td>❌</td><td>❌</td><td>✅</td><td>✅</td><td>✅</td></tr>
+      <tr><td>社会关系涌现</td><td>❌</td><td>❌</td><td>❌</td><td>△</td><td>✅</td></tr>
+      <tr><td>技能积累与复用</td><td>❌</td><td>❌</td><td>❌</td><td>❌</td><td>✅</td></tr>
+      <tr><td>多智能体约束协调</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<hr class="divider">
+
+<!-- REFERENCES -->
+<section id="refs" class="section">
+  <h2 class="section-title">参考文献</h2>
+  <ul class="ref-list">
+    <li>
+      <span class="ref-num">[1]</span>
+      <span class="ref-authors">Park, J. S., O'Brien, J., Cai, C. J., Morris, M. R., Liang, P., &amp; Bernstein, M. S. (2023).</span>
+      <span class="ref-title"> Generative agents: Interactive simulacra of human behavior.</span>
+      <em> In Proceedings of the 36th Annual ACM Symposium on User Interface Software and Technology (UIST 2023).</em>
+      <a href="https://arxiv.org/abs/2304.03442" style="color:#2b6cb0;font-size:12px;"> [arXiv:2304.03442]</a>
+    </li>
+    <li>
+      <span class="ref-num">[2]</span>
+      <span class="ref-authors">Sumers, T. R., Yao, S., Narasimhan, K., &amp; Griffiths, T. L. (2023).</span>
+      <span class="ref-title"> Cognitive architectures for language agents.</span>
+      <em> arXiv preprint.</em>
+      <a href="https://arxiv.org/abs/2309.02427" style="color:#2b6cb0;font-size:12px;"> [arXiv:2309.02427]</a>
+    </li>
+    <li>
+      <span class="ref-num">[3]</span>
+      <span class="ref-authors">Wang, G., Xie, Y., Jiang, Y., Mandlekar, A., Xiao, C., Zhu, Y., Fan, L., &amp; Anandkumar, A. (2023).</span>
+      <span class="ref-title"> Voyager: An open-ended embodied agent with large language models.</span>
+      <em> arXiv preprint.</em>
+      <a href="https://arxiv.org/abs/2305.16291" style="color:#2b6cb0;font-size:12px;"> [arXiv:2305.16291]</a>
+    </li>
+    <li>
+      <span class="ref-num">[4]</span>
+      <span class="ref-authors">Yao, S., Zhao, J., Yu, D., Du, N., Shafran, I., Narasimhan, K., &amp; Cao, Y. (2022).</span>
+      <span class="ref-title"> ReAct: Synergizing reasoning and acting in language models.</span>
+      <em> arXiv preprint.</em>
+      <a href="https://arxiv.org/abs/2210.03629" style="color:#2b6cb0;font-size:12px;"> [arXiv:2210.03629]</a>
+    </li>
+    <li>
+      <span class="ref-num">[5]</span>
+      <span class="ref-authors">Zhong, W., Guo, L., Gao, Q., Ye, H., &amp; Wang, Y. (2023).</span>
+      <span class="ref-title"> MemoryBank: Enhancing large language models with long-term memory.</span>
+      <em> arXiv preprint.</em>
+      <a href="https://arxiv.org/abs/2305.10250" style="color:#2b6cb0;font-size:12px;"> [arXiv:2305.10250]</a>
+    </li>
+    <li>
+      <span class="ref-num">[6]</span>
+      <span class="ref-authors">Nakajima, Y. (2023).</span>
+      <span class="ref-title"> BabyAGI: Task-driven autonomous agent.</span>
+      <em> GitHub Repository.</em>
+      <a href="https://github.com/yoheinakajima/babyagi" style="color:#2b6cb0;font-size:12px;"> [GitHub]</a>
+    </li>
+    <li>
+      <span class="ref-num">[7]</span>
+      <span class="ref-authors">Significant Gravitas. (2023).</span>
+      <span class="ref-title"> Auto-GPT: An autonomous GPT-4 experiment.</span>
+      <em> GitHub Repository.</em>
+    </li>
+    <li>
+      <span class="ref-num">[8]</span>
+      <span class="ref-authors">Liu, Z., et al. (2025).</span>
+      <span class="ref-title"> AgentNet: Decentralized evolutionary coordination for multi-agent systems.</span>
+      <em> arXiv preprint.</em>
+    </li>
+    <li>
+      <span class="ref-num">[9]</span>
+      <span class="ref-authors">Du, Y., Li, S., Torralba, A., Tenenbaum, J. B., &amp; Mordatch, I. (2023).</span>
+      <span class="ref-title"> Improving factuality and reasoning in language models through multiagent debate.</span>
+      <em> arXiv preprint arXiv:2305.14325.</em>
+      <a href="https://arxiv.org/abs/2305.14325" style="color:#2b6cb0;font-size:12px;"> [arXiv:2305.14325]</a>
+    </li>
+    <li>
+      <span class="ref-num">[10]</span>
+      <span class="ref-authors">Minsky, M. (1986).</span>
+      <span class="ref-title"> The Society of Mind.</span>
+      <em> Simon and Schuster.</em>
+    </li>
+    <li>
+      <span class="ref-num">[11]</span>
+      <span class="ref-authors">Ebbinghaus, H. (1885).</span>
+      <span class="ref-title"> Memory: A contribution to experimental psychology.</span>
+      <em> (Original work; referenced for forgetting curve in MemoryBank).</em>
+    </li>
+    <li>
+      <span class="ref-num">[12]</span>
+      <span class="ref-authors">Schick, T., et al. (2023).</span>
+      <span class="ref-title"> Toolformer: Language models can teach themselves to use tools.</span>
+      <em> arXiv preprint arXiv:2302.04761.</em>
+      <a href="https://arxiv.org/abs/2302.04761" style="color:#2b6cb0;font-size:12px;"> [arXiv:2302.04761]</a>
+    </li>
+  </ul>
+
+  <div class="card" style="margin-top:30px;background:linear-gradient(135deg,#ebf8ff,#f7fafc);border:1px solid #bee3f8;">
+    <h4 class="sub-sub" style="color:#2b6cb0;">报告总结</h4>
+    <p style="font-size:14px;line-height:1.9;">本报告通过深度分析当前 UnityLLM 多智能体系统与斯坦福小镇范式的差距，提出了一套系统性的架构演进方案。核心结论：</p>
+    <ol class="numbered-list" style="margin-top:14px;">
+      <li><div><strong>分组和Slot系统是正确且必要的</strong>（本次更新核心结论）。无人机需要物理协作（时序严格、方向互斥），不能像斯坦福小镇那样让每个agent完全独立涌现。Slot是「防止协作崩溃」的基础，而非束缚涌现的枷锁。涌现应发生在<em>执行层</em>，不是角色层。</div></li>
+      <li><div><strong>最大的改进点</strong>是去掉 LLM#4（固定步骤预生成），将 LLM#5（ADM）升级为主决策引擎：输入 = Slot角色 + 实时感知 + 白板状态 + 记忆上下文，每个决策周期动态生成下一个动作。这是实现「执行层涌现」的核心。</div></li>
+      <li><div><strong>记忆模块</strong>需从"结构化存储"升级为带有三维评分（时效×重要性×相关性）的语义检索系统，作为ADM响应式决策的上下文燃料，也驱动Slot认领时的角色偏好。</div></li>
+      <li><div><strong>反思模块</strong>需从单层失败触发升级为基于重要性累积的层级递归反思（L1观察→L2反思→L3抽象概念）。无人机场景中，反思结果不仅写入个人记忆，还可以提取到SkillLibrary供所有agent复用。</div></li>
+      <li><div><strong>新增模块优先级：</strong>① 自主目标生成器（实现无人工干预自治）② 社会关系图谱（驱动自发搭档关系涌现）③ 技能库（积累协调经验、减少重复学习）④ 人格系统（角色偏好分化的基础）。</div></li>
+      <li><div>现有系统的 MAD 辩论、<strong>分组+Slot</strong>、C1/C2/C3约束协调、A*导航能力已<strong>超过</strong>斯坦福小镇的对应模块，是宝贵的竞争优势，无需重构，只需扩展与增强。</div></li>
+    </ol>
+  </div>
+</section>
+
+</div><!-- end main-content -->
+
+<script>
+  // ── 目录收起/展开 ──
+  const sidebar = document.getElementById('toc');
+  const toggle  = document.getElementById('tocToggle');
+  const main    = document.querySelector('.main-content');
+  let collapsed = false;
+
+  toggle.addEventListener('click', () => {
+    collapsed = !collapsed;
+    sidebar.classList.toggle('collapsed', collapsed);
+    toggle.classList.toggle('collapsed', collapsed);
+    main.classList.toggle('expanded', collapsed);
+    toggle.textContent = collapsed ? '›' : '‹';
+    toggle.title = collapsed ? '展开目录' : '收起目录';
+  });
+
+  // ── 高亮当前章节 ──
+  const links    = document.querySelectorAll('.toc-sidebar a');
+  const sections = document.querySelectorAll('section[id]');
+  window.addEventListener('scroll', () => {
+    let current = '';
+    sections.forEach(s => { if (window.scrollY >= s.offsetTop - 80) current = s.id; });
+    links.forEach(l => l.classList.toggle('active', l.getAttribute('href') === '#' + current));
+  });
+
+  // ── 平滑滚动 ──
+  document.querySelectorAll('.toc-sidebar a').forEach(a => {
+    a.addEventListener('click', e => {
+      e.preventDefault();
+      const t = document.querySelector(a.getAttribute('href'));
+      if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+</script>
+</body>
+</html>
