@@ -234,6 +234,49 @@ public class MemoryModule : MonoBehaviour
     }
 
     /// <summary>
+    /// 从已存入记忆的 detail 字段中解析结构化 thought 的【建议】和【置信】标签。
+    /// 若【建议】非空且【置信】不为"低"，则单独存入一条 Policy 类型的程序性提示记忆，
+    /// 使其在后续检索中可被优先召回，而不是埋在长推理文本里。
+    /// 【置信】缺失时默认按"中"处理（confidence=0.70）。
+    /// </summary>
+    private void TryExtractPolicyFromDetail(Memory source)
+    {
+        if (string.IsNullOrWhiteSpace(source.detail)) return;
+
+        Match policyMatch = PolicyRegex.Match(source.detail);
+        if (!policyMatch.Success) return;
+
+        string suggestion = policyMatch.Groups[1].Value.Trim();
+        if (string.IsNullOrWhiteSpace(suggestion) || suggestion == "留空" || suggestion == "否则留空") return;
+
+        // 根据【置信】等级决定存储置信度，低置信度建议直接丢弃
+        float confidence = 0.70f;
+        Match confMatch = ConfidenceRegex.Match(source.detail);
+        if (confMatch.Success)
+        {
+            switch (confMatch.Groups[1].Value)
+            {
+                case "高": confidence = 0.85f; break;
+                case "中": confidence = 0.70f; break;
+                case "低": return;
+            }
+        }
+
+        Remember(
+            AgentMemoryKind.Policy,
+            suggestion,
+            $"[来源] {source.summary}",
+            importance: 0.75f,
+            confidence: confidence,
+            isProceduralHint: true,
+            missionId: source.missionId,
+            slotId: source.slotId,
+            targetRef: source.targetRef,
+            sourceModule: source.sourceModule,
+            tags: new[] { "inline_policy", "procedural" });
+    }
+
+    /// <summary>
     /// 构建并存储一条结构化记忆（统一工厂方法，推荐优先使用此方法而非直接 new Memory）。
     /// reflectionDepth 标记知识层次：0=原始事实，1=L2反思推断，2=L3抽象洞察。
     /// </summary>
