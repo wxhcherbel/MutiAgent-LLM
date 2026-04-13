@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PersonalitySystem — 人格系统参考文档</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --bg2: #161b22;
+    --bg3: #1c2330;
+    --border: #30363d;
+    --accent: #58a6ff;
+    --accent2: #3fb950;
+    --accent3: #f78166;
+    --accent4: #d2a8ff;
+    --accent5: #ffa657;
+    --text: #e6edf3;
+    --text2: #8b949e;
+    --warn: #f0883e;
+    --danger: #f85149;
+    --success: #3fb950;
+    --tag-bg: #1f2d3d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    line-height: 1.7;
+    padding: 32px 16px;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+
+  .page-title {
+    font-size: 28px; font-weight: 700;
+    background: linear-gradient(90deg, #d2a8ff, #58a6ff, #3fb950);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    margin-bottom: 4px;
+  }
+  .page-subtitle { color: var(--text2); font-size: 13px; margin-bottom: 32px; }
+
+  .section { margin-bottom: 52px; }
+  .section-title {
+    font-size: 18px; font-weight: 700;
+    color: var(--accent);
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 8px; margin-bottom: 20px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .section-title .num {
+    background: var(--accent); color: #000;
+    border-radius: 50%; width: 24px; height: 24px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 800; flex-shrink: 0;
+  }
+  h3 { color: var(--accent4); font-size: 15px; margin: 24px 0 10px; }
+  h4 { color: var(--accent5); font-size: 13px; margin: 16px 0 8px; font-weight: 700; }
+
+  .card {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px 20px; margin-bottom: 16px;
+  }
+  .card-title {
+    font-size: 13px; font-weight: 700;
+    color: var(--accent2); margin-bottom: 10px;
+    display: flex; align-items: center; gap: 6px;
+  }
+
+  pre {
+    background: #0d1117; border: 1px solid var(--border);
+    border-radius: 6px; padding: 14px 16px;
+    overflow-x: auto; font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 12.5px; line-height: 1.6; margin: 10px 0;
+    color: #c9d1d9;
+  }
+  .kw  { color: #ff7b72; }
+  .ty  { color: #79c0ff; }
+  .str { color: #a5d6ff; }
+  .cm  { color: #8b949e; font-style: italic; }
+  .num-lit { color: #f2cc60; }
+  .field   { color: #d2a8ff; }
+  .method  { color: #d2a8ff; }
+  .prop    { color: #79c0ff; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0; }
+  th {
+    background: var(--bg3); color: var(--accent); text-align: left;
+    padding: 8px 12px; border: 1px solid var(--border); font-weight: 600;
+  }
+  td { padding: 8px 12px; border: 1px solid var(--border); vertical-align: top; }
+  tr:nth-child(even) td { background: #141a22; }
+
+  .note {
+    border-left: 4px solid var(--accent); background: #161f2e;
+    padding: 10px 16px; border-radius: 0 6px 6px 0;
+    margin: 12px 0; font-size: 13px; color: var(--text2);
+  }
+  .note.warn  { border-left-color: var(--warn);    background: #1f1a0e; }
+  .note.ok    { border-left-color: var(--success);  background: #0e1f11; }
+  .note.bad   { border-left-color: var(--danger);   background: #1f0e0e; }
+  .note.purple{ border-left-color: var(--accent4);  background: #18102e; }
+
+  .tag {
+    display: inline-block; background: var(--tag-bg);
+    color: var(--accent); border: 1px solid #2d4261;
+    border-radius: 4px; padding: 1px 7px; font-size: 11.5px;
+    margin: 2px; font-family: monospace;
+  }
+  .tag.green  { color: var(--accent2); border-color: #1a3a1a; background: #0e1f11; }
+  .tag.purple { color: var(--accent4); border-color: #3a2a5a; background: #1a1030; }
+  .tag.orange { color: var(--accent5); border-color: #3a2a00; background: #1f1800; }
+  .tag.red    { color: var(--accent3); border-color: #3a1a1a; background: #1f0a0a; }
+
+  /* 大串联图 */
+  .arch-grid {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 16px 0;
+  }
+  .arch-left {
+    background: #1a2840;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 20px 12px; text-align: center;
+    border-right: 1px solid var(--border);
+    gap: 4px;
+  }
+  .arch-module-name {
+    font-size: 13px; font-weight: 700; color: var(--accent4);
+  }
+  .arch-file {
+    font-family: monospace; font-size: 11px; color: var(--text2);
+  }
+  .arch-right {
+    padding: 14px 18px;
+  }
+  .arch-right h4 { margin-top: 8px; }
+
+  /* 流程箭头 */
+  .flow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0; }
+  .flow-box {
+    background: var(--bg3); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 11px; font-size: 12px; font-weight: 600;
+  }
+  .flow-box.blue   { border-color: #58a6ff; color: #58a6ff; }
+  .flow-box.green  { border-color: #3fb950; color: #3fb950; }
+  .flow-box.purple { border-color: #d2a8ff; color: #d2a8ff; }
+  .flow-box.orange { border-color: #ffa657; color: #ffa657; }
+  .flow-box.red    { border-color: #f85149; color: #f85149; }
+  .flow-box.teal   { border-color: #39d0d8; color: #39d0d8; }
+  .flow-arrow { color: var(--text2); font-size: 18px; line-height: 1; }
+
+  /* 时间线 */
+  .timeline { border-left: 2px solid var(--border); padding-left: 22px; margin: 14px 0; }
+  .timeline-step { position: relative; margin-bottom: 20px; }
+  .timeline-step::before {
+    content: ''; position: absolute; left: -28px; top: 5px;
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--bg);
+  }
+  .timeline-step.green::before  { background: var(--success); }
+  .timeline-step.purple::before { background: var(--accent4); }
+  .timeline-step.orange::before { background: var(--accent5); }
+  .timeline-step.red::before    { background: var(--danger); }
+  .timeline-label {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+    color: var(--accent); margin-bottom: 4px; text-transform: uppercase;
+  }
+  .timeline-step.green  .timeline-label { color: var(--success); }
+  .timeline-step.purple .timeline-label { color: var(--accent4); }
+  .timeline-step.orange .timeline-label { color: var(--accent5); }
+  .timeline-step.red    .timeline-label { color: var(--danger); }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 12px 0; }
+  .cols3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin: 12px 0; }
+  @media (max-width: 768px) { .cols, .cols3 { grid-template-columns: 1fr; } }
+
+  .toc {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px 20px; margin-bottom: 32px;
+  }
+  .toc-title { font-size: 13px; font-weight: 700; color: var(--text2); margin-bottom: 10px; }
+  .toc a { color: var(--accent); text-decoration: none; font-size: 13px; }
+  .toc a:hover { text-decoration: underline; }
+  .toc ol { padding-left: 18px; }
+  .toc li { margin: 5px 0; }
+
+  hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+  .highlight { color: var(--accent5); font-weight: 600; }
+
+  .new-badge {
+    display: inline-block; background: #1a3a1a; color: var(--success);
+    border: 1px solid #1f4a1f; border-radius: 4px; padding: 1px 6px;
+    font-size: 11px; font-weight: 700; margin-left: 6px;
+  }
+  .mod-badge {
+    display: inline-block; background: #1f2d3d; color: var(--accent);
+    border: 1px solid #2d4261; border-radius: 4px; padding: 1px 6px;
+    font-size: 11px; font-weight: 700; margin-left: 6px;
+  }
+
+  .dim-bar-wrap {
+    display: flex; align-items: center; gap: 10px; margin: 6px 0;
+  }
+  .dim-label { font-size: 12px; color: var(--text2); width: 96px; flex-shrink: 0; font-family: monospace; }
+  .dim-bar-bg {
+    flex: 1; height: 8px; background: var(--bg3);
+    border-radius: 4px; overflow: hidden; border: 1px solid var(--border);
+  }
+  .dim-bar { height: 100%; border-radius: 4px; }
+  .dim-val { font-size: 12px; color: var(--text); width: 30px; text-align: right; font-family: monospace; }
+
+  /* 效果对比格子 */
+  .effect-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px; margin: 14px 0;
+  }
+  .effect-cell {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .effect-cell .ec-icon { font-size: 22px; }
+  .effect-cell .ec-title { font-size: 12px; font-weight: 700; color: var(--accent4); }
+  .effect-cell .ec-body  { font-size: 12px; color: var(--text2); line-height: 1.5; }
+  @media (max-width: 900px) { .effect-grid { grid-template-columns: 1fr 1fr; } }
+
+  .example-block {
+    border: 1px solid #2d4261; background: #0d1520;
+    border-radius: 8px; overflow: hidden; margin: 16px 0;
+  }
+  .example-header {
+    background: #1a2840; padding: 8px 16px;
+    font-size: 12px; font-weight: 700; color: var(--accent);
+  }
+  .example-body { padding: 14px 16px; }
+
+  .diff-table td:first-child { font-weight: 600; color: var(--text2); white-space: nowrap; }
+  .diff-table td:nth-child(2) { color: var(--accent2); }
+  .diff-table td:nth-child(3) { color: var(--accent3); }
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- ══ 标题 ══════════════════════════════════════════════════════════════════ -->
+<div class="page-title">PersonalitySystem — 工作人格系统</div>
+<div class="page-subtitle">
+  LLM_Modules/PersonalitySystem.cs &nbsp;·&nbsp; 新增模块 &nbsp;·&nbsp;
+  影响 MemoryModule · PlanningModule · ActionDecisionModule · ReflectionModule
+</div>
+
+<!-- ══ 目录 ══════════════════════════════════════════════════════════════════ -->
+<div class="toc">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#why">为什么需要人格系统</a></li>
+    <li><a href="#profile">PersonalityProfile — 数据结构</a></li>
+    <li><a href="#methods">PersonalitySystem — 六个核心方法</a></li>
+    <li><a href="#connections">四条串联路径详解</a></li>
+    <li><a href="#init">初始化流程（IntelligentAgent）</a></li>
+    <li><a href="#compare">对比：同任务下两种人格的差异</a></li>
+    <li><a href="#example">完整例子：一次选槽 → 执行 → 记忆的全流程</a></li>
+  </ol>
+</div>
+
+<!-- ══ 第一节：为什么 ═══════════════════════════════════════════════════════ -->
+<div class="section" id="why">
+  <div class="section-title"><span class="num">1</span>为什么需要人格系统</div>
+
+  <p style="color:var(--text2);margin-bottom:14px;">
+    在加入人格系统之前，所有 agent 的 LLM 行为是<span class="highlight">完全同质的</span>。
+    即使给 agent 配置了不同的 <code>RoleType</code>，面对相同任务时，LLM#3 的选槽逻辑、
+    ADM 的决策风格、记忆权重的分配方式都一模一样——哪怕两个 agent 的"能力"在数值上相同，
+    它们的行为也不应该完全一样。
+  </p>
+
+  <div class="cols">
+    <div class="card" style="border-color:#3a1a1a">
+      <div class="card-title" style="color:var(--accent3)">加入前 — 行为同质</div>
+      <ul style="color:var(--text2);font-size:13px;padding-left:16px;line-height:2">
+        <li>LLM#3 选槽：纯粹按电量/位置匹配，没有个体偏好</li>
+        <li>ADM 决策：所有 agent 决策风格相同，面对风险的处理方式一致</li>
+        <li>Memory 权重：所有类型的记忆 importance 按统一规则打分</li>
+        <li>Reflection 阈值：所有 agent 反思频率相同</li>
+        <li>结果：大量 agent 抢同一个角色、决策结果雷同</li>
+      </ul>
+    </div>
+    <div class="card" style="border-color:#1a3a1a">
+      <div class="card-title" style="color:var(--accent2)">加入后 — 行为分化</div>
+      <ul style="color:var(--text2);font-size:13px;padding-left:16px;line-height:2">
+        <li>LLM#3 选槽：高尽责性 → 倾向 Perimeter，高开放性 → 倾向 Scout</li>
+        <li>ADM 决策：高神经质 agent 倾向先 Observe，高开放性 agent 尝试非常规路径</li>
+        <li>Memory 权重：各维度对不同类型记忆的 importance 乘数不同</li>
+        <li>Reflection 阈值：高神经质 agent 反思更频繁（阈值 150→100）</li>
+        <li>结果：稳定的角色专业化涌现，跨任务行为一致性提升</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="note ok">
+    <strong>核心设计原则：</strong>人格是注入 LLM prompt 的<em>语义信号</em>，不是硬编码的规则。
+    LLM 依然有自主权决定是否参考——但 prompt 中存在这些信号后，LLM 的行为会有统计上的一致偏移，
+    并在 <code>thought</code> 字段中可见地解释了自己是否参考了人格偏好，便于调试。
+  </div>
+</div>
+
+<!-- ══ 第二节：数据结构 ════════════════════════════════════════════════════ -->
+<div class="section" id="profile">
+  <div class="section-title"><span class="num">2</span>PersonalityProfile — 数据结构</div>
+
+  <p style="color:var(--text2);margin-bottom:14px;">
+    <code>PersonalityProfile</code> 是一个 <code>[Serializable]</code> 数据类，
+    定义在 <code>PersonalitySystem.cs</code> 同文件中，在 Inspector 中配置。
+    分为三层：大五人格维度、领域特化描述、运行时衍生倾向。
+  </p>
+
+  <h3>2.1 大五人格维度（Inspector 配置，Range [0,1]）</h3>
+
+  <table>
+    <tr>
+      <th style="width:150px">字段</th>
+      <th style="width:90px">高值效果（>0.7）</th>
+      <th>影响哪里</th>
+      <th style="width:140px">记忆重要度乘数</th>
+    </tr>
+    <tr>
+      <td class="mono">openness<br><small style="color:var(--text2)">开放性</small></td>
+      <td style="color:var(--accent2)">好奇探索，愿意试非常规路径</td>
+      <td>LLM#3 偏好 Scout/Explorer；ADM 可尝试新路径；记忆偏重观察</td>
+      <td><span class="tag green">Observation ×1.1</span></td>
+    </tr>
+    <tr>
+      <td class="mono">conscientiousness<br><small style="color:var(--text2)">尽责性</small></td>
+      <td style="color:var(--accent)">系统化执行，严格按步骤</td>
+      <td>LLM#3 偏好 Perimeter/Guard；ADM 每步完成后确认再推进</td>
+      <td><span class="tag">Plan ×1.1</span></td>
+    </tr>
+    <tr>
+      <td class="mono">extraversion<br><small style="color:var(--text2)">外向性</small></td>
+      <td style="color:var(--accent5)">主动协调，广播状态</td>
+      <td>LLM#3 偏好 Coordinator；ADM 主动 Signal/Whiteboard</td>
+      <td><span style="color:var(--text2);font-size:12px">（不单独加权）</span></td>
+    </tr>
+    <tr>
+      <td class="mono">agreeableness<br><small style="color:var(--text2)">宜人性</small></td>
+      <td style="color:var(--accent4)">配合队友优先，服从指令</td>
+      <td>LLM#3 偏好 Supporter；ADM 优先协调而非独立行动</td>
+      <td><span style="color:var(--text2);font-size:12px">（不单独加权）</span></td>
+    </tr>
+    <tr>
+      <td class="mono">neuroticism<br><small style="color:var(--text2)">神经质</small></td>
+      <td style="color:var(--accent3)">对失败敏感，更频繁反思</td>
+      <td>ADM 优先保守方案；失败记忆权重×1.2；L2 反思阈值 150→100</td>
+      <td><span class="tag red">Decision ×1.2</span></td>
+    </tr>
+  </table>
+
+  <h3>2.2 领域特化描述（Inspector 配置，字符串数组）</h3>
+  <p style="color:var(--text2);margin-bottom:8px;">
+    这三个字段以<strong>自由文本数组</strong>形式直接出现在 LLM prompt 中，
+    补充大五维度无法精确描述的具体行为倾向。
+  </p>
+  <div class="cols">
+    <div class="card">
+      <div class="card-title">coreValues — 核心价值观</div>
+      <p style="color:var(--text2);font-size:12.5px">LLM 在做决策时将这些价值观作为优先级依据。</p>
+      <pre style="margin-top:8px"><span class="str">"安全第一"</span>, <span class="str">"团队优先"</span>, <span class="str">"效率"</span></pre>
+    </div>
+    <div class="card">
+      <div class="card-title">habits — 行为习惯</div>
+      <p style="color:var(--text2);font-size:12.5px">LLM 在生成 nextActions 时会倾向遵循。</p>
+      <pre style="margin-top:8px"><span class="str">"先观察后行动"</span>, <span class="str">"按步骤执行"</span></pre>
+    </div>
+  </div>
+  <div class="card" style="margin-top:-8px">
+    <div class="card-title">dislikes — 厌恶/回避项</div>
+    <p style="color:var(--text2);font-size:12.5px">LLM 在选槽和行动时会尽量避免触发这些条件。</p>
+    <pre><span class="str">"冲突"</span>, <span class="str">"模糊指令"</span>, <span class="str">"独自行动"</span></pre>
+  </div>
+
+  <h3>2.3 运行时衍生字段（[HideInInspector]，由 Initialize() 计算）</h3>
+  <table>
+    <tr><th>字段</th><th>计算公式</th><th>含义</th></tr>
+    <tr>
+      <td class="mono">riskTolerance</td>
+      <td><code>openness×0.5 + (1−neuroticism)×0.5</code></td>
+      <td>风险容忍度。高开放+低神经质 → 愿意接受不确定结果</td>
+    </tr>
+    <tr>
+      <td class="mono">cooperationBias</td>
+      <td><code>agreeableness×0.6 + extraversion×0.4</code></td>
+      <td>协作偏好。高宜人+高外向 → 强烈团队优先</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ══ 第三节：六个方法 ════════════════════════════════════════════════════ -->
+<div class="section" id="methods">
+  <div class="section-title"><span class="num">3</span>PersonalitySystem — 六个核心方法</div>
+
+  <div class="effect-grid">
+    <div class="effect-cell">
+      <div class="ec-icon">🎭</div>
+      <div class="ec-title">GetRolePreferenceHint()</div>
+      <div class="ec-body">生成角色偏好提示字符串，注入 LLM#3 选槽 prompt。各维度>0.7 时追加对应偏好描述。</div>
+      <div style="margin-top:6px"><span class="tag">→ PlanningModule</span></div>
+    </div>
+    <div class="effect-cell">
+      <div class="ec-icon">⚡</div>
+      <div class="ec-title">GetDecisionStyleHint()</div>
+      <div class="ec-body">生成行动风格描述，注入 ADM Rolling Prompt。神经质/开放性/尽责性/协作偏好均有对应描述。</div>
+      <div style="margin-top:6px"><span class="tag">→ ActionDecisionModule</span></div>
+    </div>
+    <div class="effect-cell">
+      <div class="ec-icon">⚖️</div>
+      <div class="ec-title">GetImportanceModifier(kind)</div>
+      <div class="ec-body">根据记忆类型和人格维度返回乘数（1.0~1.2）。在 StoreMemory 时修正 importance 字段。</div>
+      <div style="margin-top:6px"><span class="tag">→ MemoryModule</span></div>
+    </div>
+    <div class="effect-cell">
+      <div class="ec-icon">🏷️</div>
+      <div class="ec-title">GetPersonalityTag()</div>
+      <div class="ec-body">返回突出维度的标注字符串（如 [高尽责性-0.85]），写入 Memory.personalityContext。</div>
+      <div style="margin-top:6px"><span class="tag">→ Memory.personalityContext</span></div>
+    </div>
+    <div class="effect-cell">
+      <div class="ec-icon">🔁</div>
+      <div class="ec-title">ShouldTriggerEarlyReflection()</div>
+      <div class="ec-body">神经质>0.7 时返回 true。触发时 ReflectionModule 将 L2 阈值从 150 降为 100。</div>
+      <div style="margin-top:6px"><span class="tag">→ ReflectionModule</span></div>
+    </div>
+    <div class="effect-cell">
+      <div class="ec-icon">🔍</div>
+      <div class="ec-title">GetPreferredRoles()</div>
+      <div class="ec-body">返回人格偏好的角色名列表，追加到 MemoryQuery.preferredRoles，记忆检索时对应角色加权。</div>
+      <div style="margin-top:6px"><span class="tag">→ MemoryQuery</span></div>
+    </div>
+  </div>
+
+  <h3>方法逻辑速查</h3>
+  <pre><span class="cm">// GetRolePreferenceHint() — 高维度→追加偏好文字，多条用"；"连接</span>
+<span class="kw">if</span> (conscientiousness &gt; <span class="num-lit">0.7f</span>) → <span class="str">"倾向选择边界管控或系统性角色(如Perimeter/Guard)"</span>
+<span class="kw">if</span> (openness          &gt; <span class="num-lit">0.7f</span>) → <span class="str">"倾向选择侦察或探索角色(如Scout/Explorer)"</span>
+<span class="kw">if</span> (extraversion      &gt; <span class="num-lit">0.7f</span>) → <span class="str">"倾向选择协调或领导角色(如Coordinator)"</span>
+<span class="kw">if</span> (agreeableness     &gt; <span class="num-lit">0.7f</span>) → <span class="str">"倾向选择支援角色，优先配合队友需求"</span>
+
+<span class="cm">// GetDecisionStyleHint() — 多维度叠加，换行连接</span>
+<span class="kw">if</span> (neuroticism        &gt; <span class="num-lit">0.7f</span>) → <span class="str">"谨慎行事，优先规避风险，遇不确定情况选保守方案"</span>
+<span class="kw">elif</span> (neuroticism      &lt; <span class="num-lit">0.3f</span>) → <span class="str">"执行稳健，失败后迅速调整继续推进，不过度纠结"</span>
+<span class="kw">if</span> (openness           &gt; <span class="num-lit">0.7f</span>) → <span class="str">"可尝试非常规路径，允许在标准流程之外寻找更优方案"</span>
+<span class="kw">if</span> (conscientiousness  &gt; <span class="num-lit">0.7f</span>) → <span class="str">"按步骤系统化执行，每步完成后确认状态再推进下一步"</span>
+<span class="kw">if</span> (cooperationBias    &gt; <span class="num-lit">0.6f</span>) → <span class="str">"优先与队友协调，主动通过信号广播自身状态和意图"</span>
+
+<span class="cm">// GetImportanceModifier(kind) — switch 表达式</span>
+Decision   + neuroticism        &gt; <span class="num-lit">0.6f</span>  →  <span class="num-lit">1.2f</span>  <span class="cm">// 失败决策加权</span>
+Plan       + conscientiousness  &gt; <span class="num-lit">0.7f</span>  →  <span class="num-lit">1.1f</span>  <span class="cm">// 计划加权</span>
+Observation + openness         &gt; <span class="num-lit">0.7f</span>  →  <span class="num-lit">1.1f</span>  <span class="cm">// 观察加权</span>
+_                               →  <span class="num-lit">1.0f</span>  <span class="cm">// 不修改</span></pre>
+</div>
+
+<!-- ══ 第四节：四条串联路径 ════════════════════════════════════════════════ -->
+<div class="section" id="connections">
+  <div class="section-title"><span class="num">4</span>四条串联路径详解</div>
+
+  <!-- ── 路径 A: Memory ── -->
+  <div class="arch-grid">
+    <div class="arch-left">
+      <div style="font-size:26px">🧠</div>
+      <div class="arch-module-name">MemoryModule</div>
+      <div class="arch-file">MemoryModule.cs</div>
+      <div style="margin-top:8px">
+        <span class="mod-badge">MODIFY</span>
+      </div>
+    </div>
+    <div class="arch-right">
+      <h4>串联方式</h4>
+      <p style="color:var(--text2);font-size:13px;">
+        <code>IntelligentAgent.InitializeAgent()</code> 在初始化末尾调用
+        <code>memoryModule.SetPersonalitySystem(ps)</code>，将人格系统注入。
+        之后每次 <code>StoreMemory()</code> 都会自动在 Add() 前调用 <code>InjectPersonality(m)</code>，
+        所有写入记忆的调用方无需任何改动。
+      </p>
+      <h4>InjectPersonality() 做了什么</h4>
+      <div class="flow" style="margin:8px 0">
+        <div class="flow-box blue">StoreMemory(m) 调用</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-box purple">GetImportanceModifier(m.kind)</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-box orange">m.importance × modifier</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-box green">Clamp01 写回</div>
+      </div>
+      <div class="flow">
+        <div class="flow-box blue">同一次调用</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-box purple">GetPersonalityTag()</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-box green">m.personalityContext = "[高尽责性-0.85]"</div>
+      </div>
+      <h4>ScoreMemory 中 preferredRoles 加权</h4>
+      <p style="color:var(--text2);font-size:13px;">
+        当 <code>MemoryQuery.preferredRoles</code> 非空时（由 PlanningModule 在 BuildPlanningContext 中可选填入），
+        <code>ComputeNormalizedRelevance()</code> 对 tags 中包含偏好角色名的记忆额外 <code>+0.10f/条，上限 0.20f</code>，
+        使历史上担任偏好角色的记忆在检索时优先被召回。
+      </p>
+      <h4>新增字段</h4>
+      <ul style="color:var(--text2);font-size:13px;padding-left:16px;line-height:1.9">
+        <li><code>Memory.personalityContext</code> — 记忆创建时的人格标注</li>
+        <li><code>MemoryQuery.preferredRoles</code> — 检索时偏好角色名集合</li>
+      </ul>
+    </div>
+  </div>
+
+  <br>
+
+  <!-- ── 路径 B: PlanningModule ── -->
+  <div class="arch-grid">
+    <div class="arch-left">
+      <div style="font-size:26px">📋</div>
+      <div class="arch-module-name">PlanningModule</div>
+      <div class="arch-file">PlanningModule.cs</div>
+      <div style="margin-top:8px">
+        <span class="mod-badge">MODIFY</span>
+      </div>
+    </div>
+    <div class="arch-right">
+      <h4>串联方式</h4>
+      <p style="color:var(--text2);font-size:13px;">
+        <code>Start()</code> 中通过 <code>GetComponent&lt;PersonalitySystem&gt;()</code> 自取引用，
+        无需外部注入。只修改了 <strong>LLM#3（选槽阶段）</strong>的 prompt，LLM#1/2/4 不受影响。
+      </p>
+      <h4>注入位置：RunLLM3() 内 prompt 构建</h4>
+      <pre><span class="cm">// 在可选槽列表和电量/位置信息之后追加人格段</span>
+<span class="kw">string</span> roleHint = _personalitySystem?.<span class="method">GetRolePreferenceHint</span>() ?? <span class="str">""</span>;
+<span class="cm">// 非空时追加到 prompt；同时要求 LLM 在 thought 中显式说明是否参考</span></pre>
+      <h4>LLM 收到的 prompt 变化（有人格 vs 无人格）</h4>
+      <div class="cols">
+        <div class="example-block">
+          <div class="example-header">无人格（原版）</div>
+          <div class="example-body">
+            <pre style="margin:0">你是无人机智能体。请从可选槽中选择最适合自己的一个...
+可选槽: [...]
+当前电量: 88%, 当前位置: (12, 0, -45)
+[记忆上下文...]</pre>
+          </div>
+        </div>
+        <div class="example-block">
+          <div class="example-header">有人格（高尽责性 0.85）</div>
+          <div class="example-body">
+            <pre style="margin:0">你是无人机智能体。请从可选槽中选择最适合自己的一个...
+可选槽: [...]
+当前电量: 88%, 当前位置: (12, 0, -45)
+<span style="color:#3fb950">[人格倾向] 倾向选择边界管控或系统性角色(如Perimeter/Guard)
+请在 thought 字段中说明是否参考了上述人格倾向。</span>
+[记忆上下文...]</pre>
+          </div>
+        </div>
+      </div>
+      <div class="note ok" style="margin-top:8px">
+        <strong>可观察效果：</strong>LLM 的 <code>thought</code> 字段会出现类似
+        <em>"人格倾向系统性角色，s2(Perimeter)与我的位置和历史经验高度匹配"</em> 的解释，
+        选槽决策从纯能力匹配变为能力+个性的综合决策。
+      </div>
+    </div>
+  </div>
+
+  <br>
+
+  <!-- ── 路径 C: ADM ── -->
+  <div class="arch-grid">
+    <div class="arch-left">
+      <div style="font-size:26px">⚡</div>
+      <div class="arch-module-name">ActionDecision<br>Module</div>
+      <div class="arch-file">ActionDecisionModule.cs</div>
+      <div style="margin-top:8px">
+        <span class="mod-badge">MODIFY</span>
+      </div>
+    </div>
+    <div class="arch-right">
+      <h4>串联方式</h4>
+      <p style="color:var(--text2);font-size:13px;">
+        <code>Start()</code> 中 <code>GetComponent&lt;PersonalitySystem&gt;()</code> 自取引用。
+        修改了 <code>BuildRollingPrompt()</code>，在"步骤目标"段之后、"历史经验"之前
+        插入"行动风格"段——每次 Rolling 迭代都会携带。
+      </p>
+      <h4>prompt 结构变化</h4>
+      <pre><span class="cm">// 原始结构</span>
+<span class="str">## 步骤目标</span>  →  <span class="str">## 历史经验与反思规则</span>  →  <span class="str">## 已执行历史</span>  → ...
+
+<span class="cm">// 加入人格后</span>
+<span class="str">## 步骤目标</span>
+<span class="str"><span style="color:#3fb950">## 行动风格                   ← 新增，由 GetDecisionStyleHint() 生成</span></span>
+<span class="str">## 历史经验与反思规则</span>  →  <span class="str">## 已执行历史</span>  → ...</pre>
+      <h4>"行动风格"段示例（高神经质 + 高尽责性）</h4>
+      <div class="example-block">
+        <div class="example-header">Rolling Prompt 注入内容</div>
+        <div class="example-body">
+<pre style="margin:0"><span style="color:#3fb950">## 行动风格
+谨慎行事，优先规避风险，遇不确定情况选保守方案
+按步骤系统化执行，每步完成后确认状态再推进下一步</span></pre>
+        </div>
+      </div>
+      <div class="note ok">
+        <strong>可观察效果：</strong>高神经质 agent 在面对陌生区域时会倾向先生成
+        <code>Observe</code> 动作而非直接 <code>MoveTo</code>；
+        高尽责性 agent 每步完成后会生成 <code>Signal</code> 广播确认。
+      </div>
+    </div>
+  </div>
+
+  <br>
+
+  <!-- ── 路径 D: ReflectionModule ── -->
+  <div class="arch-grid">
+    <div class="arch-left">
+      <div style="font-size:26px">🔁</div>
+      <div class="arch-module-name">ReflectionModule</div>
+      <div class="arch-file">ReflectionModule.cs</div>
+      <div style="margin-top:8px">
+        <span class="mod-badge">MODIFY</span>
+      </div>
+    </div>
+    <div class="arch-right">
+      <h4>串联方式</h4>
+      <p style="color:var(--text2);font-size:13px;">
+        <code>EnsureDependencies()</code> 中 <code>GetComponent&lt;PersonalitySystem&gt;()</code>，
+        在<strong>首次获取到 PersonalitySystem 后立即判断是否需要调整阈值</strong>
+        （而非在 Start 中固定调整，因为 EnsureDependencies 可能在 Start 之外被调用）。
+      </p>
+      <h4>阈值调整逻辑</h4>
+      <pre><span class="cm">// EnsureDependencies() 末尾</span>
+<span class="kw">if</span> (_personalitySystem != <span class="kw">null</span> && _personalitySystem.<span class="method">ShouldTriggerEarlyReflection</span>()
+    && memoryModule != <span class="kw">null</span>)
+{
+    <span class="cm">// neuroticism > 0.7 → 降低 L2 反思触发阈值</span>
+    memoryModule.<span class="field">reflectionImportanceThreshold</span> = <span class="num-lit">100f</span>;  <span class="cm">// 默认 150</span>
+}</pre>
+      <h4>阈值含义</h4>
+      <p style="color:var(--text2);font-size:13px;margin-top:6px;">
+        每次 <code>StoreMemory</code> 时将 <code>importance×10</code> 累加到累积器。
+        累积器满阈值时触发一次 L2 跨事件反思（LLM 调用）。
+      </p>
+      <table style="margin-top:8px">
+        <tr><th>人格</th><th>阈值</th><th>约需多少条高权重记忆触发一次</th></tr>
+        <tr>
+          <td>低/中神经质（默认）</td>
+          <td><strong>150</strong></td>
+          <td>约 15 条 importance=1.0 的记忆</td>
+        </tr>
+        <tr>
+          <td style="color:var(--accent3)">高神经质（>0.7）</td>
+          <td style="color:var(--accent3)"><strong>100</strong></td>
+          <td style="color:var(--accent3)">约 10 条，反思频率提升 50%</td>
+        </tr>
+      </table>
+      <div class="note warn" style="margin-top:10px">
+        <strong>注意：</strong>更频繁的反思意味着更多 LLM token 消耗。
+        这是人格特征的有意体现——"过度思考"是高神经质人格的真实特征。
+        若 token 预算有限，可将 <code>neuroticism</code> 阈值从 0.7 调高。
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ 第五节：初始化流程 ════════════════════════════════════════════════ -->
+<div class="section" id="init">
+  <div class="section-title"><span class="num">5</span>初始化流程（IntelligentAgent）</div>
+
+  <p style="color:var(--text2);margin-bottom:14px;">
+    人格系统的串联由 <code>IntelligentAgent.InitializeAgent()</code> 统一驱动，
+    其余模块（PlanningModule、ADM、ReflectionModule）通过 <code>GetComponent</code> 自取引用，
+    不需要 IntelligentAgent 手动传递。
+  </p>
+
+  <div class="timeline">
+    <div class="timeline-step">
+      <div class="timeline-label">Step 1 — GetComponent / AddComponent</div>
+      <pre><span class="kw">var</span> personalitySystem = GetComponent&lt;<span class="ty">PersonalitySystem</span>&gt;();
+<span class="kw">if</span> (personalitySystem == <span class="kw">null</span>)
+    personalitySystem = gameObject.<span class="method">AddComponent</span>&lt;<span class="ty">PersonalitySystem</span>&gt;(); <span class="cm">// 未挂载时自动添加默认人格</span>
+<span class="kw">if</span> (<span class="ty">string</span>.<span class="method">IsNullOrWhiteSpace</span>(personalitySystem.<span class="field">Profile</span>.<span class="field">agentId</span>))
+    personalitySystem.<span class="field">Profile</span>.<span class="field">agentId</span> = Properties.<span class="field">AgentID</span>; <span class="cm">// 同步 AgentID</span></pre>
+    </div>
+    <div class="timeline-step green">
+      <div class="timeline-label">Step 2 — Initialize()（计算衍生值）</div>
+      <pre>personalitySystem.<span class="method">Initialize</span>();
+<span class="cm">// 计算 riskTolerance = openness×0.5 + (1−neuroticism)×0.5</span>
+<span class="cm">// 计算 cooperationBias = agreeableness×0.6 + extraversion×0.4</span></pre>
+    </div>
+    <div class="timeline-step purple">
+      <div class="timeline-label">Step 3 — 注入 MemoryModule</div>
+      <pre><span class="kw">var</span> memoryModule = GetComponent&lt;<span class="ty">MemoryModule</span>&gt;();
+memoryModule?.<span class="method">SetPersonalitySystem</span>(personalitySystem);
+<span class="cm">// 此后所有 StoreMemory 调用均自动注入人格信息</span></pre>
+    </div>
+    <div class="timeline-step orange">
+      <div class="timeline-label">Step 4 — 其余模块在各自 Start() 中自取</div>
+      <pre><span class="cm">// PlanningModule.Start():</span>
+_personalitySystem = GetComponent&lt;<span class="ty">PersonalitySystem</span>&gt;();
+
+<span class="cm">// ActionDecisionModule.Start():</span>
+_personalitySystem = GetComponent&lt;<span class="ty">PersonalitySystem</span>&gt;();
+
+<span class="cm">// ReflectionModule.EnsureDependencies():</span>
+_personalitySystem = GetComponent&lt;<span class="ty">PersonalitySystem</span>&gt;();
+<span class="kw">if</span> (_personalitySystem.<span class="method">ShouldTriggerEarlyReflection</span>())
+    memoryModule.<span class="field">reflectionImportanceThreshold</span> = <span class="num-lit">100f</span>;</pre>
+    </div>
+  </div>
+
+  <div class="note ok">
+    <strong>挂载方式：</strong>在每个 agent GameObject 的 Inspector 中添加
+    <code>PersonalitySystem</code> 组件并填写 <code>Profile</code> 字段即可。
+    若不挂载，<code>InitializeAgent</code> 会自动添加一个所有维度为默认值（0.5）的中性人格，
+    不影响其他模块正常运行。
+  </div>
+
+  <h3>数据流总览</h3>
+  <div class="card">
+    <pre style="background:transparent;border:none;padding:0;font-size:12.5px">
+<span style="color:#58a6ff">IntelligentAgent.InitializeAgent()</span>
+    │
+    ├─ <span style="color:#d2a8ff">PersonalitySystem.Initialize()</span>   ← 计算衍生值
+    │       │
+    │       └─→ <span style="color:#3fb950">MemoryModule.SetPersonalitySystem()</span>
+    │               │
+    │               └─ StoreMemory() 时自动调用 InjectPersonality()
+    │                       ├─ importance × GetImportanceModifier(kind)
+    │                       └─ personalityContext = GetPersonalityTag()
+    │
+    ├─ <span style="color:#ffa657">PlanningModule（自取引用）</span>
+    │       └─ RunLLM3() prompt += GetRolePreferenceHint()
+    │
+    ├─ <span style="color:#f78166">ActionDecisionModule（自取引用）</span>
+    │       └─ BuildRollingPrompt() += "## 行动风格\n" + GetDecisionStyleHint()
+    │
+    └─ <span style="color:#39d0d8">ReflectionModule（自取引用）</span>
+            └─ ShouldTriggerEarlyReflection() → true
+                    └─ memoryModule.reflectionImportanceThreshold = 100f</pre>
+  </div>
+</div>
+
+<!-- ══ 第六节：对比表 ════════════════════════════════════════════════════ -->
+<div class="section" id="compare">
+  <div class="section-title"><span class="num">6</span>对比：同任务下两种人格的差异</div>
+
+  <div class="cols">
+    <div class="card" style="border-color:#1a3a1a">
+      <div class="card-title" style="color:var(--accent2)">Hawk-1（高尽责性 + 低神经质）</div>
+      <div class="dim-bar-wrap">
+        <div class="dim-label">openness</div>
+        <div class="dim-bar-bg"><div class="dim-bar" style="width:55%;background:#58a6ff"></div></div>
+        <div class="dim-val">0.55</div>
+      </div>
+      <div class="dim-bar-wrap">
+        <div class="dim-label">conscientiousness</div>
+        <div class="dim-bar-bg"><div class="dim-bar" style="width:85%;background:#3fb950"></div></div>
+        <div class="dim-val">0.85</div>
+      </div>
+      <div class="dim-bar-wrap">
+        <div class="dim-label">extraversion</div>
+        <div class="dim-bar-bg"><div class="dim-bar" style="width:40%;background:#58a6ff"></div></div>
+        <div class="dim-val">0.40</div>
+      </div>
+      <div class="dim-bar-wrap">
+        <div class="dim-label">agreeableness</div>
+        <div class="dim-bar-bg"><div class="dim-bar" style="width:70%;background:#d2a8ff"></div></div>
+        <div class="dim-val">0.70</div>
+      </div>
+      <div class="dim-bar-wrap">
+        <div class="dim-label">neuroticism</div>
+        <div class="dim-bar-bg"><div class="dim-bar" style="width:30%;background:#f85149"></div></div>
+        <div class="dim-val">0.30</div>
+      </div>
+    </div>
+    <div class="card" style="border-color:#3a1a1a">
+      <div class="card-title" style="color:var(--accent3)">Falcon-3（高神经质 + 高开放性）</div>
+      <div class="dim-bar-wrap">
+        <div class="dim-label">openness</div>
+        <div class="dim-bar-bg"><div class="dim-bar" style="width:80%;background:#3fb950"></div></div>
+        <div class="dim-val">0.80</div>
+      </div>
+      <div class="dim-bar-wrap">
+        <div class="dim-label">conscientiousness</div>
+        <div class="dim-bar-bg"><div class="dim-bar" style="width:45%;background:#58a6ff"></div></div>
+        <div class="dim-val">0.45</div>
+      </div>
+      <div class="dim-bar-wrap">
+        <div class="dim-label">extraversion</div>
+        <div class="dim-bar-bg"><div class="dim-bar" style="width:60%;background:#58a6ff"></div></div>
+        <div class="dim-val">0.60</div>
+      </div>
+      <div class="dim-bar-wrap">
+        <div class="dim-label">agreeableness</div>
+        <div class="dim-bar-bg"><div class="dim-bar" style="width:50%;background:#58a6ff"></div></div>
+        <div class="dim-val">0.50</div>
+      </div>
+      <div class="dim-bar-wrap">
+        <div class="dim-label">neuroticism</div>
+        <div class="dim-bar-bg"><div class="dim-bar" style="width:75%;background:#f85149"></div></div>
+        <div class="dim-val">0.75</div>
+      </div>
+    </div>
+  </div>
+
+  <table class="diff-table" style="margin-top:16px">
+    <tr>
+      <th style="width:200px">维度</th>
+      <th style="color:var(--accent2)">Hawk-1（高尽责/低神经）</th>
+      <th style="color:var(--accent3)">Falcon-3（高开放/高神经）</th>
+    </tr>
+    <tr>
+      <td>LLM#3 角色偏好提示</td>
+      <td>[人格倾向] 倾向选择边界管控或系统性角色(如Perimeter/Guard)；倾向选择支援角色，优先配合队友需求</td>
+      <td>[人格倾向] 倾向选择侦察或探索角色(如Scout/Explorer)</td>
+    </tr>
+    <tr>
+      <td>LLM#3 选槽偏向</td>
+      <td>Perimeter / Guard / Supporter</td>
+      <td>Scout / Explorer</td>
+    </tr>
+    <tr>
+      <td>ADM 行动风格段</td>
+      <td>"按步骤系统化执行，每步完成后确认状态再推进下一步"</td>
+      <td>"谨慎行事，优先规避风险，遇不确定情况选保守方案<br>可尝试非常规路径"</td>
+    </tr>
+    <tr>
+      <td>ADM 典型动作序列</td>
+      <td>MoveTo → Signal（汇报） → 下一步</td>
+      <td>Observe → 评估 → MoveTo（保守路径）</td>
+    </tr>
+    <tr>
+      <td>Decision 类记忆 importance</td>
+      <td>0.80（默认，不修改）</td>
+      <td>0.80 × 1.2 = <strong style="color:var(--accent3)">0.96</strong>（高神经质加权）</td>
+    </tr>
+    <tr>
+      <td>Plan 类记忆 importance</td>
+      <td>0.65 × 1.1 = <strong style="color:var(--accent2)">0.715</strong>（高尽责性加权）</td>
+      <td>0.65（默认，不修改）</td>
+    </tr>
+    <tr>
+      <td>L2 反思触发阈值</td>
+      <td>150（默认）</td>
+      <td><strong style="color:var(--accent3)">100</strong>（高神经质降低50%阈值）</td>
+    </tr>
+    <tr>
+      <td>PersonalityTag</td>
+      <td>[高尽责性-0.85][高宜人性-0.70]</td>
+      <td>[高开放性-0.80][高神经质-0.75]</td>
+    </tr>
+    <tr>
+      <td>memory.personalityContext</td>
+      <td>[高尽责性-0.85][高宜人性-0.70]</td>
+      <td>[高开放性-0.80][高神经质-0.75]</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ══ 第七节：完整例子 ════════════════════════════════════════════════════ -->
+<div class="section" id="example">
+  <div class="section-title"><span class="num">7</span>完整例子：一次选槽 → 执行 → 记忆的全流程</div>
+
+  <p style="color:var(--text2);margin-bottom:14px;">
+    以 <strong>Hawk-1（高尽责性 0.85，低神经质 0.30）</strong> 执行"拦截北门入侵者"任务为例，
+    展示人格系统在每个关键节点产生的实际影响。
+  </p>
+
+  <div class="timeline">
+
+    <div class="timeline-step">
+      <div class="timeline-label">阶段 1 — 初始化</div>
+      <pre><span class="cm">// IntelligentAgent.InitializeAgent()</span>
+personalitySystem.<span class="method">Initialize</span>();
+<span class="cm">// → riskTolerance  = 0.55×0.5 + (1-0.30)×0.5 = 0.625</span>
+<span class="cm">// → cooperationBias = 0.70×0.6 + 0.40×0.4 = 0.580</span>
+memoryModule.<span class="method">SetPersonalitySystem</span>(personalitySystem);
+<span class="cm">// MemoryModule 已就绪，后续所有写入自动注入人格信息</span></pre>
+    </div>
+
+    <div class="timeline-step purple">
+      <div class="timeline-label">阶段 2 — LLM#3 选槽</div>
+      <p style="color:var(--text2);font-size:13px;margin-bottom:6px;">
+        RunLLM3() 调用 GetRolePreferenceHint()，追加到 prompt：
+      </p>
+      <pre><span class="str">[人格倾向] 倾向选择边界管控或系统性角色(如Perimeter/Guard)；
+倾向选择支援角色，优先配合队友需求
+请在 thought 字段中说明是否参考了上述人格倾向。</span></pre>
+      <p style="color:var(--text2);font-size:12.5px;margin-top:8px;">
+        LLM 返回的 thought 中出现了：<em>"人格倾向系统性角色，位置靠近南侧，
+        s2(Perimeter封锁南侧出口)与人格特征和位置高度匹配"</em>
+        → 选 <code>s2</code>。
+      </p>
+    </div>
+
+    <div class="timeline-step green">
+      <div class="timeline-label">阶段 3 — RememberSlotSelection 写入记忆</div>
+      <pre><span class="cm">// MemoryModule.StoreMemory() 内自动调用 InjectPersonality()</span>
+
+<span class="cm">// ① importance 修正</span>
+modifier = GetImportanceModifier(AgentMemoryKind.Plan)
+<span class="cm">//   conscientiousness=0.85 > 0.7 → modifier = 1.1f</span>
+m.importance = <span class="num-lit">0.65f</span> × <span class="num-lit">1.1f</span> = <span class="num-lit">0.715f</span>
+
+<span class="cm">// ② 人格标注写入</span>
+m.personalityContext = <span class="str">"[高尽责性-0.85][高宜人性-0.70]"</span></pre>
+    </div>
+
+    <div class="timeline-step orange">
+      <div class="timeline-label">阶段 4 — ADM Rolling Loop 执行</div>
+      <p style="color:var(--text2);font-size:13px;margin-bottom:6px;">
+        BuildRollingPrompt() 在"步骤目标"后追加"行动风格"段：
+      </p>
+      <pre><span class="str">## 行动风格
+按步骤系统化执行，每步完成后确认状态再推进下一步
+优先与队友协调，主动通过信号广播自身状态和意图</span></pre>
+      <p style="color:var(--text2);font-size:12.5px;margin-top:8px;">
+        LLM 在 thought 中解释："按系统化步骤：先飞至南侧出口建立监视点，
+        再写 IntentAnnounce 告知队友。"
+        → nextActions: <code>[MoveTo("南侧出口"), WriteWhiteboard("IntentAnnounce")]</code>
+      </p>
+    </div>
+
+    <div class="timeline-step green">
+      <div class="timeline-label">阶段 5 — 任务成功后 RememberMissionOutcome</div>
+      <pre>m.importance  = <span class="num-lit">0.94f</span>  <span class="cm">// Outcome 类型不在修正规则内，使用原始值</span>
+m.personalityContext = <span class="str">"[高尽责性-0.85][高宜人性-0.70]"</span>
+m.tags        = [<span class="str">"mission_success"</span>, <span class="str">"Perimeter"</span>, <span class="str">"slot_selection"</span>]</pre>
+    </div>
+
+    <div class="timeline-step purple">
+      <div class="timeline-label">阶段 6 — 下次类似任务检索时</div>
+      <p style="color:var(--text2);font-size:13px;margin-bottom:6px;">
+        BuildPlanningContext 构建 MemoryQuery，可选填入 preferredRoles：
+      </p>
+      <pre>query.preferredRoles = _personalitySystem.<span class="method">GetPreferredRoles</span>();
+<span class="cm">// → ["Perimeter", "Guard", "Supporter"]</span>
+
+<span class="cm">// ScoreMemory 中：tags 含 "Perimeter" → +0.10f 额外加分</span>
+<span class="cm">// 上次成功的 Perimeter 任务记忆会被优先召回</span></pre>
+      <div class="note ok" style="margin-top:8px">
+        <strong>涌现效果：</strong>连续任务后，Hawk-1 会稳定地强化"担任 Perimeter 角色"的偏好——
+        这是人格系统带来的<span class="highlight">角色专业化自然涌现</span>，无需硬编码。
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══ 页脚 ══════════════════════════════════════════════════════════════ -->
+<hr>
+<div style="color:var(--text2);font-size:12px;text-align:center;padding:12px 0">
+  PersonalitySystem 参考文档 &nbsp;·&nbsp;
+  涉及文件：<code>PersonalitySystem.cs</code>（新建）·
+  <code>MemoryContracts.cs</code> · <code>MemoryModule.cs</code> ·
+  <code>PlanningModule.cs</code> · <code>ActionDecisionModule.cs</code> ·
+  <code>ReflectionModule.cs</code> · <code>IntelligentAgent.cs</code>
+</div>
+
+</div>
+</body>
+</html>

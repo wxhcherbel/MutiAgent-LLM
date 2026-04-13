@@ -108,7 +108,28 @@ public class IntelligentAgent : MonoBehaviour
         // 初始化各子系统
         CommModule?.Initialize();
         //PerceptionModule?.Initialize();
-        
+
+        // ── 人格系统初始化 ────────────────────────────────────────────────────
+        // PersonalitySystem 挂在同一 GameObject 上，Inspector 中配置大五人格维度。
+        // Initialize() 计算衍生字段（riskTolerance / cooperationBias），
+        // 必须在 MemoryModule.SetPersonalitySystem 之前调用，确保衍生值已就绪。
+        var personalitySystem = GetComponent<PersonalitySystem>();
+        if (personalitySystem == null)
+        {
+            // 若 Inspector 中未挂载，自动添加一个默认人格（所有维度 0.5，中性人格）
+            personalitySystem = gameObject.AddComponent<PersonalitySystem>();
+            Debug.Log($"[IntelligentAgent] {Properties.AgentID}: PersonalitySystem 未挂载，已自动添加默认人格");
+        }
+        // 将 AgentID 同步到人格档案，确保日志和标注中能追踪到具体 agent
+        if (string.IsNullOrWhiteSpace(personalitySystem.Profile.agentId))
+            personalitySystem.Profile.agentId = Properties.AgentID;
+        personalitySystem.Initialize();
+
+        // 将人格系统注入 MemoryModule，后续所有 StoreMemory 调用都会自动注入人格信息
+        var memoryModule = GetComponent<MemoryModule>();
+        memoryModule?.SetPersonalitySystem(personalitySystem);
+        // ────────────────────────────────────────────────────────────────────────
+
         // 启动决策检查
         lastDecisionTime = Time.time;
         //PrintPerceivedGrid();

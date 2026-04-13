@@ -22,6 +22,14 @@ public class MemoryModule : MonoBehaviour
     /// </summary>
     [Min(1f)] public float freshnessWindowHours = 72f;
 
+    [Header("3D检索评分权重（三者之和建议为 1.0）")]
+    /// <summary>时效性维度权重。指数衰减：e^(-t/freshnessWindowHours)，λ=1/freshnessWindowHours。</summary>
+    [Range(0f, 2f)] public float recencyWeight    = 0.35f;
+    /// <summary>重要性维度权重。直接使用 memory.importance，已归一化 [0,1]。</summary>
+    [Range(0f, 2f)] public float importanceWeight = 0.40f;
+    /// <summary>相关性维度权重。结构字段精确匹配 + BagOfWords，归一化到 [0,1]。</summary>
+    [Range(0f, 2f)] public float relevanceWeight  = 0.25f;
+
     [Header("重要性累积触发反思")]
     /// <summary>
     /// 重要性累积阈值：每次存入记忆时，将 importance×10 累加到累积器。
@@ -65,6 +73,17 @@ public class MemoryModule : MonoBehaviour
     /// <summary>词袋文本相似度使用的 token 提取正则。</summary>
     private static readonly Regex TokenRegex = new Regex(@"[\p{L}\p{Nd}_]+", RegexOptions.Compiled);
 
+    /// <summary>
+    /// 当前 agent 的人格系统引用，由 IntelligentAgent.InitializeAgent() 通过
+    /// SetPersonalitySystem() 注入。为 null 时 InjectPersonality 直接返回，不影响正常流程。
+    /// </summary>
+    private PersonalitySystem _personalitySystem;
+
+    /// <summary>从 thought 结构化文本中提取【建议】内容（到行尾或下一个箭头止）。</summary>
+    private static readonly Regex PolicyRegex = new Regex(@"【建议】([^→\n]+)", RegexOptions.Compiled);
+    /// <summary>从 thought 结构化文本中提取【置信】等级（高/中/低）。</summary>
+    private static readonly Regex ConfidenceRegex = new Regex(@"【置信】(高|中|低)", RegexOptions.Compiled);
+
     private void Awake()
     {
         PruneExpiredInsights();
@@ -107,13 +126,111 @@ public class MemoryModule : MonoBehaviour
         if (memory.strengthScore <= 0f)
             memory.strengthScore = memory.importance;
 
+        // 注入人格维度标注并修正重要度（需要在 Add 之前，确保入库的记忆已含人格信息）
+        InjectPersonality(memory);
+
         memories.Add(memory);
         TrimMemoryCapacity();
 
         // 累积重要性：超过阈值时通知 ReflectionModule 触发 L2 跨事件反思
+        // 注意：此时 memory.importance 已经过人格乘数修正，累积的是修正后的权重
         AccumulateImportance(memory.importance);
 
+        // 从 thought 结构化文本中提取【建议】，独立存为 Policy 程序性提示
+        // isProceduralHint 作守卫，避免提取出的 Policy 记忆再次触发自身
+        if (!memory.isProceduralHint)
+            TryExtractPolicyFromDetail(memory);
+
         return memory;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 人格系统接口
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// 注入人格系统引用。由 IntelligentAgent.InitializeAgent() 在初始化阶段调用。
+    /// 注入后，每次 StoreMemory 都会自动调用 InjectPersonality，
+    /// 无需在各调用方单独处理人格相关逻辑。
+    /// </summary>
+    /// <param name="ps">当前 agent 的 PersonalitySystem，为 null 时不修改现有引用。</param>
+    public void SetPersonalitySystem(PersonalitySystem ps)
+    {
+        if (ps == null) return;
+        _personalitySystem = ps;
+    }
+
+    /// <summary>
+    /// 在记忆入库前，将人格系统的维度标注和重要度修正写入记忆对象。
+    /// 由 StoreMemory 在 Add() 之前调用，保证入库记忆已含完整人格信息。
+    ///
+    /// 步骤：
+    ///   ① 调用 GetImportanceModifier 获取人格乘数，修正 memory.importance
+    ///      （例如高神经质 agent 的 Decision 类记忆 importance×1.2）
+    ///   ② 调用 GetPersonalityTag 获取人格标注字符串，写入 memory.personalityContext
+    ///      （例如 "[高尽责性-0.85]"，供 ReflectionModule 分析人格-结果关联）
+    ///
+    /// 若 _personalitySystem 为 null（人格系统未挂载），此方法直接返回，不影响正常流程。
+    /// </summary>
+    private void InjectPersonality(Memory m)
+    {
+        if (_personalitySystem == null) return;
+
+        // ① 根据人格调整 importance 权重
+        //    GetImportanceModifier 根据记忆类型和人格维度返回乘数（1.0f = 不修改）
+        //    Clamp01 保证修正后的值不超出 [0, 1] 范围
+        float modifier = _personalitySystem.GetImportanceModifier(m.kind);
+        if (!Mathf.Approximately(modifier, 1.0f))
+            m.importance = Mathf.Clamp01(m.importance * modifier);
+
+        // ② 记录人格标注，供 ReflectionModule 做人格-场景-结果关联分析
+        //    只有存在突出维度（>0.7）时 GetPersonalityTag 才会返回非空字符串
+        string tag = _personalitySystem.GetPersonalityTag();
+        if (!string.IsNullOrWhiteSpace(tag))
+            m.personalityContext = tag;
+    }
+
+    /// <summary>
+    /// 从已存入记忆的 detail 字段中解析结构化 thought 的【建议】和【置信】标签。
+    /// 若【建议】非空且【置信】不为"低"，则单独存入一条 Policy 类型的程序性提示记忆，
+    /// 使其在后续检索中可被优先召回，而不是埋在长推理文本里。
+    /// 【置信】缺失时默认按"中"处理（confidence=0.70）。
+    /// </summary>
+    private void TryExtractPolicyFromDetail(Memory source)
+    {
+        if (string.IsNullOrWhiteSpace(source.detail)) return;
+
+        Match policyMatch = PolicyRegex.Match(source.detail);
+        if (!policyMatch.Success) return;
+
+        string suggestion = policyMatch.Groups[1].Value.Trim();
+        if (string.IsNullOrWhiteSpace(suggestion) || suggestion == "留空" || suggestion == "否则留空") return;
+
+        // 根据【置信】等级决定存储置信度，低置信度建议直接丢弃
+        float confidence = 0.70f;
+        Match confMatch = ConfidenceRegex.Match(source.detail);
+        if (confMatch.Success)
+        {
+            switch (confMatch.Groups[1].Value)
+            {
+                case "高": confidence = 0.85f; break;
+                case "中": confidence = 0.70f; break;
+                case "低": return;
+            }
+        }
+
+        Remember(
+            AgentMemoryKind.Policy,
+            suggestion,
+            $"[来源] {source.summary}",
+            importance: 0.75f,
+            confidence: confidence,
+            isProceduralHint: true,
+            missionId: source.missionId,
+            slotId: source.slotId,
+            targetRef: source.targetRef,
+            sourceModule: source.sourceModule,
+            tags: new[] { "inline_policy", "procedural" });
     }
 
     /// <summary>
@@ -613,54 +730,99 @@ public class MemoryModule : MonoBehaviour
         return builder.ToString().TrimEnd();
     }
 
-    private float ScoreMemory(Memory memory, MemoryQuery query)
+    /// <summary>
+    /// 三维检索评分（3D Retrieval Score）：
+    ///   score = recencyWeight    × e^(-t/freshnessWindowHours)   — 时效性，指数衰减
+    ///         + importanceWeight × memory.importance              — 重要性，已归一化 [0,1]
+    ///         + relevanceWeight  × ComputeNormalizedRelevance()   — 相关性，归一化到 [0,1]
+    /// 结果由 Recall() 按降序排列后取 top-K。
+    /// </summary>
+    private float ComputeRetrievalScore(Memory memory, MemoryQuery query)
     {
-        if (memory == null) return 0f;
+        // 维度 1：时效性 — 指数衰减 e^(-t/freshnessWindowHours)，λ = 1/freshnessWindowHours
+        double ageHours = Math.Max(0d, (DateTime.UtcNow - memory.createdAt).TotalHours);
+        float recency = (float)Math.Exp(-ageHours / Math.Max(1.0, freshnessWindowHours));
 
-        float score = memory.importance * 4f + memory.confidence * 2f;
-        if (query.preferProceduralHints && memory.isProceduralHint) score += 1.5f;
+        // 维度 2：重要性 — memory.importance 已在 StoreMemory 中 Clamp01，无需再处理
+        float importance = memory.importance;
+
+        // 维度 3：相关性 — 结构字段精确匹配 + BagOfWords，归一化到 [0,1]
+        float relevance = ComputeNormalizedRelevance(memory, query);
+
+        return recencyWeight * recency
+             + importanceWeight * importance
+             + relevanceWeight  * relevance;
+    }
+
+    /// <summary>
+    /// 计算记忆与查询的相关性，归一化到 [0,1]。
+    /// 子项满分分布：proceduralHint=0.15，missionId=0.30，slotId=0.20，stepLabel=0.15，
+    /// targetRef=0.25，entityRef=0.15，overlap≤0.30，textSim≤0.30，failed=0.05，总分母=1.85。
+    /// </summary>
+    private float ComputeNormalizedRelevance(Memory memory, MemoryQuery query)
+    {
+        const float MaxScore = 1.85f;
+        float raw = 0f;
+
+        if (query.preferProceduralHints && memory.isProceduralHint) raw += 0.15f;
 
         if (!string.IsNullOrWhiteSpace(query.missionId) &&
             string.Equals(memory.missionId, query.missionId, StringComparison.OrdinalIgnoreCase))
-        {
-            score += 3.5f;
-        }
+            raw += 0.30f;
 
         if (!string.IsNullOrWhiteSpace(query.slotId) &&
             string.Equals(memory.slotId, query.slotId, StringComparison.OrdinalIgnoreCase))
-        {
-            score += 2.5f;
-        }
+            raw += 0.20f;
 
         if (!string.IsNullOrWhiteSpace(query.stepLabel) &&
             string.Equals(memory.stepLabel, query.stepLabel, StringComparison.OrdinalIgnoreCase))
-        {
-            score += 2f;
-        }
+            raw += 0.15f;
 
         if (!string.IsNullOrWhiteSpace(query.targetRef))
         {
             if (string.Equals(memory.targetRef, query.targetRef, StringComparison.OrdinalIgnoreCase))
-            {
-                score += 3f;
-            }
-            else if (memory.relatedEntityRefs.Any(r => string.Equals(r, query.targetRef, StringComparison.OrdinalIgnoreCase)))
-            {
-                score += 2f;
-            }
+                raw += 0.25f;
+            else if (memory.relatedEntityRefs.Any(r =>
+                     string.Equals(r, query.targetRef, StringComparison.OrdinalIgnoreCase)))
+                raw += 0.15f;
         }
 
-        score += OverlapScore(query.tags, memory.tags, 0.9f);
-        score += OverlapScore(query.relatedAgentIds, memory.relatedAgentIds, 1.0f);
-        score += OverlapScore(query.relatedEntityRefs, memory.relatedEntityRefs, 1.0f);
-        score += ComputeTextSimilarity(query.freeText, BuildSearchableText(memory));
+        // 标签 / 相关智能体 / 相关实体重叠（最多贡献 0.30）
+        float overlap = OverlapScore(query.tags, memory.tags, 0.10f)
+                      + OverlapScore(query.relatedAgentIds, memory.relatedAgentIds, 0.10f)
+                      + OverlapScore(query.relatedEntityRefs, memory.relatedEntityRefs, 0.10f);
+        raw += Mathf.Min(0.30f, overlap);
 
-        double ageHours = Math.Max(0d, (DateTime.UtcNow - memory.createdAt).TotalHours);
-        float freshness = 1f / (1f + (float)(ageHours / Mathf.Max(1f, freshnessWindowHours)));
-        score += freshness * 2f;
+        // BagOfWords 文本相似度（原始值无上限，缩放 ×0.15 后截断到 0.30）
+        float textSim = ComputeTextSimilarity(query.freeText, BuildSearchableText(memory));
+        raw += Mathf.Min(0.30f, textSim * 0.15f);
 
-        if (memory.status == AgentMemoryStatus.Failed) score += 0.3f;
-        return score;
+        // 失败记忆轻微加分，保证错误经验不因重要性不够高而被埋没
+        if (memory.status == AgentMemoryStatus.Failed) raw += 0.05f;
+
+        // 人格偏好角色加权（可选）：
+        //   若 query.preferredRoles 非空，检查记忆的 tags 中是否包含偏好角色名。
+        //   每命中一个偏好角色加 0.10f，上限 0.20f（最多两个角色贡献加分）。
+        //   目的：让历史上担任人格偏好角色的记忆在检索时优先被召回，
+        //   例如高尽责性 agent 查询时，Perimeter/Guard 相关的历史记忆得分更高。
+        if (query.preferredRoles != null && query.preferredRoles.Count > 0)
+        {
+            float roleBonus = 0f;
+            foreach (string role in query.preferredRoles)
+            {
+                if (memory.tags.Any(t => string.Equals(t, role, StringComparison.OrdinalIgnoreCase)))
+                    roleBonus += 0.10f;
+            }
+            raw += Mathf.Min(0.20f, roleBonus);
+        }
+
+        return Mathf.Clamp01(raw / MaxScore);
+    }
+
+    private float ScoreMemory(Memory memory, MemoryQuery query)
+    {
+        if (memory == null) return 0f;
+        return ComputeRetrievalScore(memory, query);
     }
 
     private float ScoreInsight(ReflectionInsight insight, MemoryQuery query)
@@ -692,7 +854,7 @@ public class MemoryModule : MonoBehaviour
             BuildCombinedText(insight.title, insight.summary, insight.applyWhen, insight.suggestedAdjustment));
 
         double ageHours = Math.Max(0d, (DateTime.UtcNow - insight.createdAt).TotalHours);
-        score += 1f / (1f + (float)(ageHours / 24f));
+        score += (float)Math.Exp(-ageHours / 24.0);  // 指数衰减，半衰期约 17h（ln2×24）
         return score;
     }
 

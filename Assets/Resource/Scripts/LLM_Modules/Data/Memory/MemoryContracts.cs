@@ -116,6 +116,17 @@ public class Memory
     /// 实现"频繁访问的热点记忆越来越稳固，长期未用的冷门记忆自然归档"效果。
     /// </summary>
     public float strengthScore = 0.5f;
+
+    // ── 人格维度（由 PersonalitySystem 在 MemoryModule.StoreMemory 中自动注入）────
+
+    /// <summary>
+    /// 记忆创建时产出该记忆的 agent 的人格标注，例如 "[高尽责性-0.85][高宜人性-0.70]"。
+    /// 由 MemoryModule.InjectPersonality() 自动写入，不需要手动设置。
+    /// 用途：
+    ///   ReflectionModule 进行 L2/L3 反思时，可通过此字段判断这条记忆
+    ///   是在何种人格状态下产生的，从而识别"人格-场景-结果"的关联规律。
+    /// </summary>
+    public string personalityContext;
 }
 
 /// <summary>
@@ -156,6 +167,14 @@ public class MemoryQuery
 
     /// <summary>是否优先返回程序性提示类记忆。</summary>
     public bool preferProceduralHints;
+
+    /// <summary>
+    /// 人格偏好的角色名集合（可选）。
+    /// 当检索时希望"历史上担任某些角色的记忆优先被召回"时填入，
+    /// 例如 PersonalitySystem.GetPreferredRoles() 返回的角色列表。
+    /// MemoryModule.ScoreMemory 中会对 tags 包含这些角色名的记忆额外加分（+0.5f/条）。
+    /// </summary>
+    public List<string> preferredRoles = new List<string>();
 }
 
 /// <summary>

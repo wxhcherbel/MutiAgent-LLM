@@ -88,6 +88,14 @@ public class ReflectionModule : MonoBehaviour
     /// <summary>是否已订阅 MemoryModule.OnImportanceThresholdReached 事件，防止重复订阅。</summary>
     private bool _subscribedToMemoryEvent = false;
 
+    /// <summary>
+    /// 当前 agent 的人格系统引用，在 EnsureDependencies() 中通过 GetComponent 获取。
+    /// 高神经质（>0.7）的 agent 会在初始化时将 L2 反思触发阈值降低（150→100），
+    /// 使其更频繁地进行跨事件反思——这本身也是高神经质人格的体现（过度思考倾向）。
+    /// 为 null 时不调整阈值，使用 Inspector 中配置的默认值。
+    /// </summary>
+    private PersonalitySystem _personalitySystem;
+
     private void Start()
     {
         EnsureDependencies();
@@ -114,6 +122,27 @@ public class ReflectionModule : MonoBehaviour
         if (llmInterface == null)
         {
             llmInterface = FindObjectOfType<LLMInterface>();
+        }
+
+        // 获取人格系统并按人格特征调整 L2 反思触发阈值
+        // 此处在 EnsureDependencies 中而非 Start 中，是因为 EnsureDependencies
+        // 可能在 Start 之外（如首次 NotifyActionOutcome 时）被调用，确保引用始终被尝试获取
+        if (_personalitySystem == null)
+        {
+            _personalitySystem = GetComponent<PersonalitySystem>();
+
+            // 高神经质 agent（>0.7）降低 L2 触发阈值：150 → 100
+            // 含义：每积累约10条高权重记忆就触发一次 L2 反思（而非默认15条）
+            // 这让高神经质 agent 更积极地从失败和观察中提炼经验，
+            // 但也意味着更高的 LLM 调用频率（设计上这是人格特征的忠实反映）
+            if (_personalitySystem != null && _personalitySystem.ShouldTriggerEarlyReflection()
+                && memoryModule != null)
+            {
+                memoryModule.reflectionImportanceThreshold = 100f;
+                Debug.Log($"[ReflectionModule] {_personalitySystem.Profile.agentId} " +
+                          $"高神经质({_personalitySystem.Profile.neuroticism:F2}) → " +
+                          $"L2反思阈值降低为100（默认150）");
+            }
         }
     }
 
