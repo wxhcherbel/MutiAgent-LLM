@@ -506,9 +506,10 @@ public class ActionDecisionModule : MonoBehaviour
         }
 
         // thought 模板：带标签的结构化推理，强制 LLM 逐步思考
+        // 末尾两个标签补充主观维度：【置信】记录当前决策的把握程度，【建议】提炼可复用的任务处理规律
         string thoughtGuide = ctx.iterationCount >= 3
-            ? "【情境】我在哪/要去哪/走了几步 → 【轨迹分析】历史中是否出现重复节点、整体是否在朝目标方向推进 → 【完成判断】三项核对结果 → 【选择理由】下一节点是否为历史外的新路径、方向是否朝目标"
-            : "【完成判断】三项核对结果 → 【下一步】选择意图及依据";
+            ? "【情境】我在哪/要去哪/走了几步 → 【轨迹分析】历史中是否出现重复节点、整体是否在朝目标方向推进 → 【完成判断】三项核对结果 → 【选择理由】下一节点是否为历史外的新路径、方向是否朝目标 → 【置信】对此决策的把握（高/中/低）及原因 → 【建议】若有值得记录的规律输出\"当[场景]时应[策略]\"，否则留空"
+            : "【完成判断】三项核对结果 → 【下一步】选择意图及依据 → 【置信】对此决策的把握（高/中/低）及原因 → 【建议】若有值得记录的规律输出\"当[场景]时应[策略]\"，否则留空";
 
         // 从 MemoryModule 检索当前步骤相关的历史经验和反思洞察
         // 失败时降级为空字符串（不影响决策流程，只是少了历史参考）
@@ -588,7 +589,8 @@ public class ActionDecisionModule : MonoBehaviour
             "在输出前，请依次核对以下三项，全部满足才可 isDone=true：\n" +
             "① 若步骤有 targetName，当前位置必须已到达该目标（见\"当前位置是否已到达目标\"）。\n" +
             "② 若步骤有 doneCond（完成条件），执行历史中必须有满足该条件的动作记录。\n" +
-            "③ 若存在协同约束（如 C2 完成条件、C3 信号等），必须已完成约束要求。\n" +
+            "③ 若存在 C3 约束（信号等待/互斥），必须已满足信号前置条件（白板中已出现对应 ReadySignal 或 IntentAnnounce）。\n" +
+            "   【C2 约束不在此判断】C2 同步（多机完成同步）由系统在 isDone=true 后自动写入并等待，你只需判断本机的步骤目标是否达成，不要因为等 C2 同步而推迟 isDone=true。\n" +
             "任意一项不满足，isDone 必须为 false，并继续规划下一步动作。\n\n" +
 
             "## 输出（JSON 对象，非数组）\n" +
@@ -603,7 +605,7 @@ public class ActionDecisionModule : MonoBehaviour
             "1. thought 必填，按上方标签格式逐步推理（不影响执行逻辑）。\n" +
             "2. isDone=true 时 nextActions 填 []；isDone=false 时必须提供 1-3 个动作。\n" +
             "3. 每个动作必须包含全部字段：actionId / type / targetName / targetAgentId / duration / actionParams / spatialHint。\n" +
-            "4. 协同约束非空时，生成的动作必须遵守约束要求（如等待信号、保持间距等）。\n";
+            "4. 若存在 C3 约束，生成的动作必须遵守其信号/互斥要求（如等待 ReadySignal、避开已占节点）；C2 约束无需在动作层面等待。\n";
     }
 
     private string BuildConstraintSummary()

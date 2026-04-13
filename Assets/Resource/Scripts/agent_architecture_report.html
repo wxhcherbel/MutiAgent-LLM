@@ -211,7 +211,6 @@
   <a class="toc-sub" href="#s7-3">7.3 世界语义地图</a>
   <a class="toc-sub" href="#s7-4">7.4 技能库</a>
   <a class="toc-sub" href="#s7-5">7.5 人格特征系统</a>
-  <a class="toc-sub" href="#s7-6">7.6 时间感知</a>
   <a href="#s8">八、涌现机制设计</a>
   <a class="toc-sub" href="#s8-4">8.4 无人机协作涌现模型</a>
   <a href="#s9">九、架构演进全图</a>
@@ -879,13 +878,6 @@
         <td>ReflectionModule.cs</td>
       </tr>
       <tr>
-        <td><strong>📅 时间感知</strong></td>
-        <td>感知时刻（早/午/晚/周几）并影响决策</td>
-        <td>无时间感知，无时段相关行为</td>
-        <td><span class="badge-tag red">🔴 严重缺失</span></td>
-        <td>需新建模块</td>
-      </tr>
-      <tr>
         <td><strong>🤝 社会关系图谱</strong></td>
         <td>记录与其他智能体的关系、信任、情感</td>
         <td>仅有 Relationship 类型记忆，无结构化社会图</td>
@@ -958,7 +950,6 @@
         <li class="no">自主目标生成器 — 当前系统根本无法自治</li>
         <li class="no">记忆检索评分公式 — 检索质量严重影响决策</li>
         <li class="no">层级反思机制 — 无法形成高阶认知</li>
-        <li class="no">时间感知模块 — 无法模拟日常生活节律</li>
       </ul>
     </div>
     <div class="card warning">
@@ -1557,45 +1548,6 @@ public class AgentPersonality {
     </div>
   </div>
 
-  <!-- MODULE 6: TIME AWARENESS -->
-  <h3 id="s7-6" class="sub-title">7.6 时间感知模块（SimulatedTimeModule）</h3>
-  <div class="card">
-    <p style="font-size:13.5px;margin-bottom:12px;">斯坦福小镇中，智能体的日常行为与时间段强相关（早晨吃饭、下午工作、晚上休息）。当前系统完全缺乏时间感知，需新建模拟时钟：</p>
-    <div class="card-grid cols-2" style="gap:12px;">
-      <div>
-        <pre style="font-size:12px;padding:12px;">public class SimulatedTimeModule : MonoBehaviour {
-  public float timeScale = 60f; // 1秒=1分钟
-  public float currentHour;     // 0-24
-  public int dayCount;
-
-  public TimeOfDay GetPeriod() => currentHour switch {
-    < 7 => TimeOfDay.EarlyMorning,
-    < 12 => TimeOfDay.Morning,
-    < 14 => TimeOfDay.Noon,
-    < 18 => TimeOfDay.Afternoon,
-    < 21 => TimeOfDay.Evening,
-    _ => TimeOfDay.Night
-  };
-
-  // 时段变化事件
-  public event Action&lt;TimeOfDay&gt; OnPeriodChanged;
-  public event Action OnNewDay; // 触发日计划生成
-}</pre>
-      </div>
-      <div>
-        <h4 class="sub-sub" style="margin-top:0;">时间段对行为的影响</h4>
-        <table style="font-size:12px;">
-          <tr><th>时段</th><th>典型行为模式</th></tr>
-          <tr><td>早晨 (7–12)</td><td>启动日常巡逻、与同伴碰头</td></tr>
-          <tr><td>中午 (12–14)</td><td>补充电量、处理非紧急通信</td></tr>
-          <tr><td>下午 (14–18)</td><td>执行主要任务、探索新区域</td></tr>
-          <tr><td>傍晚 (18–21)</td><td>汇报日志、与团队总结</td></tr>
-          <tr><td>夜晚 (21–7)</td><td>守备模式、低功耗巡逻</td></tr>
-          <tr><td>新的一天</td><td>触发自主日计划生成</td></tr>
-        </table>
-      </div>
-    </div>
-  </div>
 </section>
 
 <hr class="divider">
@@ -1624,10 +1576,10 @@ public class AgentPersonality {
       <text x="410" y="252" text-anchor="middle" font-size="11" fill="#90cdf4">人格驱动</text>
       <text x="410" y="268" text-anchor="middle" font-size="10" fill="#90cdf4">自主决策</text>
 
-      <!-- Top: Time Module -->
-      <rect x="300" y="20" width="220" height="44" rx="8" fill="#276749" stroke="#68d391" stroke-width="1.5"/>
-      <text x="410" y="40" text-anchor="middle" font-size="12" fill="white" font-weight="700">⏰ 时间感知模块</text>
-      <text x="410" y="58" text-anchor="middle" font-size="10" fill="#c6f6d5">新的一天 → 触发日计划生成</text>
+      <!-- Top: Manual Trigger -->
+      <rect x="300" y="20" width="220" height="44" rx="8" fill="#4a5568" stroke="#a0aec0" stroke-width="1.5"/>
+      <text x="410" y="40" text-anchor="middle" font-size="12" fill="white" font-weight="700">👤 用户手动触发</text>
+      <text x="410" y="58" text-anchor="middle" font-size="10" fill="#e2e8f0">提交任务 → 启动规划流水线</text>
       <line x1="410" y1="64" x2="410" y2="180" stroke="#4a5568" stroke-width="1.5" marker-end="url(#a5)"/>
 
       <!-- Left: Memory -->
@@ -1838,9 +1790,9 @@ _incidentCoordinator.ReportIncident(new IncidentReport {
       <text x="120" y="88" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">PerceptionModule</text>
       <text x="120" y="104" text-anchor="middle" font-size="10" fill="#a0aec0">0.5s传感 → 自动写入记忆流 ⚡改</text>
 
-      <rect x="244" y="66" width="220" height="54" rx="6" fill="#276749" stroke="#68d391" stroke-width="2"/>
-      <text x="354" y="88" text-anchor="middle" font-size="11" fill="white" font-weight="700">⏰ SimulatedTimeModule 🆕</text>
-      <text x="354" y="104" text-anchor="middle" font-size="10" fill="#c6f6d5">时段感知 · 新日触发 · 活动调度</text>
+      <rect x="244" y="66" width="220" height="54" rx="6" fill="#4a5568" stroke="#a0aec0" stroke-width="1.5"/>
+      <text x="354" y="88" text-anchor="middle" font-size="11" fill="white" font-weight="700">👤 用户手动触发</text>
+      <text x="354" y="104" text-anchor="middle" font-size="10" fill="#e2e8f0">任务提交 → 规划流水线启动</text>
 
       <rect x="478" y="66" width="220" height="54" rx="6" fill="#276749" stroke="#68d391" stroke-width="2"/>
       <text x="588" y="88" text-anchor="middle" font-size="11" fill="white" font-weight="700">🗺️ WorldSemanticMap 🆕</text>
@@ -1918,7 +1870,7 @@ _incidentCoordinator.ReportIncident(new IncidentReport {
       <rect x="360" y="522" width="14" height="14" fill="#2b6cb0" stroke="#4a5568" stroke-width="1.5"/>
       <text x="382" y="534" font-size="11" fill="#4a5568">保持或微调的现有模块</text>
       <text x="30" y="558" font-size="10" fill="#718096">核心变化：① 自主目标生成器取代人工任务注入；② 记忆模块升级三维检索；③ 反思模块升级为层级递归；</text>
-      <text x="30" y="572" font-size="10" fill="#718096">④ 新增社会关系图谱/技能库/人格系统/语义地图/时间感知，共同支撑自主涌现行为。</text>
+      <text x="30" y="572" font-size="10" fill="#718096">④ 新增社会关系图谱/技能库/人格系统/语义地图，共同支撑自主涌现行为。</text>
     </svg>
     <p style="text-align:center;font-size:12px;color:#718096;margin-top:8px;">图5：目标架构全景图（演进后完整版）</p>
   </div>
@@ -2386,7 +2338,7 @@ SocialGraph.UpdateRelationship(
 
   <!-- 与案例一对比提示 -->
   <div class="alert info" style="margin-bottom:20px;font-size:13px;">
-    <strong>📌 与案例一的核心区别：</strong>案例一的驱动力是「人类注入任务」，案例二的驱动力是「时间流逝 + 自身性格 + 历史记忆」。任务从系统内部涌现，而非从外部输入。
+    <strong>📌 与案例一的核心区别：</strong>案例一处理突发任务（单次人工注入），案例二展示智能体在用户触发后，如何依靠「自身性格 + 历史记忆 + 社会关系」自主分工与决策，行为多样性从内部涌现。
   </div>
 
   <!-- 场景设定 Banner -->
@@ -2395,7 +2347,7 @@ SocialGraph.UpdateRelationship(
     <div class="card-grid cols-3" style="gap:12px;">
       <div style="background:rgba(255,255,255,0.1);border-radius:8px;padding:12px;">
         <strong style="color:#68d391;">任务来源</strong>
-        <p style="font-size:12px;margin-top:4px;color:#e2e8f0;">无人类注入。系统时钟到达 06:00，SimulatedTimeModule 触发 OnNewDay，智能体自主产生当日目标</p>
+        <p style="font-size:12px;margin-top:4px;color:#e2e8f0;">用户手动触发「开始今日巡逻」。AutonomousGoalGenerator 基于各机性格与历史记忆自主分解目标</p>
       </div>
       <div style="background:rgba(255,255,255,0.1);border-radius:8px;padding:12px;">
         <strong style="color:#f6ad55;">三机初始状态</strong>
@@ -2417,11 +2369,11 @@ SocialGraph.UpdateRelationship(
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
       <div style="background:#2d3748;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">0</div>
       <div>
-        <strong style="font-size:14px;color:#2d3748;">05:55 — ReflectionModule（升级）— 夜间 L3 抽象反思</strong>
+        <strong style="font-size:14px;color:#2d3748;">步骤 0 — ReflectionModule（升级）— 触发前 L3 抽象反思</strong>
         <span class="badge-tag blue" style="margin-left:8px;">升级模块</span>
       </div>
     </div>
-    <p style="font-size:13px;color:#4a5568;margin-bottom:10px;">每日 06:00 唤醒前5分钟，ReflectionModule 检测过去24小时内累积重要性 &gt; 阈值，自动触发 L3 抽象反思，生成供明天使用的高层洞察：</p>
+    <p style="font-size:13px;color:#4a5568;margin-bottom:10px;">在用户触发新任务前，ReflectionModule 检测过去24小时内累积重要性 &gt; 阈值，自动触发 L3 抽象反思，将经验沉淀为高层洞察供本次任务使用：</p>
     <div class="card-grid cols-2" style="gap:12px;">
       <div>
         <pre style="font-size:11px;padding:10px;">// UAV-1 夜间 L3 反思输出
@@ -2450,52 +2402,16 @@ SocialGraph.UpdateRelationship(
     </div>
   </div>
 
-  <!-- STEP 1: SimulatedTimeModule OnNewDay -->
-  <div class="card" style="border-left:4px solid #319795;margin-bottom:16px;">
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
-      <div style="background:#2c7a7b;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">1</div>
-      <div>
-        <strong style="font-size:14px;color:#2c7a7b;">06:00 — SimulatedTimeModule（新增）— 时间感知与唤醒</strong>
-        <span class="badge-tag purple" style="margin-left:8px;">新增模块</span>
-      </div>
-    </div>
-    <div class="card-grid cols-2" style="gap:12px;">
-      <div>
-        <pre style="font-size:11px;padding:10px;">// SimulatedTimeModule.cs
-// 系统仿真时间到达 06:00
-
-OnNewDay?.Invoke(new DayContext {
-  simDate: "2025-09-15",
-  simTime: "06:00",
-  period: TimePeriod.EarlyMorning,
-  seasonalContext: "工作日·秋季开学"
-});
-
-// 广播给所有 IntelligentAgent
-// → 每个 agent.OnReceiveNewDayEvent()
-//   → 触发 AutonomousGoalGenerator</pre>
-      </div>
-      <div>
-        <p style="font-size:12.5px;color:#4a5568;margin-bottom:8px;"><strong>时间感知的作用：</strong></p>
-        <ul class="check-list" style="font-size:12.5px;">
-          <li class="yes"><code>TimePeriod.EarlyMorning</code> 决定今天的行为模板（清晨与深夜的任务权重不同）</li>
-          <li class="yes">「工作日」vs「周末」影响 AutonomousGoalGenerator 的任务候选池（工作日更多安全巡逻，周末更多探索）</li>
-          <li class="yes">当前系统没有时间概念，所有时刻行为一致，无法模拟真实的作息节律</li>
-        </ul>
-      </div>
-    </div>
-  </div>
-
   <!-- STEP 2: AutonomousGoalGenerator -->
   <div class="card" style="border-left:4px solid #805ad5;margin-bottom:16px;">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
       <div style="background:#553c9a;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">2</div>
       <div>
-        <strong style="font-size:14px;color:#553c9a;">06:00–06:10 — AutonomousGoalGenerator（新增）+ PersonalitySystem（新增）+ MemoryModule — 自主目标生成</strong>
+        <strong style="font-size:14px;color:#553c9a;">步骤 1 — AutonomousGoalGenerator（新增）+ PersonalitySystem（新增）+ MemoryModule — 自主目标生成</strong>
         <span class="badge-tag purple" style="margin-left:8px;">新增模块</span>
       </div>
     </div>
-    <p style="font-size:13px;color:#4a5568;margin-bottom:10px;">每架无人机独立调用 LLM，输入「性格档案 + 昨日记忆 + 社会关系 + 当前状态 + 时间上下文」，输出今日自主目标。<strong>这是案例二最核心的「无注入」起点。</strong></p>
+    <p style="font-size:13px;color:#4a5568;margin-bottom:10px;">每架无人机独立调用 LLM，输入「性格档案 + 历史记忆 + 社会关系 + 当前状态」，自主分解用户触发的任务目标。<strong>这是案例二的核心：相同的触发输入，因性格不同而产生差异化目标。</strong></p>
     <div class="card-grid cols-3" style="gap:10px;">
       <div style="background:#faf5ff;border:1px solid #d6bcfa;border-radius:8px;padding:12px;">
         <strong style="color:#553c9a;font-size:12px;">UAV-1「责任心型」</strong>
@@ -2971,7 +2887,7 @@ insight_L3: "东门安全薄弱点
   纳入LeadScout默认路径规划"
 
 // 写入 MemoryModule, depth=3
-// 将在明天06:00被
+// 下次任务触发时被
 // AutonomousGoalGenerator 检索
 // → 形成自主成长的完整闭环 ✅</pre>
       </div>
@@ -2997,9 +2913,9 @@ insight_L3: "东门安全薄弱点
         </marker>
       </defs>
       <!-- Nodes -->
-      <rect x="10" y="80" width="130" height="50" rx="8" fill="#276749" stroke="#68d391" stroke-width="1.5"/>
-      <text x="75" y="102" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">SimulatedTime</text>
-      <text x="75" y="118" text-anchor="middle" font-size="10" fill="#9ae6b4">OnNewDay 触发</text>
+      <rect x="10" y="80" width="130" height="50" rx="8" fill="#4a5568" stroke="#a0aec0" stroke-width="1.5"/>
+      <text x="75" y="102" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">用户手动触发</text>
+      <text x="75" y="118" text-anchor="middle" font-size="10" fill="#cbd5e0">任务提交入口</text>
 
       <rect x="170" y="80" width="150" height="50" rx="8" fill="#553c9a" stroke="#d6bcfa" stroke-width="1.5"/>
       <text x="245" y="99" text-anchor="middle" font-size="11" fill="#e2e8f0" font-weight="600">AutonomousGoal</text>
@@ -3058,12 +2974,6 @@ insight_L3: "东门安全薄弱点
       <tr><th>模块</th><th>状态</th><th>在本案例中的具体作用</th><th>没有它会怎样</th></tr>
     </thead>
     <tbody>
-      <tr>
-        <td><strong>SimulatedTimeModule</strong></td>
-        <td><span class="badge-tag purple">新增</span></td>
-        <td>06:00 触发 OnNewDay，驱动全体智能体自主启动；时间段(EarlyMorning)影响任务权重</td>
-        <td>无时间感知，智能体不知道「新的一天开始了」，无法自主启动</td>
-      </tr>
       <tr>
         <td><strong>AutonomousGoalGenerator</strong></td>
         <td><span class="badge-tag purple">新增</span></td>
@@ -3167,12 +3077,12 @@ insight_L3: "东门安全薄弱点
       <tr>
         <td><strong>任务来源</strong></td>
         <td>人类操作员注入自然语言任务</td>
-        <td>SimulatedTimeModule + AutonomousGoalGenerator 内部涌现</td>
+        <td>用户手动触发 + AutonomousGoalGenerator 自主分解目标</td>
       </tr>
       <tr>
         <td><strong>规划触发</strong></td>
         <td>外部突发事件（入侵者出现）</td>
-        <td>时间事件（每日06:00）+ 性格驱动</td>
+        <td>用户手动提交 + 性格驱动目标自主分化</td>
       </tr>
       <tr>
         <td><strong>约束类型</strong></td>
@@ -3192,7 +3102,7 @@ insight_L3: "东门安全薄弱点
       <tr>
         <td><strong>关键新增模块</strong></td>
         <td>SocialGraph（关系）+ SkillLibrary（技能积累）</td>
-        <td>AutonomousGoalGenerator + PersonalitySystem + SimulatedTimeModule + WorldSemanticMap</td>
+        <td>AutonomousGoalGenerator + PersonalitySystem + WorldSemanticMap</td>
       </tr>
       <tr>
         <td><strong>斯坦福小镇类比</strong></td>
@@ -3240,18 +3150,17 @@ insight_L3: "东门安全薄弱点
     </div>
 
     <div class="timeline-item p2">
-      <h4>Phase 2：人格与时间感知（P0，约1.5周）</h4>
-      <p>完成后效果：智能体有个性分化，行为呈现时段规律性</p>
+      <h4>Phase 2：人格系统与语义地图（P0，约1.5周）</h4>
+      <p>完成后效果：智能体有个性分化，不同性格的无人机自然产生行为差异</p>
       <div class="card" style="margin-top:10px;padding:16px;">
         <div class="card-grid cols-2" style="gap:10px;">
           <div>
             <strong style="font-size:13px;color:#c05621;">📌 必须完成</strong>
             <ul style="font-size:13px;padding-left:16px;margin-top:6px;">
               <li>新建 PersonalitySystem.cs（Big Five + 领域特征）</li>
-              <li>新建 SimulatedTimeModule.cs（时钟 + 时段事件）</li>
               <li>修改 AgentProperties 引用 PersonalitySystem</li>
               <li>新建 WorldSemanticMap.cs（扩展 CampusGrid2D）</li>
-              <li>在 IntelligentAgent 订阅 OnNewDay 事件</li>
+              <li>在规划提示词中注入人格上下文</li>
             </ul>
           </div>
           <div>
@@ -3261,7 +3170,6 @@ insight_L3: "东门安全薄弱点
               <li>Agents/AgentProperties（新增人格字段）</li>
               <li>Maps/CampusGrid2D.cs（新增语义层）</li>
               <li>新建：LLM_Modules/PersonalitySystem.cs</li>
-              <li>新建：LLM_Modules/SimulatedTimeModule.cs</li>
             </ul>
           </div>
         </div>
