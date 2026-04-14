@@ -1,5 +1,6 @@
 // Other_Modules/AgentMotionExecutor.cs
 // 替换原 MLAgentsController.cs，负责驱动无人机 Rigidbody 执行 ADM 输出的原子动作。
+using System;
 using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
@@ -40,6 +41,7 @@ public class AgentMotionExecutor : MonoBehaviour
     private CampusGrid2D       campusGrid;
     private AgentProperties    props;
     private IntelligentAgent   agent;
+    private MemoryModule       _memoryModule;
 
     private AtomicAction       currentAction;
     private bool               actionRunning;
@@ -70,9 +72,9 @@ public class AgentMotionExecutor : MonoBehaviour
         adm        = GetComponent<ActionDecisionModule>();
         campusGrid = FindObjectOfType<CampusGrid2D>();
         agent      = GetComponent<IntelligentAgent>();
-        props      = agent?.Properties;
-        agentState = agent?.CurrentState;
-
+        props         = agent?.Properties;
+        agentState    = agent?.CurrentState;
+        _memoryModule = GetComponent<MemoryModule>();
 
         if (props != null && props.MaxSpeed > 0f)
             maxSpeed = props.MaxSpeed;
@@ -213,6 +215,9 @@ public class AgentMotionExecutor : MonoBehaviour
                 break;
             case AtomicActionType.Takeoff:
                 yield return StartCoroutine(DoTakeoff(action));
+                break;
+            case AtomicActionType.Patrol:
+                yield return StartCoroutine(DoPatrol(action));
                 break;
             default:
                 Debug.LogWarning($"[AME] 未知动作类型 {action.type}，跳过");
@@ -521,6 +526,140 @@ public class AgentMotionExecutor : MonoBehaviour
         }
         hoverHeight = defaultHoverHeight;
         Debug.Log($"[AME] Takeoff 完成，高度={transform.position.y:F1}m");
+    }
+
+    // ─── Patrol ──────────────────────────────────────────────────
+
+    private IEnumerator DoPatrol(AtomicAction action)
+    {
+        float totalDuration = action.duration > 0f ? action.duration : 60f;
+        bool  withObserve   = action.actionParams?.Contains("observe") == true;
+
+        // ── 0. targetName 为空时查空闲度自动选区 ─────────────────────
+        string resolvedTarget = action.targetName;
+        if (string.IsNullOrWhiteSpace(resolvedTarget) && _memoryModule != null)
+        {
+            resolvedTarget = _memoryModule.GetHighestIdlenessArea();
+            if (!string.IsNullOrWhiteSpace(resolvedTarget))
+                Debug.Log($"[AME] Patrol: targetName 为空，按空闲度选区 → '{resolvedTarget}'");
+        }
+
+        // ── 1. 获取巡逻格子集合 ─────────────────────────────────────
+        // 开放区域（操场等）：occupied 内可行走格；建筑外围：全周接近格（大 maxCount 覆盖各方向）
+        List<Vector2Int> patrolCells = new List<Vector2Int>();
+
+        if (campusGrid != null && !string.IsNullOrWhiteSpace(resolvedTarget))
+        {
+            if (campusGrid.TryGetFeatureOccupiedCells(resolvedTarget, out Vector2Int[] occupied))
+                patrolCells = occupied.Where(c => campusGrid.IsWalkable(c.x, c.y)).ToList();
+
+            if (patrolCells.Count < 3)
+            {
+                // 建筑/禁飞区：取全周外围接近格（maxCount 足够大，保证覆盖各方向）
+                campusGrid.TryGetFeatureApproachCells(resolvedTarget, transform.position,
+                    out Vector2Int[] approach, maxCount: 256);
+                patrolCells = approach?.ToList() ?? patrolCells;
+            }
+        }
+        else if (campusGrid != null)
+        {
+            Vector2Int center = campusGrid.WorldToGrid(transform.position);
+            const int R = 20;
+            for (int dx = -R; dx <= R; dx++)
+            for (int dz = -R; dz <= R; dz++)
+            {
+                int x = center.x + dx, z = center.y + dz;
+                if (campusGrid.IsInBounds(x, z) && campusGrid.IsWalkable(x, z))
+                    patrolCells.Add(new Vector2Int(x, z));
+            }
+        }
+
+        if (patrolCells.Count == 0)
+        {
+            Debug.LogWarning("[AME] Patrol: 无可用巡逻格，跳过");
+            yield break;
+        }
+
+        AgentStateServer.PushMotionEvent(props?.AgentID ?? name, "patrol_start",
+            $"⬡ 巡逻 '{resolvedTarget}'，{patrolCells.Count} 个格子，时长 {totalDuration}s");
+
+        // ── 2. Frontier + A* 覆盖循环 ──────────────────────────────
+        // Frontier 负责"挑哪个格"（就近未访问，体现智能性和随机性）
+        // A* 负责"怎么飞过去"（绕过建筑/禁飞区，不再直飞）
+        var   visited           = new HashSet<Vector2Int>();
+        float elapsed           = 0f;
+        const float VISIT_RADIUS_M = 8f;
+        const float WP_TIMEOUT     = 12f;
+        const float ARRIVE_DIST    = 4f;
+
+        while (elapsed < totalDuration && visited.Count < patrolCells.Count)
+        {
+            // a. Frontier：找当前位置最近的未访问格
+            Vector2Int agentCell = campusGrid.WorldToGrid(transform.position);
+            Vector2Int? target   = null;
+            float minDist = float.MaxValue;
+            foreach (var c in patrolCells)
+            {
+                if (visited.Contains(c)) continue;
+                float d = Vector2.Distance((Vector2)agentCell, (Vector2)c);
+                if (d < minDist) { minDist = d; target = c; }
+            }
+            if (target == null) break;
+
+            // b. A* 规划到目标格的路径（自动绕过建筑/禁飞区）
+            List<Vector2Int> segPath = campusGrid.FindPathAStar(agentCell, target.Value);
+            if (segPath == null || segPath.Count == 0)
+                segPath = new List<Vector2Int> { target.Value }; // A* 失败则直飞兜底
+
+            // c. 逐航点跟随（与 DoMoveTo 相同逻辑）
+            foreach (var cell in segPath)
+            {
+                if (elapsed >= totalDuration) break;
+                Vector3 wp      = campusGrid.GridToWorldCenter(cell.x, cell.y, hoverHeight);
+                float   wpTimer = 0f;
+                while (wpTimer < WP_TIMEOUT && elapsed < totalDuration)
+                {
+                    FaceToward(wp);
+                    ApplyHorizontalPD(wp);
+                    Vector2 posXZ = new Vector2(transform.position.x, transform.position.z);
+                    Vector2 wpXZ  = new Vector2(wp.x, wp.z);
+                    if (Vector2.Distance(posXZ, wpXZ) < ARRIVE_DIST) break;
+                    wpTimer += Time.deltaTime;
+                    elapsed += Time.deltaTime;
+                    yield return null;
+                }
+            }
+
+            // d. 标记周边格为已访问
+            Vector2Int nowCell          = campusGrid.WorldToGrid(transform.position);
+            float      visitRadiusCells = VISIT_RADIUS_M / campusGrid.cellSize;
+            foreach (var c in patrolCells)
+                if (Vector2.Distance((Vector2)nowCell, (Vector2)c) <= visitRadiusCells)
+                    visited.Add(c);
+
+            // e. 可选感知
+            if (withObserve) GetComponent<PerceptionModule>()?.SenseOnce();
+
+            // f. 短暂悬停
+            float dwell  = UnityEngine.Random.Range(0.5f, 1.5f);
+            float dwellE = 0f;
+            Vector3 hold = new Vector3(transform.position.x, hoverHeight, transform.position.z);
+            while (dwellE < dwell && elapsed < totalDuration)
+            {
+                ApplyHorizontalPD(hold);
+                dwellE += Time.deltaTime; elapsed += Time.deltaTime;
+                yield return null;
+            }
+        }
+
+        float coverage = patrolCells.Count > 0
+            ? (float)visited.Count / patrolCells.Count * 100f : 100f;
+        AgentStateServer.PushMotionEvent(props?.AgentID ?? name, "patrol_done",
+            $"✓ 巡逻完成 '{resolvedTarget}'，覆盖率 {coverage:F0}%，用时 {elapsed:F0}s");
+
+        // ── 3. 写巡逻时间戳（AME 负责，ADM 不写）───────────────────
+        if (!string.IsNullOrWhiteSpace(resolvedTarget))
+            _memoryModule?.RecordPatrolEvent(resolvedTarget, DateTime.Now);
     }
 
     // ─────────────────────────────────────────────────────────────

@@ -606,7 +606,9 @@ public class ActionDecisionModule : MonoBehaviour
             "• Get：在当前位置获取物资或触发交互，targetName=目标名称，duration=交互等待时长（秒）\n" +
             "• Put：在当前位置放下物资或完成交付，targetName=交付对象名称，duration=交互等待时长（秒）\n" +
             "• Land：降落至地面，targetName=降落区域（可选）\n" +
-            "• Takeoff：从地面起飞至悬停高度\n\n" +
+            "• Takeoff：从地面起飞至悬停高度\n" +
+            "• Patrol：对区域做 Frontier-based 系统覆盖（始终前往最近未访问格，非随机游走）。\n" +
+            "  targetName=目标名（空=由执行层按空闲度自动选区），duration=覆盖秒数，actionParams=\"observe\"（每格感知）\n\n" +
 
             "## 步骤完成判断（重要）\n" +
             "在输出前，请依次核对以下三项，全部满足才可 isDone=true：\n" +

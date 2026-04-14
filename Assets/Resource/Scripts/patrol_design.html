@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>Patrol 设计方案</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #0f1117; color: #e2e8f0; line-height: 1.6; }
+
+  .header { background: linear-gradient(135deg, #1a1f2e, #2d3748); padding: 32px 40px; border-bottom: 1px solid #2d3748; }
+  .header h1 { font-size: 22px; color: #63b3ed; font-weight: 600; }
+  .header p  { color: #718096; margin-top: 6px; font-size: 14px; }
+
+  .container { max-width: 1200px; margin: 0 auto; padding: 32px 40px; }
+
+  /* Section */
+  .section { margin-bottom: 48px; }
+  .section-title {
+    font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px;
+    color: #4299e1; margin-bottom: 20px; display: flex; align-items: center; gap: 8px;
+  }
+  .section-title::after { content: ''; flex: 1; height: 1px; background: #2d3748; }
+
+  /* Architecture diagram */
+  .arch { display: grid; grid-template-columns: 1fr 40px 1fr 40px 1fr; gap: 0; align-items: start; margin-bottom: 24px; }
+  .arch-box {
+    background: #1a1f2e; border: 1px solid #2d3748; border-radius: 8px; padding: 16px;
+  }
+  .arch-box.highlight { border-color: #4299e1; background: #1a2744; }
+  .arch-box.new { border-color: #48bb78; background: #1a2e20; }
+  .arch-box h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+  .arch-box h3.blue { color: #63b3ed; }
+  .arch-box h3.green { color: #68d391; }
+  .arch-box ul { font-size: 12px; color: #a0aec0; padding-left: 14px; }
+  .arch-box ul li { margin-bottom: 4px; }
+  .arrow { display: flex; align-items: center; justify-content: center; color: #4a5568; font-size: 24px; }
+
+  /* Tags */
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; margin-left: 8px; }
+  .tag.new { background: #276749; color: #68d391; }
+  .tag.mod { background: #744210; color: #f6ad55; }
+  .tag.file { background: #2a4365; color: #63b3ed; font-weight: 400; font-family: monospace; }
+
+  /* Code block */
+  .code-card {
+    background: #1a1f2e; border: 1px solid #2d3748; border-radius: 8px;
+    margin-bottom: 20px; overflow: hidden;
+  }
+  .code-card-header {
+    background: #2d3748; padding: 10px 16px; display: flex; align-items: center;
+    justify-content: space-between; font-size: 12px;
+  }
+  .code-card-header .filename { font-family: monospace; color: #63b3ed; }
+  .code-card-header .method  { color: #a0aec0; }
+  pre {
+    padding: 16px; font-size: 12.5px; font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    overflow-x: auto; line-height: 1.7; tab-size: 4;
+  }
+
+  /* Syntax highlighting */
+  .kw   { color: #c792ea; }  /* keyword */
+  .ty   { color: #ffcb8b; }  /* type */
+  .fn   { color: #82aaff; }  /* function */
+  .str  { color: #c3e88d; }  /* string */
+  .cmt  { color: #546e7a; font-style: italic; }  /* comment */
+  .num  { color: #f78c6c; }  /* number */
+  .new-line { background: rgba(72,187,120,0.08); display: block; margin: 0 -16px; padding: 0 16px; border-left: 3px solid #48bb78; }
+  .mod-line { background: rgba(237,137,54,0.08); display: block; margin: 0 -16px; padding: 0 16px; border-left: 3px solid #ed8936; }
+  .del-line { background: rgba(245,101,101,0.08); display: block; margin: 0 -16px; padding: 0 16px; border-left: 3px solid #fc8181; text-decoration: line-through; opacity: 0.5; }
+
+  /* Flow diagram */
+  .flow { display: flex; flex-direction: column; gap: 0; }
+  .flow-step {
+    display: flex; gap: 0; align-items: stretch;
+  }
+  .flow-step-num {
+    width: 32px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center;
+  }
+  .flow-circle {
+    width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center;
+    justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0;
+    background: #2d3748; color: #a0aec0; border: 2px solid #4a5568;
+  }
+  .flow-circle.llm { background: #2a4365; color: #63b3ed; border-color: #4299e1; }
+  .flow-circle.ame { background: #276749; color: #68d391; border-color: #48bb78; }
+  .flow-circle.mem { background: #44337a; color: #b794f4; border-color: #805ad5; }
+  .flow-line { width: 2px; flex: 1; background: #2d3748; margin: 0 auto; min-height: 12px; }
+  .flow-content {
+    flex: 1; padding: 4px 0 16px 16px;
+  }
+  .flow-content .title { font-size: 13px; font-weight: 600; color: #e2e8f0; margin-bottom: 4px; }
+  .flow-content .detail { font-size: 12px; color: #718096; }
+  .flow-content code { background: #2d3748; padding: 1px 6px; border-radius: 3px; font-family: monospace; font-size: 11px; color: #a0aec0; }
+
+  /* Frontier visualizer */
+  .frontier-demo { display: flex; gap: 24px; align-items: flex-start; }
+  .grid-vis canvas { display: block; }
+  .grid-legend { font-size: 12px; color: #718096; }
+  .grid-legend div { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .grid-legend span { width: 14px; height: 14px; border-radius: 2px; flex-shrink: 0; }
+
+  /* Notes */
+  .note { background: #1a2e20; border: 1px solid #276749; border-radius: 6px; padding: 12px 16px; font-size: 13px; color: #9ae6b4; margin-top: 12px; }
+  .note strong { color: #68d391; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 2px; margin-bottom: 0; }
+  .tab {
+    padding: 8px 16px; font-size: 12px; border-radius: 6px 6px 0 0; cursor: pointer;
+    background: #1a1f2e; color: #718096; border: 1px solid #2d3748; border-bottom: none;
+    user-select: none;
+  }
+  .tab.active { background: #1a1f2e; color: #e2e8f0; border-color: #4299e1; color: #63b3ed; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Patrol 动作 —— 设计方案</h1>
+  <p>两层结构：战略层（LLM 解析任务）+ 执行层（AME Frontier覆盖 · 支持禁飞区绕行）</p>
+</div>
+
+<div class="container">
+
+  <!-- ── 架构总览 ── -->
+  <div class="section">
+    <div class="section-title">架构总览</div>
+    <div class="arch">
+      <div class="arch-box highlight">
+        <h3 class="blue">战略层 — LLM</h3>
+        <ul>
+          <li>人工发布任务，LLM 解析成原子动作</li>
+          <li>任务明确时解析出 targetName → <code style="font-size:11px;background:#0f1117;padding:1px 5px;border-radius:3px;">Patrol("操场", 45)</code></li>
+          <li>任务模糊时 targetName 为空 → <code style="font-size:11px;background:#0f1117;padding:1px 5px;border-radius:3px;">Patrol("", 45)</code>，由执行层自动选区</li>
+        </ul>
+      </div>
+      <div class="arrow">→</div>
+      <div class="arch-box new">
+        <h3 class="green">执行层 — AME <code style="font-size:10px;background:#0f1117;padding:1px 5px;border-radius:3px;color:#68d391;">DoPatrol()</code></h3>
+        <ul>
+          <li>targetName 为空 → 查 Memory 空闲度自动选区</li>
+          <li>读取特征格子（occupied / approach），过滤禁飞区</li>
+          <li>Frontier-based：始终飞向最近未访问格，遇禁飞区绕行</li>
+          <li>duration 到期或全覆盖后完成，<strong>写入巡逻时间戳</strong></li>
+        </ul>
+      </div>
+      <div class="arrow">→</div>
+      <div class="arch-box highlight">
+        <h3 class="blue">记录层 — Memory</h3>
+        <ul>
+          <li><code style="font-size:11px;background:#0f1117;padding:1px 5px;border-radius:3px;">RecordPatrolEvent(name, time)</code> ← AME 调用</li>
+          <li><code style="font-size:11px;background:#0f1117;padding:1px 5px;border-radius:3px;">GetHighestIdlenessArea()</code> ← targetName 为空时 AME 查询</li>
+          <li><code style="font-size:11px;background:#0f1117;padding:1px 5px;border-radius:3px;">BuildPatrolIdlenessContext()</code> ← 空闲度文本（备用）</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="note">
+      <strong>职责边界：</strong>ADM 只负责决策/规划（输出原子动作），不写执行副作用。
+      巡逻记录属于执行结果，由 AME 在 DoPatrol 完成时写入，与 ADM 解耦。
+      空闲度上下文不注入 prompt（任务由人工明确发布），仅在 targetName 为空时由执行层查询使用。
+    </div>
+  </div>
+
+  <!-- ── 调用流程 ── -->
+  <div class="section">
+    <div class="section-title">调用流程</div>
+    <div class="flow">
+
+      <!-- Step 1 -->
+      <div class="flow-step">
+        <div class="flow-step-num">
+          <div class="flow-circle llm">L</div>
+          <div class="flow-line"></div>
+        </div>
+        <div class="flow-content">
+          <div class="title">ADM — BuildRollingPrompt() 包含 Patrol 动作说明</div>
+          <div class="detail">
+            prompt 的可用动作列表中加入 Patrol 说明，<strong>不注入空闲度上下文</strong>（任务由人工明确发布）：<br>
+            <code>• Patrol：targetName=区域名（空=执行层按空闲度自动选区），duration=覆盖秒数</code><br>
+            LLM 根据任务语义自行判断是否使用 Patrol，不需要代码层枚举关键词。
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2 -->
+      <div class="flow-step">
+        <div class="flow-step-num">
+          <div class="flow-circle llm">L</div>
+          <div class="flow-line"></div>
+        </div>
+        <div class="flow-content">
+          <div class="title">ADM — RunRollingLoop() 解析 LLM 输出</div>
+          <div class="detail">
+            <strong>情况 A（任务明确）：</strong>
+            LLM 返回 <code>nextActions: [{type:"Patrol", targetName:"操场", duration:45}]</code><br>
+            <strong>情况 B（任务模糊）：</strong>
+            LLM 返回 <code>nextActions: [{type:"Patrol", targetName:"", duration:60}]</code><br>
+            → ctx.actionQueue 入队，SetStatus(Running) → AME.PollADM() 启动 <code>ExecuteAction()</code>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 3 -->
+      <div class="flow-step">
+        <div class="flow-step-num">
+          <div class="flow-circle ame">A</div>
+          <div class="flow-line"></div>
+        </div>
+        <div class="flow-content">
+          <div class="title">AME — DoPatrol() 目标区域解析</div>
+          <div class="detail">
+            若 <code>action.targetName</code> 为空：<br>
+            → <code>_memoryModule.GetHighestIdlenessArea()</code> 返回最久未巡逻区域名<br>
+            → 无历史记录时 fallback 到当前位置周边 20 格<br>
+            情况 A 中 targetName 不为空，直接使用解析出的区域名。
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 4 -->
+      <div class="flow-step">
+        <div class="flow-step-num">
+          <div class="flow-circle ame">A</div>
+          <div class="flow-line"></div>
+        </div>
+        <div class="flow-content">
+          <div class="title">AME — DoPatrol() 获取格子集合 + Frontier 循环</div>
+          <div class="detail">
+            <code>campusGrid.TryGetFeatureOccupiedCells(resolvedTarget, out cells)</code>
+            → 过滤 <code>IsWalkable()</code>（自动排除禁飞区格子，即 IsWalkable=false 的格子）<br>
+            若可行走格 &lt; 3 → fallback 到 <code>TryGetFeatureApproachCells(maxCount:256)</code><br><br>
+            Frontier + A* 循环：① Frontier 找最近未访问格 target → ② <strong>A* 规划 segPath</strong>（绕过禁飞区，失败则直飞兜底）→ ③ 逐航点跟随（每航点 WP_TIMEOUT=12s，ARRIVE_DIST=4m）→ ④ 标记周边 8m 内格为已访问<br>
+            重复直到 <code>elapsed ≥ duration</code> 或 <code>visited.Count ≥ patrolCells.Count</code>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 5 -->
+      <div class="flow-step">
+        <div class="flow-step-num">
+          <div class="flow-circle mem">M</div>
+          <div class="flow-line"></div>
+        </div>
+        <div class="flow-content">
+          <div class="title">AME — DoPatrol() 完成时写 Memory（非 ADM）</div>
+          <div class="detail">
+            DoPatrol 结尾直接调用：<code>_memoryModule?.RecordPatrolEvent(resolvedTarget, DateTime.Now)</code><br>
+            → 下次同类任务、同样 targetName 为空时，<code>GetHighestIdlenessArea()</code> 会优先返回其他区域<br>
+            <strong>ADM RunRollingLoop 不写此记录</strong>，保持 ADM 职责单一（决策）。
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 6 -->
+      <div class="flow-step">
+        <div class="flow-step-num">
+          <div class="flow-circle llm">L</div>
+        </div>
+        <div class="flow-content">
+          <div class="title">ADM — 下一迭代 LLM 判断 isDone</div>
+          <div class="detail">
+            执行历史显示 <code>Patrol(操场) ✓</code>，LLM 对照 doneCond 判断是否满足 → isDone=true/false
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── 代码变更 ── -->
+  <div class="section">
+    <div class="section-title">具体代码变更</div>
+
+    <!-- 1. Enum -->
+    <div class="code-card">
+      <div class="code-card-header">
+        <span class="filename">Enums/ExecutionEnums.cs</span>
+        <span><span class="tag new">NEW</span> 新增枚举值</span>
+      </div>
+      <pre><span class="kw">public enum</span> <span class="ty">AtomicActionType</span>
+{
+    MoveTo,
+    Observe,
+    Wait,
+    Track,
+    Signal,
+    Get,
+    Put,
+    Land,
+    Takeoff,
+<span class="new-line">    <span class="cmt">/// targetName=区域名（空=执行层自动选区）, duration=覆盖时长(秒), actionParams="observe"可选感知</span>
+    Patrol,</span>
+}</pre>
+    </div>
+
+    <!-- 2. AME switch -->
+    <div class="code-card">
+      <div class="code-card-header">
+        <span class="filename">Execution/AgentMotionExecutor.cs</span>
+        <span><span class="tag new">NEW</span> ExecuteAction() switch 新增 case（第 214 行后）</span>
+      </div>
+      <pre>    <span class="kw">private</span> <span class="ty">IEnumerator</span> <span class="fn">ExecuteAction</span>(<span class="ty">AtomicAction</span> action)
+    {
+        <span class="kw">switch</span> (action.type)
+        {
+            <span class="cmt">// ...existing cases...</span>
+            <span class="kw">case</span> <span class="ty">AtomicActionType</span>.Takeoff:
+                <span class="kw">yield return</span> StartCoroutine(<span class="fn">DoTakeoff</span>(action));
+                <span class="kw">break</span>;
+<span class="new-line">            <span class="kw">case</span> <span class="ty">AtomicActionType</span>.Patrol:
+                <span class="kw">yield return</span> StartCoroutine(<span class="fn">DoPatrol</span>(action));
+                <span class="kw">break</span>;</span>
+            <span class="kw">default</span>:
+                Debug.<span class="fn">LogWarning</span>(<span class="str">$"[AME] 未知动作类型 {action.type}"</span>);
+                <span class="kw">break</span>;
+        }
+        actionRunning = <span class="kw">false</span>;
+        adm.<span class="fn">CompleteCurrentAction</span>();
+    }</pre>
+    </div>
+
+    <!-- 3. DoPatrol -->
+    <div class="code-card">
+      <div class="code-card-header">
+        <span class="filename">Execution/AgentMotionExecutor.cs</span>
+        <span><span class="tag new">NEW</span> DoPatrol() 方法（紧接 DoTakeoff 后新增）</span>
+      </div>
+      <pre>    <span class="cmt">// ─── Patrol ──────────────────────────────────────────────────</span>
+
+    <span class="kw">private</span> <span class="ty">IEnumerator</span> <span class="fn">DoPatrol</span>(<span class="ty">AtomicAction</span> action)
+    {
+        <span class="kw">float</span> totalDuration = action.duration > <span class="num">0f</span> ? action.duration : <span class="num">60f</span>;
+        <span class="kw">bool</span>  withObserve   = action.actionParams?.<span class="fn">Contains</span>(<span class="str">"observe"</span>) == <span class="kw">true</span>;
+
+<span class="new-line">        <span class="cmt">// ── 0. 目标解析：targetName 为空时查空闲度自动选区 ──────────</span>
+        <span class="kw">string</span> resolvedTarget = action.targetName;
+        <span class="kw">if</span> (<span class="kw">string</span>.<span class="fn">IsNullOrWhiteSpace</span>(resolvedTarget) &amp;&amp; _memoryModule != <span class="kw">null</span>)
+        {
+            resolvedTarget = _memoryModule.<span class="fn">GetHighestIdlenessArea</span>();
+            <span class="kw">if</span> (!<span class="kw">string</span>.<span class="fn">IsNullOrWhiteSpace</span>(resolvedTarget))
+                Debug.<span class="fn">Log</span>(<span class="str">$"[AME] Patrol: targetName 为空，按空闲度选区 → '{resolvedTarget}'"</span>);
+        }</span>
+
+        <span class="cmt">// ── 1. 获取巡逻格子集合 ─────────────────────────────────────</span>
+        <span class="ty">List</span>&lt;<span class="ty">Vector2Int</span>&gt; patrolCells = <span class="kw">new</span> <span class="ty">List</span>&lt;<span class="ty">Vector2Int</span>&gt;();
+
+        <span class="kw">if</span> (campusGrid != <span class="kw">null</span> &amp;&amp; !<span class="kw">string</span>.<span class="fn">IsNullOrWhiteSpace</span>(resolvedTarget))
+        {
+            <span class="cmt">// 优先：特征内部格子（适合操场、广场等开放区域）</span>
+            <span class="cmt">// IsWalkable() 自动过滤禁飞区（不可行走格），无需额外处理</span>
+            <span class="kw">if</span> (campusGrid.<span class="fn">TryGetFeatureOccupiedCells</span>(resolvedTarget, <span class="kw">out</span> <span class="ty">Vector2Int</span>[] occupied))
+            {
+                patrolCells = occupied
+                    .<span class="fn">Where</span>(c =&gt; campusGrid.<span class="fn">IsWalkable</span>(c.x, c.y))
+                    .<span class="fn">ToList</span>();
+            }
+
+            <span class="cmt">// Fallback：外围接近格（适合建筑物外围巡逻）</span>
+            <span class="kw">if</span> (patrolCells.Count &lt; <span class="num">3</span>)
+            {
+                campusGrid.<span class="fn">TryGetFeatureApproachCells</span>(resolvedTarget, transform.position,
+                    <span class="kw">out</span> <span class="ty">Vector2Int</span>[] approach, maxCount: <span class="num">30</span>);
+                patrolCells = approach?.<span class="fn">ToList</span>() ?? patrolCells;
+            }
+        }
+        <span class="kw">else if</span> (campusGrid != <span class="kw">null</span>)
+        {
+            <span class="cmt">// targetName 为空且无历史记录：以当前位置为中心取周边 20 格</span>
+            <span class="ty">Vector2Int</span> center = campusGrid.<span class="fn">WorldToGrid</span>(transform.position);
+            <span class="kw">const int</span> R = <span class="num">20</span>;
+            <span class="kw">for</span> (<span class="kw">int</span> dx = -R; dx &lt;= R; dx++)
+            <span class="kw">for</span> (<span class="kw">int</span> dz = -R; dz &lt;= R; dz++)
+            {
+                <span class="kw">int</span> x = center.x + dx, z = center.y + dz;
+                <span class="kw">if</span> (campusGrid.<span class="fn">IsInBounds</span>(x, z) &amp;&amp; campusGrid.<span class="fn">IsWalkable</span>(x, z))
+                    patrolCells.<span class="fn">Add</span>(<span class="kw">new</span> <span class="ty">Vector2Int</span>(x, z));
+            }
+        }
+
+        <span class="kw">if</span> (patrolCells.Count == <span class="num">0</span>) { Debug.<span class="fn">LogWarning</span>(<span class="str">"[AME] Patrol: 无可用巡逻格，跳过"</span>); <span class="kw">yield break</span>; }
+
+        AgentStateServer.<span class="fn">PushMotionEvent</span>(props?.AgentID ?? name, <span class="str">"patrol_start"</span>,
+            <span class="str">$"⬡ 巡逻 '{resolvedTarget}'，{patrolCells.Count} 个格子，时长 {totalDuration}s"</span>);
+
+        <span class="cmt">// ── 2. Frontier-based 覆盖循环 ─────────────────────────────</span>
+        <span class="ty">HashSet</span>&lt;<span class="ty">Vector2Int</span>&gt; visited = <span class="kw">new</span> <span class="ty">HashSet</span>&lt;<span class="ty">Vector2Int</span>&gt;();
+        <span class="kw">float</span> elapsed = <span class="num">0f</span>;
+        <span class="kw">const float</span> VISIT_RADIUS_M  = <span class="num">8f</span>;
+        <span class="kw">const float</span> SEG_TIMEOUT     = <span class="num">15f</span>;
+        <span class="kw">const float</span> ARRIVE_DIST     = <span class="num">4f</span>;
+
+        <span class="kw">while</span> (elapsed &lt; totalDuration &amp;&amp; visited.Count &lt; patrolCells.Count)
+        {
+            <span class="ty">Vector2Int</span> agentCell = campusGrid.<span class="fn">WorldToGrid</span>(transform.position);
+            <span class="ty">Vector2Int</span>? target = <span class="kw">null</span>;
+            <span class="kw">float</span> minDist = <span class="kw">float</span>.MaxValue;
+            <span class="kw">foreach</span> (<span class="kw">var</span> c <span class="kw">in</span> patrolCells)
+            {
+                <span class="kw">if</span> (visited.<span class="fn">Contains</span>(c)) <span class="kw">continue</span>;
+                <span class="kw">float</span> d = <span class="ty">Vector2</span>.<span class="fn">Distance</span>((<span class="ty">Vector2</span>)agentCell, (<span class="ty">Vector2</span>)c);
+                <span class="kw">if</span> (d &lt; minDist) { minDist = d; target = c; }
+            }
+            <span class="kw">if</span> (target == <span class="kw">null</span>) <span class="kw">break</span>;
+
+            <span class="ty">Vector3</span> goalWorld = campusGrid.<span class="fn">GridToWorldCenter</span>(target.Value.x, target.Value.y, hoverHeight);
+            <span class="kw">float</span> segElapsed = <span class="num">0f</span>;
+
+            <span class="kw">while</span> (segElapsed &lt; SEG_TIMEOUT &amp;&amp; elapsed &lt; totalDuration)
+            {
+                <span class="fn">FaceToward</span>(goalWorld);
+                <span class="fn">ApplyHorizontalPD</span>(goalWorld);
+
+                <span class="ty">Vector2</span> posXZ  = <span class="kw">new</span> <span class="ty">Vector2</span>(transform.position.x, transform.position.z);
+                <span class="ty">Vector2</span> goalXZ = <span class="kw">new</span> <span class="ty">Vector2</span>(goalWorld.x, goalWorld.z);
+                <span class="kw">if</span> (<span class="ty">Vector2</span>.<span class="fn">Distance</span>(posXZ, goalXZ) &lt; ARRIVE_DIST) <span class="kw">break</span>;
+
+                segElapsed += Time.deltaTime;
+                elapsed    += Time.deltaTime;
+                <span class="kw">yield return null</span>;
+            }
+
+            <span class="ty">Vector2Int</span> nowCell = campusGrid.<span class="fn">WorldToGrid</span>(transform.position);
+            <span class="kw">float</span> visitRadiusCells = VISIT_RADIUS_M / campusGrid.cellSize;
+            <span class="kw">foreach</span> (<span class="kw">var</span> c <span class="kw">in</span> patrolCells)
+            {
+                <span class="kw">if</span> (<span class="ty">Vector2</span>.<span class="fn">Distance</span>((<span class="ty">Vector2</span>)nowCell, (<span class="ty">Vector2</span>)c) &lt;= visitRadiusCells)
+                    visited.<span class="fn">Add</span>(c);
+            }
+
+            <span class="kw">if</span> (withObserve) GetComponent&lt;<span class="ty">PerceptionModule</span>&gt;()?.<span class="fn">SenseOnce</span>();
+
+            <span class="kw">float</span> dwell = Random.<span class="fn">Range</span>(<span class="num">0.5f</span>, <span class="num">1.5f</span>);
+            <span class="kw">float</span> dwellE = <span class="num">0f</span>;
+            <span class="ty">Vector3</span> hold = <span class="kw">new</span> <span class="ty">Vector3</span>(transform.position.x, hoverHeight, transform.position.z);
+            <span class="kw">while</span> (dwellE &lt; dwell &amp;&amp; elapsed &lt; totalDuration)
+            {
+                <span class="fn">ApplyHorizontalPD</span>(hold);
+                dwellE += Time.deltaTime; elapsed += Time.deltaTime;
+                <span class="kw">yield return null</span>;
+            }
+        }
+
+        <span class="kw">float</span> coverage = patrolCells.Count > <span class="num">0</span>
+            ? (<span class="kw">float</span>)visited.Count / patrolCells.Count * <span class="num">100f</span> : <span class="num">100f</span>;
+        AgentStateServer.<span class="fn">PushMotionEvent</span>(props?.AgentID ?? name, <span class="str">"patrol_done"</span>,
+            <span class="str">$"✓ 巡逻完成 '{resolvedTarget}'，覆盖率 {coverage:F0}%，用时 {elapsed:F0}s"</span>);
+
+<span class="new-line">        <span class="cmt">// ── 3. 写巡逻时间戳（AME 负责，ADM 不写） ─────────────────</span>
+        <span class="kw">if</span> (!<span class="kw">string</span>.<span class="fn">IsNullOrWhiteSpace</span>(resolvedTarget))
+            _memoryModule?.<span class="fn">RecordPatrolEvent</span>(resolvedTarget, <span class="ty">DateTime</span>.Now);</span>
+    }</pre>
+    </div>
+
+    <!-- 4. MemoryModule -->
+    <div class="code-card">
+      <div class="code-card-header">
+        <span class="filename">LLM_Modules/MemoryModule.cs</span>
+        <span><span class="tag new">NEW</span> 新增巡逻时间戳方法（在类末尾新增）</span>
+      </div>
+      <pre>    <span class="cmt">// ─── 巡逻空闲度追踪 ─────────────────────────────────────────────</span>
+<span class="new-line">
+    <span class="kw">private readonly</span> <span class="ty">Dictionary</span>&lt;<span class="kw">string</span>, <span class="ty">DateTime</span>&gt; _patrolTimestamps = <span class="kw">new</span>();
+
+    <span class="cmt">/// DoPatrol 完成时由 AME 调用，记录区域最后巡逻时间</span>
+    <span class="kw">public void</span> <span class="fn">RecordPatrolEvent</span>(<span class="kw">string</span> areaName, <span class="ty">DateTime</span> time)
+    {
+        <span class="kw">if</span> (!<span class="kw">string</span>.<span class="fn">IsNullOrWhiteSpace</span>(areaName))
+            _patrolTimestamps[areaName] = time;
+    }
+
+    <span class="cmt">/// 返回空闲度最高（最久未巡逻）的区域名；无记录时返回 string.Empty</span>
+    <span class="cmt">/// DoPatrol 在 targetName 为空时调用，自动选区</span>
+    <span class="kw">public string</span> <span class="fn">GetHighestIdlenessArea</span>()
+    {
+        <span class="kw">if</span> (_patrolTimestamps.Count == <span class="num">0</span>) <span class="kw">return</span> <span class="kw">string</span>.Empty;
+        <span class="kw">return</span> _patrolTimestamps
+            .<span class="fn">OrderByDescending</span>(kv =&gt; (<span class="ty">DateTime</span>.Now - kv.Value).TotalSeconds)
+            .<span class="fn">First</span>().Key;
+    }
+
+    <span class="cmt">/// 生成"区域空闲度"文本（备用，供需要时使用）</span>
+    <span class="kw">public string</span> <span class="fn">BuildPatrolIdlenessContext</span>(<span class="kw">int</span> topN = <span class="num">6</span>)
+    {
+        <span class="kw">if</span> (_patrolTimestamps.Count == <span class="num">0</span>) <span class="kw">return</span> <span class="str">"（无历史巡逻记录）"</span>;
+        <span class="kw">var</span> now   = <span class="ty">DateTime</span>.Now;
+        <span class="kw">var</span> lines = _patrolTimestamps
+            .<span class="fn">OrderByDescending</span>(kv =&gt; (now - kv.Value).TotalSeconds)
+            .<span class="fn">Take</span>(topN)
+            .<span class="fn">Select</span>(kv =&gt;
+            {
+                <span class="kw">int</span> mins = (<span class="kw">int</span>)(now - kv.Value).TotalMinutes;
+                <span class="kw">string</span> ago = mins == <span class="num">0</span> ? <span class="str">"刚巡逻过"</span> : <span class="str">$"{mins}分钟前"</span>;
+                <span class="kw">return</span> <span class="str">$"  • {kv.Key}：{ago}"</span>;
+            });
+        <span class="kw">return</span> <span class="kw">string</span>.<span class="fn">Join</span>(<span class="str">"\n"</span>, lines);
+    }</span></pre>
+    </div>
+
+    <!-- 5. ADM RunRollingLoop - 不写巡逻记录 -->
+    <div class="code-card">
+      <div class="code-card-header">
+        <span class="filename">LLM_Modules/ActionDecisionModule.cs</span>
+        <span><span class="tag mod">MOD</span> RunRollingLoop()：移除巡逻记录写入（已迁至 AME）</span>
+      </div>
+      <pre>            <span class="cmt">// ── 11. 更新执行历史，进入下一迭代 ──────────────────────</span>
+            <span class="fn">UpdateHistory</span>(planResult.nextActions);
+
+<span class="del-line">            <span class="cmt">// ✗ 已删除：巡逻记录不在 ADM 写，职责归 AME.DoPatrol()</span>
+            <span class="cmt">// foreach (var a in planResult.nextActions) {</span>
+            <span class="cmt">//     if (a.type == AtomicActionType.Patrol) _memoryModule?.RecordPatrolEvent(...);</span>
+            <span class="cmt">// }</span></span>
+
+            <span class="cmt">// ── 11.5 辩论参与窗口 ─────────────────────────────────</span></pre>
+    </div>
+
+    <!-- 6. ADM BuildRollingPrompt - 只加 Patrol 动作说明 -->
+    <div class="code-card">
+      <div class="code-card-header">
+        <span class="filename">LLM_Modules/ActionDecisionModule.cs</span>
+        <span><span class="tag mod">MOD</span> BuildRollingPrompt()：只在可用动作列表中加 Patrol 说明</span>
+      </div>
+      <pre>    <span class="kw">private string</span> <span class="fn">BuildRollingPrompt</span>(<span class="ty">PlanStep</span> step, <span class="cmt">/* ...params... */</span>)
+    {
+        <span class="cmt">// ... 现有代码（记忆上下文、地图拓扑、白板状态等）...</span>
+
+<span class="del-line">        <span class="cmt">// ✗ 已删除：IsPatrolIntent() + patrolIdlenessBlock</span>
+        <span class="cmt">// 理由：①任务由人工发布，无需 ADM 注入空闲度</span>
+        <span class="cmt">// ②是否使用 Patrol 由 LLM 根据语义判断，不应代码层枚举关键词</span></span>
+
+        <span class="kw">return</span>
+            <span class="cmt">// ... 现有 prompt 段（记忆、地图、白板等）...</span>
+            <span class="str">"## 可用动作\n"</span> +
+            <span class="str">"• MoveTo：...\n"</span> +
+            <span class="cmt">// ... 现有动作 ...</span>
+<span class="new-line">            <span class="str">"• Patrol：对区域做 Frontier-based 系统覆盖（非随机游走）。\n"</span>
+          + <span class="str">"  targetName=区域名（空=由执行层按空闲度自动选区），duration=覆盖秒数，actionParams=\"observe\"（每格感知）\n\n"</span></span>;
+    }
+
+    <span class="cmt">// ✗ IsPatrolIntent() 已删除</span>
+    <span class="cmt">// 判断步骤是否含巡逻意图是 LLM 的工作，不应在代码层手工枚举自然语言关键词</span></pre>
+    </div>
+
+  </div>
+
+  <!-- ── Frontier 可视化（含禁飞区） ── -->
+  <div class="section">
+    <div class="section-title">Frontier 算法演示（含禁飞区）</div>
+    <div class="frontier-demo">
+      <div>
+        <canvas id="gridCanvas" width="380" height="380" style="border:1px solid #2d3748;border-radius:6px;"></canvas>
+        <div style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap;">
+          <button onclick="resetDemo()" style="padding:6px 14px;background:#2d3748;color:#e2e8f0;border:1px solid #4a5568;border-radius:4px;cursor:pointer;font-size:12px;">重置</button>
+          <button onclick="stepDemo()" style="padding:6px 14px;background:#2a4365;color:#63b3ed;border:1px solid #4299e1;border-radius:4px;cursor:pointer;font-size:12px;">单步</button>
+          <button onclick="autoDemo()" id="autoBtn" style="padding:6px 14px;background:#276749;color:#68d391;border:1px solid #48bb78;border-radius:4px;cursor:pointer;font-size:12px;">自动运行</button>
+        </div>
+        <div id="demoInfo" style="margin-top:10px;font-size:12px;color:#718096;"></div>
+      </div>
+      <div>
+        <div class="grid-legend">
+          <div><span style="background:#1e2432;border:1px solid #2d3748;"></span> 非特征区域（不巡逻）</div>
+          <div><span style="background:rgba(180,30,30,0.85);"></span> 禁飞区（IsWalkable=false，排除在外）</div>
+          <div><span style="background:rgba(39,103,73,0.5);"></span> 特征格子（待访问）</div>
+          <div><span style="background:rgba(237,137,54,0.7);"></span> 已访问（8m 半径标记）</div>
+          <div><span style="background:#63b3ed;border-radius:50%;"></span> Agent 当前位置</div>
+          <div><span style="background:rgba(252,129,129,0.8);"></span> 当前目标（最近 Frontier）</div>
+        </div>
+        <div class="note" style="margin-top:16px;max-width:300px;">
+          <strong>禁飞区说明：</strong>对应 <code style="font-size:11px;background:#0f1117;padding:1px 5px;border-radius:3px;">IsWalkable()=false</code> 的格子。
+          Frontier 算法构建 patrolCells 时已过滤，因此禁飞区格子不会被选为巡逻目标。<br><br>
+          当 Agent 直线路径经过禁飞区时，会自动向侧面偏转绕行，然后继续前往目标。<br><br>
+          <strong>每次"重置"</strong>后 Agent 从随机位置出发，覆盖顺序不同但最终都能完整覆盖可行走格。
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ── 建筑外围巡逻演示（Frontier + A*） ── -->
+  <div class="section">
+    <div class="section-title">建筑外围巡逻演示（Frontier + A* 导航）</div>
+
+    <!-- 核心原理说明 -->
+    <div class="note" style="margin-bottom:16px;background:#1a2744;border-color:#4299e1;color:#90cdf4;">
+      <strong>旧方案的问题：</strong>Frontier 选出目标格后，用 <code style="background:#0f1117;padding:1px 5px;border-radius:3px;">FaceToward + ApplyHorizontalPD</code>
+      直飞过去——建筑挡路时飞不过去，15s 超时后跳到下一个"最近格"（仍在同一侧），始终无法绕到对面。
+    </div>
+    <div class="note" style="margin-bottom:20px;">
+      <strong>修复：保留 Frontier 选格（智能性），把直飞换成 A* 导航（绕过建筑）。</strong><br>
+      每步：① Frontier 找最近未访问接近格 → ② A* 规划绕建筑路径（青色）→ ③ 逐航点跟随到达 → ④ 标记已访问。<br>
+      起点随机，路线每次不同，完全由"当前在哪、哪里没去"决定，不是固定路线。
+    </div>
+
+    <!-- code card -->
+    <div class="code-card" style="margin-bottom:24px;">
+      <div class="code-card-header">
+        <span class="filename">Execution/AgentMotionExecutor.cs</span>
+        <span><span class="tag mod">MOD</span> DoPatrol() Frontier 循环：直飞 → A* 逐航点跟随</span>
+      </div>
+      <pre>        <span class="cmt">// ── 2. Frontier + A* 覆盖循环 ──────────────────────────────</span>
+        <span class="cmt">// Frontier 负责"挑哪个格"（就近未访问，体现智能性和随机性）</span>
+        <span class="cmt">// A*    负责"怎么飞过去"（绕过建筑/禁飞区，不再直飞）</span>
+
+        <span class="kw">while</span> (elapsed &lt; totalDuration &amp;&amp; visited.Count &lt; patrolCells.Count)
+        {
+            <span class="cmt">// a. Frontier：找当前位置最近的未访问格</span>
+            <span class="ty">Vector2Int</span> agentCell = campusGrid.<span class="fn">WorldToGrid</span>(transform.position);
+            <span class="ty">Vector2Int</span>? target   = <span class="cmt">/* 最近未访问格 */</span>;
+
+<span class="del-line">            <span class="cmt">// ✗ 旧：直飞（建筑挡路时超时卡死）</span>
+            <span class="cmt">// FaceToward(goalWorld);  ApplyHorizontalPD(goalWorld);</span></span>
+
+<span class="new-line">            <span class="cmt">// ✓ 新：A* 规划绕建筑路径，逐航点跟随（与 DoMoveTo 相同逻辑）</span>
+            <span class="ty">List</span>&lt;<span class="ty">Vector2Int</span>&gt; segPath = campusGrid.<span class="fn">FindPathAStar</span>(agentCell, target.Value);
+            <span class="kw">foreach</span> (<span class="kw">var</span> cell <span class="kw">in</span> segPath)
+            {
+                <span class="ty">Vector3</span> wp = campusGrid.<span class="fn">GridToWorldCenter</span>(cell.x, cell.y, hoverHeight);
+                <span class="cmt">// FaceToward + ApplyHorizontalPD + 到达检测 + 超时跳过</span>
+            }</span>
+
+            <span class="cmt">// b. 到达后标记周边格为已访问</span>
+        }</pre>
+    </div>
+
+    <!-- 演示 -->
+    <div class="frontier-demo">
+      <div>
+        <canvas id="buildingCanvas" width="400" height="400" style="border:1px solid #2d3748;border-radius:6px;"></canvas>
+        <div style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap;">
+          <button onclick="resetBldDemo()" style="padding:6px 14px;background:#2d3748;color:#e2e8f0;border:1px solid #4a5568;border-radius:4px;cursor:pointer;font-size:12px;">重置（随机起点）</button>
+          <button onclick="stepBldDemo()" style="padding:6px 14px;background:#2a4365;color:#63b3ed;border:1px solid #4299e1;border-radius:4px;cursor:pointer;font-size:12px;">单步</button>
+          <button onclick="autoBldDemo()" id="autoBldBtn" style="padding:6px 14px;background:#276749;color:#68d391;border:1px solid #48bb78;border-radius:4px;cursor:pointer;font-size:12px;">自动运行</button>
+        </div>
+        <div id="bldDemoInfo" style="margin-top:10px;font-size:12px;color:#718096;min-height:32px;"></div>
+      </div>
+      <div>
+        <div class="grid-legend">
+          <div><span style="background:rgba(160,32,32,0.90);"></span> 建筑本体（禁飞区，A* 绕行）</div>
+          <div><span style="background:rgba(147,112,219,0.55);"></span> 外围接近格（patrolCells，待访问）</div>
+          <div><span style="background:rgba(237,137,54,0.75);"></span> 已访问接近格</div>
+          <div><span style="background:rgba(99,179,237,0.5);"></span> 当前 A* 路径（绕建筑）</div>
+          <div><span style="background:rgba(252,129,129,0.9);"></span> Frontier 目标（最近未访问格）</div>
+          <div><span style="background:#63b3ed;border-radius:50%;"></span> Agent 当前位置</div>
+        </div>
+        <div class="note" style="margin-top:16px;max-width:300px;">
+          <strong>关键观察：</strong>青色 A* 路径每次都绕过建筑侧面，
+          不走直线。每次"重置"起点随机，覆盖顺序不同但最终都能完整环绕。<br><br>
+          对比第一个 demo（开放区域）：那里 Frontier 直飞有效；
+          这里有建筑阻挡，必须 A* 才能到达对面的接近格。
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- container -->
+
+<script>
+// ── Frontier Demo（含禁飞区绕行）──────────────────────────────
+const canvas = document.getElementById('gridCanvas');
+const ctx2d   = canvas.getContext('2d');
+const ROWS = 19, COLS = 19, CELL = 20;
+
+// 禁飞区：L形区域内的障碍格（模拟 IsWalkable=false）
+function buildNoFlyCells() {
+  const set = new Set();
+  // 障碍块1：主体中部（模拟建筑核心/受限区域）
+  for (let r = 7; r <= 9; r++)
+    for (let c = 5; c <= 7; c++)
+      set.add(r * 1000 + c);
+  // 障碍块2：翼部小禁区
+  for (let r = 4; r <= 6; r++)
+    for (let c = 12; c <= 13; c++)
+      set.add(r * 1000 + c);
+  return set;
+}
+
+// 完整L形区域（含禁飞区，仅用于渲染）
+function buildFullFeatureSet() {
+  const set = new Set();
+  for (let r = 3; r <= 14; r++)
+    for (let c = 3; c <= 10; c++)
+      set.add(r * 1000 + c);
+  for (let r = 3; r <= 8; r++)
+    for (let c = 11; c <= 15; c++)
+      set.add(r * 1000 + c);
+  return set;
+}
+
+// 可巡逻格子 = 完整特征 - 禁飞区（模拟 IsWalkable 过滤）
+function buildFeatureCells() {
+  const cells = [];
+  for (let r = 3; r <= 14; r++)
+    for (let c = 3; c <= 10; c++)
+      if (!noFlyCells.has(r * 1000 + c)) cells.push([r, c]);
+  for (let r = 3; r <= 8; r++)
+    for (let c = 11; c <= 15; c++)
+      if (!noFlyCells.has(r * 1000 + c)) cells.push([r, c]);
+  return cells;
+}
+
+let noFlyCells, fullFeatureSet, featureCells;
+let visited, agentPos, targetPos, autoTimer, stepCount;
+
+function resetDemo() {
+  clearInterval(autoTimer); autoTimer = null;
+  document.getElementById('autoBtn').textContent = '自动运行';
+  noFlyCells     = buildNoFlyCells();
+  fullFeatureSet = buildFullFeatureSet();
+  featureCells   = buildFeatureCells();
+  visited  = new Set();
+  const startIdx = Math.floor(Math.random() * featureCells.length);
+  agentPos = [...featureCells[startIdx]];
+  targetPos = null;
+  stepCount = 0;
+  document.getElementById('demoInfo').textContent =
+    `起始位置: (${agentPos[0]}, ${agentPos[1]}) | 禁飞区 ${noFlyCells.size} 格已排除`;
+  render();
+}
+
+function key(r, c) { return Math.round(r) * 1000 + Math.round(c); }
+function isNoFly(r, c) { return noFlyCells.has(key(r, c)); }
+function dist(a, b) { return Math.sqrt((a[0]-b[0])**2 + (a[1]-b[1])**2); }
+
+function markVisited(pos) {
+  const VRADIUS = 2.5;
+  for (const c of featureCells) {
+    if (dist(pos, c) <= VRADIUS) visited.add(c[0] * 1000 + c[1]);
+  }
+}
+
+function findFrontier() {
+  let best = null, bestDist = Infinity;
+  for (const c of featureCells) {
+    if (visited.has(c[0] * 1000 + c[1])) continue;
+    const d = dist(agentPos, c);
+    if (d < bestDist) { bestDist = d; best = c; }
+  }
+  return best;
+}
+
+function stepDemo() {
+  if (visited.size >= featureCells.length) {
+    document.getElementById('demoInfo').textContent =
+      `✓ 完成！共 ${stepCount} 步，覆盖率 100%，禁飞区已绕行`;
+    return;
+  }
+  targetPos = findFrontier();
+  if (!targetPos) return;
+
+  const dr = targetPos[0] - agentPos[0];
+  const dc = targetPos[1] - agentPos[1];
+  const mag = Math.sqrt(dr*dr + dc*dc);
+
+  if (mag < 0.5) {
+    agentPos = [...targetPos];
+  } else {
+    // 归一化移动步长
+    let mr = dr / mag * 1.2;
+    let mc = dc / mag * 1.2;
+
+    // 检查下一步是否进入禁飞区，若是则绕行
+    const nr = agentPos[0] + mr;
+    const nc = agentPos[1] + mc;
+    if (isNoFly(nr, nc)) {
+      // 尝试四个偏转方向：90° CW、90° CCW、45° CW、45° CCW
+      const perps = [
+        [ dc/mag * 1.2, -dr/mag * 1.2],   // 90° CW
+        [-dc/mag * 1.2,  dr/mag * 1.2],   // 90° CCW
+        [(dr - dc) / mag * 1.0, (dc + dr) / mag * 1.0],  // 45° CW 混合
+        [(dr + dc) / mag * 1.0, (dc - dr) / mag * 1.0],  // 45° CCW 混合
+      ];
+      for (const [pr, pc] of perps) {
+        if (!isNoFly(agentPos[0] + pr, agentPos[1] + pc)) {
+          mr = pr; mc = pc; break;
+        }
+      }
+    }
+
+    agentPos[0] += mr;
+    agentPos[1] += mc;
+  }
+
+  markVisited(agentPos);
+  stepCount++;
+  const coverage = Math.round(visited.size / featureCells.length * 100);
+  document.getElementById('demoInfo').textContent =
+    `步骤 ${stepCount} | 覆盖率 ${coverage}% | Agent (${agentPos[0].toFixed(1)}, ${agentPos[1].toFixed(1)})`;
+  render();
+}
+
+function autoDemo() {
+  if (autoTimer) {
+    clearInterval(autoTimer); autoTimer = null;
+    document.getElementById('autoBtn').textContent = '自动运行';
+  } else {
+    document.getElementById('autoBtn').textContent = '暂停';
+    autoTimer = setInterval(() => {
+      if (visited.size >= featureCells.length) {
+        clearInterval(autoTimer); autoTimer = null;
+        document.getElementById('autoBtn').textContent = '自动运行';
+        return;
+      }
+      stepDemo();
+    }, 80);
+  }
+}
+
+function render() {
+  ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+  ctx2d.fillStyle = '#1a1f2e';
+  ctx2d.fillRect(0, 0, canvas.width, canvas.height);
+
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const k = r * 1000 + c;
+      const inFull    = fullFeatureSet.has(k);
+      const inNoFly   = noFlyCells.has(k);
+      const isVisited = visited.has(k);
+      const x = c * CELL + 1, y = r * CELL + 1, s = CELL - 2;
+
+      if (inFull && inNoFly) {
+        // 禁飞区：深红色
+        ctx2d.fillStyle = 'rgba(180,30,30,0.88)';
+      } else if (isVisited) {
+        // 已访问
+        ctx2d.fillStyle = 'rgba(237,137,54,0.7)';
+      } else if (inFull) {
+        // 可巡逻待访问格
+        ctx2d.fillStyle = 'rgba(39,103,73,0.5)';
+      } else {
+        // 非特征区域
+        ctx2d.fillStyle = '#1e2432';
+      }
+      ctx2d.fillRect(x, y, s, s);
+    }
+  }
+
+  // 当前 Frontier 目标
+  if (targetPos) {
+    const tc = targetPos[1], tr = targetPos[0];
+    ctx2d.fillStyle = 'rgba(252,129,129,0.85)';
+    ctx2d.fillRect(tc*CELL+1, tr*CELL+1, CELL-2, CELL-2);
+  }
+
+  // Agent（圆形）
+  const ac = agentPos[1], ar = agentPos[0];
+  ctx2d.fillStyle = '#63b3ed';
+  ctx2d.beginPath();
+  ctx2d.arc(ac*CELL + CELL/2, ar*CELL + CELL/2, CELL/2 - 2, 0, Math.PI*2);
+  ctx2d.fill();
+
+  // 网格线
+  ctx2d.strokeStyle = '#2d3748';
+  ctx2d.lineWidth = 0.5;
+  for (let r = 0; r <= ROWS; r++) {
+    ctx2d.beginPath(); ctx2d.moveTo(0, r*CELL); ctx2d.lineTo(COLS*CELL, r*CELL); ctx2d.stroke();
+  }
+  for (let c = 0; c <= COLS; c++) {
+    ctx2d.beginPath(); ctx2d.moveTo(c*CELL, 0); ctx2d.lineTo(c*CELL, ROWS*CELL); ctx2d.stroke();
+  }
+}
+
+resetDemo();
+
+// ── 建筑外围巡逻 Demo ──────────────────────────────────────────
+const bldCanvas = document.getElementById('buildingCanvas');
+const bldCtx    = bldCanvas.getContext('2d');
+const BLD_ROWS = 20, BLD_COLS = 20, BLD_CELL = 19;
+
+// 建筑 occupied 格（全部为禁飞区，不可行走）
+function buildBldOccupied() {
+  const set = new Set();
+  // 主楼体（模拟图书馆）
+  for (let r = 5; r <= 14; r++)
+    for (let c = 4; c <= 13; c++)
+      set.add(r * 1000 + c);
+  return set;
+}
+
+// 模拟 ComputeFeatureApproachCells：取建筑边界格的 ±2 邻域中可行走的外部格
+// 不按距离裁剪（相当于 maxCount = Infinity / TryBuildFeatureRingPath 的效果）
+function buildPerimeterCells(occupiedSet) {
+  // 先找边界格（occupied 且有至少一个非 occupied 的 4-邻居）
+  const boundary = [];
+  const dirs4 = [[-1,0],[1,0],[0,-1],[0,1]];
+  for (const key of occupiedSet) {
+    const r = Math.floor(key / 1000), c = key % 1000;
+    for (const [dr, dc] of dirs4) {
+      if (!occupiedSet.has((r+dr)*1000+(c+dc))) { boundary.push([r, c]); break; }
+    }
+  }
+
+  // 对每个边界格，取 ±2 邻域中的外部可行走格
+  const result = [], seen = new Set();
+  for (const [br, bc] of boundary) {
+    for (let dr = -2; dr <= 2; dr++) {
+      for (let dc = -2; dc <= 2; dc++) {
+        if (dr === 0 && dc === 0) continue;
+        const nr = br + dr, nc = bc + dc;
+        if (nr < 0 || nr >= BLD_ROWS || nc < 0 || nc >= BLD_COLS) continue;
+        const nkey = nr * 1000 + nc;
+        if (occupiedSet.has(nkey) || seen.has(nkey)) continue;
+        seen.add(nkey); result.push([nr, nc]);
+      }
+    }
+  }
+
+  // 按极角排序（模拟 TryBuildFeatureRingPath 的极角排序，确保全周覆盖）
+  const cR = 9.5, cC = 8.5; // 建筑质心
+  result.sort((a, b) => Math.atan2(a[0]-cR, a[1]-cC) - Math.atan2(b[0]-cR, b[1]-cC));
+  return result;
+}
+
+let bldOccupied, bldPerimeter, bldVisited, bldAgentPos, bldTargetPos, bldAutoTimer, bldStepCount;
+
+function resetBldDemo() {
+  clearInterval(bldAutoTimer); bldAutoTimer = null;
+  document.getElementById('autoBldBtn').textContent = '自动运行';
+  bldOccupied  = buildBldOccupied();
+  bldPerimeter = buildPerimeterCells(bldOccupied);
+  bldVisited   = new Set();
+  const startIdx = Math.floor(Math.random() * bldPerimeter.length);
+  bldAgentPos  = [...bldPerimeter[startIdx]];
+  bldTargetPos = null;
+  bldStepCount = 0;
+  document.getElementById('bldDemoInfo').textContent =
+    `外围接近格共 ${bldPerimeter.length} 个 | 起始位置: (${bldAgentPos[0]}, ${bldAgentPos[1]})`;
+  renderBld();
+}
+
+function bldKey(r, c) { return Math.round(r) * 1000 + Math.round(c); }
+function bldDist(a, b) { return Math.sqrt((a[0]-b[0])**2 + (a[1]-b[1])**2); }
+
+function markBldVisited(pos) {
+  const VRADIUS = 1.8;
+  for (const c of bldPerimeter) {
+    if (bldDist(pos, c) <= VRADIUS) bldVisited.add(c[0]*1000+c[1]);
+  }
+}
+
+function findBldFrontier() {
+  let best = null, bestDist = Infinity;
+  for (const c of bldPerimeter) {
+    if (bldVisited.has(c[0]*1000+c[1])) continue;
+    const d = bldDist(bldAgentPos, c);
+    if (d < bestDist) { bestDist = d; best = c; }
+  }
+  return best;
+}
+
+function stepBldDemo() {
+  if (bldVisited.size >= bldPerimeter.length) {
+    document.getElementById('bldDemoInfo').textContent =
+      `✓ 完成！共 ${bldStepCount} 步，覆盖率 100%（建筑已完整环绕）`;
+    return;
+  }
+  bldTargetPos = findBldFrontier();
+  if (!bldTargetPos) return;
+
+  const dr = bldTargetPos[0] - bldAgentPos[0];
+  const dc = bldTargetPos[1] - bldAgentPos[1];
+  const mag = Math.sqrt(dr*dr + dc*dc);
+
+  if (mag < 0.5) {
+    bldAgentPos = [...bldTargetPos];
+  } else {
+    let mr = dr/mag * 1.1, mc = dc/mag * 1.1;
+
+    // 绕行：若下一步进入建筑格则偏转
+    const nr = bldAgentPos[0] + mr, nc = bldAgentPos[1] + mc;
+    if (bldOccupied.has(bldKey(nr, nc))) {
+      const perps = [
+        [ dc/mag * 1.1, -dr/mag * 1.1],
+        [-dc/mag * 1.1,  dr/mag * 1.1],
+        [(dr+dc)/mag * 0.9, (dc-dr)/mag * 0.9],
+        [(dr-dc)/mag * 0.9, (dc+dr)/mag * 0.9],
+      ];
+      for (const [pr, pc] of perps) {
+        if (!bldOccupied.has(bldKey(bldAgentPos[0]+pr, bldAgentPos[1]+pc))) {
+          mr = pr; mc = pc; break;
+        }
+      }
+    }
+    bldAgentPos[0] += mr;
+    bldAgentPos[1] += mc;
+  }
+
+  markBldVisited(bldAgentPos);
+  bldStepCount++;
+  const cov = Math.round(bldVisited.size / bldPerimeter.length * 100);
+  document.getElementById('bldDemoInfo').textContent =
+    `步骤 ${bldStepCount} | 覆盖率 ${cov}% | Agent (${bldAgentPos[0].toFixed(1)}, ${bldAgentPos[1].toFixed(1)})`;
+  renderBld();
+}
+
+function autoBldDemo() {
+  if (bldAutoTimer) {
+    clearInterval(bldAutoTimer); bldAutoTimer = null;
+    document.getElementById('autoBldBtn').textContent = '自动运行';
+  } else {
+    document.getElementById('autoBldBtn').textContent = '暂停';
+    bldAutoTimer = setInterval(() => {
+      if (bldVisited.size >= bldPerimeter.length) {
+        clearInterval(bldAutoTimer); bldAutoTimer = null;
+        document.getElementById('autoBldBtn').textContent = '自动运行';
+        return;
+      }
+      stepBldDemo();
+    }, 80);
+  }
+}
+
+function renderBld() {
+  bldCtx.clearRect(0, 0, bldCanvas.width, bldCanvas.height);
+  bldCtx.fillStyle = '#1a1f2e';
+  bldCtx.fillRect(0, 0, bldCanvas.width, bldCanvas.height);
+
+  const perimSet  = new Set(bldPerimeter.map(c => c[0]*1000+c[1]));
+
+  for (let r = 0; r < BLD_ROWS; r++) {
+    for (let c = 0; c < BLD_COLS; c++) {
+      const k = r * 1000 + c;
+      const x = c * BLD_CELL + 1, y = r * BLD_CELL + 1, s = BLD_CELL - 2;
+
+      if (bldOccupied.has(k)) {
+        bldCtx.fillStyle = 'rgba(160,32,32,0.90)';
+      } else if (bldVisited.has(k)) {
+        bldCtx.fillStyle = 'rgba(237,137,54,0.75)';
+      } else if (perimSet.has(k)) {
+        bldCtx.fillStyle = 'rgba(147,112,219,0.55)';
+      } else {
+        bldCtx.fillStyle = '#1e2432';
+      }
+      bldCtx.fillRect(x, y, s, s);
+    }
+  }
+
+  // 建筑标签
+  bldCtx.font = 'bold 11px Segoe UI';
+  bldCtx.fillStyle = 'rgba(255,180,180,0.7)';
+  bldCtx.textAlign = 'center';
+  bldCtx.fillText('图书馆', (4+13)/2 * BLD_CELL + BLD_CELL/2, (5+14)/2 * BLD_CELL + BLD_CELL/2);
+
+  // 当前 Frontier 目标
+  if (bldTargetPos) {
+    const tc = bldTargetPos[1], tr = bldTargetPos[0];
+    bldCtx.fillStyle = 'rgba(252,129,129,0.9)';
+    bldCtx.fillRect(tc*BLD_CELL+1, tr*BLD_CELL+1, BLD_CELL-2, BLD_CELL-2);
+  }
+
+  // Agent（圆形）
+  bldCtx.fillStyle = '#63b3ed';
+  bldCtx.beginPath();
+  bldCtx.arc(bldAgentPos[1]*BLD_CELL + BLD_CELL/2, bldAgentPos[0]*BLD_CELL + BLD_CELL/2,
+             BLD_CELL/2 - 2, 0, Math.PI*2);
+  bldCtx.fill();
+
+  // 网格线
+  bldCtx.strokeStyle = '#2d3748'; bldCtx.lineWidth = 0.5;
+  for (let r = 0; r <= BLD_ROWS; r++) {
+    bldCtx.beginPath(); bldCtx.moveTo(0, r*BLD_CELL); bldCtx.lineTo(BLD_COLS*BLD_CELL, r*BLD_CELL); bldCtx.stroke();
+  }
+  for (let c = 0; c <= BLD_COLS; c++) {
+    bldCtx.beginPath(); bldCtx.moveTo(c*BLD_CELL, 0); bldCtx.lineTo(c*BLD_CELL, BLD_ROWS*BLD_CELL); bldCtx.stroke();
+  }
+}
+
+resetBldDemo();
+</script>
+</body>
+</html>
