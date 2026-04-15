@@ -35,6 +35,10 @@ public class AgentMotionExecutor : MonoBehaviour
     [Header("路径可视化")]
     public AStarPathVisualizer pathVisualizer; // 可选：路径可视化组件
 
+    [Header("局部避障（APF 人工势场）")]
+    [SerializeField] private float apfInfluenceRadius = 8f;  // 排斥力感应半径（m）
+    [SerializeField] private float apfStrength        = 60f; // 排斥力强度系数
+
     // ─── 私有状态 ─────────────────────────────────────────────────
     private Rigidbody          rb;
     private ActionDecisionModule adm;
@@ -90,6 +94,7 @@ public class AgentMotionExecutor : MonoBehaviour
 
     private void FixedUpdate()
     {
+        ApplyObstacleRepulsion();
         ClampSpeed();
         ApplyTilt();
     }
@@ -115,6 +120,39 @@ public class AgentMotionExecutor : MonoBehaviour
         Vector3 error  = tgt - pos;
         Vector3 force  = pdKp * error - pdKd * vel;
         rb.AddForce(force, ForceMode.Acceleration);
+    }
+
+    // ─── APF 局部障碍物排斥力（持久化，FixedUpdate 每帧调用，覆盖所有动作）────
+    private void ApplyObstacleRepulsion()
+    {
+        var nodes = agentState?.DetectedSmallNodes;
+        if (nodes == null || nodes.Count == 0) return;
+
+        Vector3 repulsion = Vector3.zero;
+        Vector3 myPosFlat = new Vector3(transform.position.x, 0f, transform.position.z);
+
+        foreach (var node in nodes)
+        {
+            if (node.NodeType != SmallNodeType.Tree
+             && node.NodeType != SmallNodeType.Pedestrian
+             && node.NodeType != SmallNodeType.Vehicle
+             && node.NodeType != SmallNodeType.TemporaryObstacle
+             && node.NodeType != SmallNodeType.Agent) continue;
+
+            Vector3 obsPosFlat = new Vector3(node.WorldPosition.x, 0f, node.WorldPosition.z);
+            Vector3 toObs      = obsPosFlat - myPosFlat;
+            float   dist       = toObs.magnitude;
+
+            if (dist < 0.05f || dist >= apfInfluenceRadius) continue;
+
+            // APF: F = k × (1/d − 1/d₀)² / d² × 反向
+            float eta       = 1f / dist - 1f / apfInfluenceRadius;
+            float magnitude = apfStrength * eta * eta / (dist * dist);
+            repulsion      += (-toObs.normalized) * magnitude;
+        }
+
+        if (repulsion.sqrMagnitude > 0.001f)
+            rb.AddForce(repulsion, ForceMode.Acceleration);
     }
 
     private void ClampSpeed()
@@ -274,13 +312,10 @@ public class AgentMotionExecutor : MonoBehaviour
         Color teamColor = GetTeamColor();
         pathVisualizer?.ShowPath(currentPath, teamColor);
 
-        // 4. 沿 waypoint 飞行
-        const float ARRIVE_THRESHOLD      = 3f;   // 到达判定半径（m）
-        const float WAYPOINT_TIMEOUT      = 12f;  // 单航点超时（s），超时自动跳过
-        const float OBSTACLE_REPLAN_RANGE = 20f;  // 触发重规划的障碍感知距离（m）
-        const float REPLAN_COOLDOWN       = 3f;   // 重规划最短间隔（s），防止抖动
-        float replanTimer    = 0f;
-        float waypointTimer  = 0f;
+        // 4. 沿 waypoint 飞行（APF 排斥力由 FixedUpdate 持续施加，无需在此重规划）
+        const float ARRIVE_THRESHOLD = 3f;   // 到达判定半径（m）
+        const float WAYPOINT_TIMEOUT = 12f;  // 单航点超时（s），超时自动跳过
+        float waypointTimer = 0f;
 
         while (waypointIdx < currentPath.Count)
         {
@@ -303,38 +338,6 @@ public class AgentMotionExecutor : MonoBehaviour
                 }
                 waypointIdx++;
                 waypointTimer = 0f;
-            }
-
-            // ── 障碍感知触发局部重规划 ─────────────────────────────────
-            replanTimer -= Time.deltaTime;
-            if (replanTimer <= 0f && agentState?.DetectedSmallNodes != null)
-            {
-                var obstaclePositions = agentState.DetectedSmallNodes
-                    .Where(n => n.NodeType == SmallNodeType.Pedestrian
-                             || n.NodeType == SmallNodeType.Vehicle
-                             || n.NodeType == SmallNodeType.TemporaryObstacle)
-                    .Where(n => Vector3.Distance(transform.position, n.WorldPosition) < OBSTACLE_REPLAN_RANGE)
-                    .Select(n => n.WorldPosition)
-                    .ToList();
-
-                if (obstaclePositions.Count > 0)
-                {
-                    var blocked = campusGrid.WorldPositionsToBlockedKeys(obstaclePositions);
-                    Vector2Int curCell = campusGrid.WorldToGrid(transform.position);
-                    var newGridPath = campusGrid.FindPathAStar(curCell, goalCell, null, blocked);
-                    if (newGridPath != null && newGridPath.Count > 0)
-                    {
-                        currentPath = newGridPath
-                            .Select(c => { var w = campusGrid.GridToWorldCenter(c.x, c.y); w.y = hoverHeight; return w; })
-                            .ToList();
-                        waypointIdx = 0;
-                        pathVisualizer?.ShowPath(currentPath, GetTeamColor());
-                        Debug.Log($"[AME] MoveTo '{action.targetName}' 感知到{obstaclePositions.Count}个障碍，触发局部重规划");
-                        AgentStateServer.PushMotionEvent(props?.AgentID ?? name, "obstacle_replan",
-                            $"↻ 感知{obstaclePositions.Count}个障碍，重规划");
-                    }
-                    replanTimer = REPLAN_COOLDOWN;
-                }
             }
 
             yield return null;

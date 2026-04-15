@@ -45,6 +45,7 @@ public partial class AgentStateServer : MonoBehaviour
 
     // ─── Memory / Reflection 快照 ─────────────────────────────────────────────
     private string memoryJson = "[]";
+    private string persistentMemJson = "{}";
 
     // ─── 命令队列（后台线程入队，主线程消费）────────────────────
     private readonly Queue<PendingCommand> commandQueue = new Queue<PendingCommand>();
@@ -91,6 +92,7 @@ public partial class AgentStateServer : MonoBehaviour
             CaptureIncidents();
             CaptureMotionEvents();
             CaptureMemorySnapshots();
+            CapturePersistentMemory();
             lastSnapshotTime = Time.time;
         }
     }
@@ -451,6 +453,95 @@ public partial class AgentStateServer : MonoBehaviour
     }
 
     // ─────────────────────────────────────────────────────────
+    // 持久化规律库快照采集（主线程）
+    // 跨 agent 去重合并全部 Policy 记忆 + 有效 ReflectionInsight
+    // ─────────────────────────────────────────────────────────
+
+    private void CapturePersistentMemory()
+    {
+        var agents      = FindObjectsOfType<IntelligentAgent>();
+        var now         = DateTime.UtcNow;
+        var seenPol     = new HashSet<string>();
+        var seenIns     = new HashSet<string>();
+        var policyList  = new List<MemorySnapshot>();
+        var insightList = new List<ReflectionInsightSnapshot>();
+
+        foreach (var agent in agents)
+        {
+            var mm = agent?.GetComponent<MemoryModule>();
+            if (mm == null) continue;
+
+            foreach (var m in mm.memories)
+            {
+                if (m.kind != AgentMemoryKind.Policy || !seenPol.Add(m.id)) continue;
+                policyList.Add(new MemorySnapshot
+                {
+                    id                 = m.id,
+                    kind               = m.kind.ToString(),
+                    summary            = m.summary,
+                    detail             = (m.detail != null && m.detail.Length > 500)
+                                        ? m.detail.Substring(0, 500) + "…" : m.detail,
+                    status             = m.status.ToString(),
+                    importance         = m.importance,
+                    confidence         = m.confidence,
+                    strengthScore      = m.strengthScore,
+                    isProceduralHint   = m.isProceduralHint,
+                    reflectionDepth    = m.reflectionDepth,
+                    sourceModule       = m.sourceModule,
+                    missionId          = m.missionId,
+                    targetRef          = m.targetRef,
+                    outcome            = m.outcome,
+                    tags               = m.tags?.ToArray() ?? Array.Empty<string>(),
+                    createdAtUnix      = new DateTimeOffset(m.createdAt, TimeSpan.Zero).ToUnixTimeSeconds(),
+                    lastAccessedAtUnix = new DateTimeOffset(m.lastAccessedAt, TimeSpan.Zero).ToUnixTimeSeconds(),
+                    accessCount        = m.accessCount,
+                });
+            }
+
+            foreach (var i in mm.reflectionInsights)
+            {
+                if (i.expiresAt != DateTime.MinValue && i.expiresAt <= now) continue;
+                if (!seenIns.Add(i.id)) continue;
+                insightList.Add(new ReflectionInsightSnapshot
+                {
+                    id                  = i.id,
+                    insightDepth        = i.insightDepth,
+                    title               = i.title,
+                    summary             = i.summary,
+                    applyWhen           = i.applyWhen,
+                    suggestedAdjustment = i.suggestedAdjustment,
+                    confidence          = i.confidence,
+                    missionId           = i.missionId,
+                    targetRef           = i.targetRef,
+                    tags                = i.tags?.ToArray() ?? Array.Empty<string>(),
+                    createdAtUnix       = new DateTimeOffset(i.createdAt, TimeSpan.Zero).ToUnixTimeSeconds(),
+                    expiresAtUnix       = i.expiresAt == DateTime.MinValue ? 0L
+                                         : new DateTimeOffset(i.expiresAt, TimeSpan.Zero).ToUnixTimeSeconds(),
+                    remainingSeconds    = i.expiresAt == DateTime.MinValue ? -1f
+                                         : (float)(i.expiresAt - now).TotalSeconds,
+                });
+            }
+        }
+
+        policyList.Sort((a, b) => b.strengthScore.CompareTo(a.strengthScore));
+        insightList.Sort((a, b) =>
+        {
+            int d = b.insightDepth.CompareTo(a.insightDepth);
+            return d != 0 ? d : b.createdAtUnix.CompareTo(a.createdAtUnix);
+        });
+
+        var payload = new PersistentMemoryPayload
+        {
+            policyCount  = policyList.Count,
+            insightCount = insightList.Count,
+            policies     = policyList.ToArray(),
+            insights     = insightList.ToArray(),
+        };
+        var json = JsonConvert.SerializeObject(payload);
+        lock (snapshotLock) { persistentMemJson = json; }
+    }
+
+    // ─────────────────────────────────────────────────────────
     // 紧急事件快照采集（主线程）
     // ─────────────────────────────────────────────────────────
 
@@ -731,6 +822,11 @@ public partial class AgentStateServer : MonoBehaviour
 
                     case "/api/memory":
                         { string json; lock (snapshotLock) { json = memoryJson; }
+                          body = Encoding.UTF8.GetBytes(json); mime = "application/json"; }
+                        break;
+
+                    case "/api/memory/policies":
+                        { string json; lock (snapshotLock) { json = persistentMemJson; }
                           body = Encoding.UTF8.GetBytes(json); mime = "application/json"; }
                         break;
 

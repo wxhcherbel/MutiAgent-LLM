@@ -373,3 +373,15 @@ public class AgentMemoryPayload
     public MemorySnapshot[]            memories;         // 最多 30 条（程序性优先）
     public ReflectionInsightSnapshot[] insights;         // 全部有效洞察
 }
+
+/// <summary>
+/// 全局持久化规律库快照（所有 agent 的 Policy 记忆 + ReflectionInsight 去重合并）。
+/// </summary>
+[Serializable]
+public class PersistentMemoryPayload
+{
+    public int                         policyCount;   // Policy 记忆总数
+    public int                         insightCount;  // Insight 总数
+    public MemorySnapshot[]            policies;      // 全部 Policy 记忆（按 strengthScore 降序）
+    public ReflectionInsightSnapshot[] insights;      // 全部有效 Insight（按 insightDepth+createdAt 降序）
+}

@@ -125,8 +125,11 @@ public class PlanningModule : MonoBehaviour
     {
         SetState(PlanningState.Parsing);
 
+        string constraintPolicies = memory?.BuildPoliciesContext(desc, new[] { "constraint_analysis" }, 3) ?? string.Empty;
         string prompt =
             "你是多智能体任务规划器。请将任务解析为合法 JSON 对象。\n\n" +
+            (string.IsNullOrWhiteSpace(constraintPolicies) ? string.Empty :
+                "## 历史约束识别规律（来自记忆模块，优先参考）\n" + constraintPolicies + "\n\n") +
             $"任务:{desc}\n" +
             $"智能体数量:{cnt}\n\n" +
             "─── 第一步:判断 relType ───\n" +
@@ -139,22 +142,20 @@ public class PlanningModule : MonoBehaviour
             "同一任务可能同时包含多种类型,数组可有多条,不得遗漏。\n\n" +
             "每条约束必须包含 groupScope 字段,规则:\n" +
             "  C1/C2/C3(组内协同)→ groupScope = 所属组的序号(单组任务填 0;多组时填 0/1/2...)\n\n" +
-            "【C1 资源分配】识别标志:任务中明确指定\" 谁负责什么目标/区域/资源\",或暗含分工避免重复。\n" +
-            "  subject=执行者角色描述(此时不知道 agentId,填角色名如'侦察机'或留空'')\n" +
+            "[C1 资源分配]识别标志:任务中明确指定\" 谁负责什么目标/区域/资源\",或暗含分工避免重复。\n" +
+            "  subject=执行者角色描述(agentId留空'')\n" +
             "  targetObject=被分配的目标/区域名称  exclusive=是否独占(通常为 true)\n" +
             "  channel=direct\n\n" +
-            "【C2 完成同步】识别标志:任务要求多机\"都完成后一起…\"\"同步…\"\"统一…\"等,强调集体完成再进行下一步。\n" +
+            "[C2 完成同步]识别标志:任务要求多机\"都完成后一起…\"\"同步…\"\"统一…\"等,强调集体完成再进行下一步。\n" +
             "  condition=同步完成的条件描述\n" +
             "  syncWith=需要等待其写入完成信号的其他 agentId 列表(此阶段不知道 agentId,填 [])\n" +
             "  channel=whiteboard\n\n" +
-            "【C3 行为耦合】两种子类型,只在存在明确的等待/互斥关系时才生成,纯并行不需要 C3:\n" +
+            "[C3 行为耦合]两种子类型,只在存在明确的等待/互斥关系时才生成,纯并行不需要 C3:\n" +
             "  sign=+1(单向前置等待):一机必须等另一机到位/就绪后才允许开始行动(非对称依赖)。\n" +
-            "    watchAgent=被等待的 agentId(不知道时填 '')  reactTo='ReadySignal'\n" +
+            "    watchAgent=被等待的 agentId(此阶段不知道 agentId,填 [])  reactTo='ReadySignal'\n" +
             "  sign=-1(动态互斥):满足以下全部条件时生成:\n" +
-            "    ① 存在多个 agent 和一个同类目标集合（如多个检查点、路径节点、共享设施等）\n" +
-            "    ② 每个具体目标同一时刻只允许一个 agent 占用/前往\n" +
-            "    ③ 具体哪个 agent 去哪个目标,规划时无法静态确定（若已确定则用 C1）\n" +
-            "    不需要提前指定目标名,由 ADM 在运行时通过白板读取已占目标后动态选择未占目标。\n" +
+            "    ① 每个[具体目标/路径点/资源点]同一时刻只允许一个 agent 占用/前往\n" +
+            "    ③ 具体哪个 agent 去哪个目标,规划时无法静态确定\n" +
             "    参与互斥的成员由绑定到同一 constraintId 的槽位共同决定。\n" +
             "    watchAgent 保持空字符串 ''  reactTo='IntentAnnounce'\n" +
             "  【重要】C3-1 是组内协同机制:参与互斥的 agent 仍属同一协作团队,relType=Cooperation；\n" +
@@ -174,7 +175,7 @@ public class PlanningModule : MonoBehaviour
             "2. 每条约束必须包含字段:constraintId / cType / channel,以及对应类型的专用字段。\n" +
             "3. 不相关类型的专用字段可省略或填默认值(bool=false, int=0, string='', array=[])。\n" +
             "4. timeLimit 为秒数,无限制时填 0。\n" +
-            "5. thought 字段按以下结构输出：约束识别推理 → 【置信】对本次解析的把握（高/中/低）及原因 → 【建议】若有值得记录的规律输出\"当[场景]时应[策略]\"，否则留空。\n\n" +
+            "5. thought 字段输出 JSON 对象，字段：reasoning（约束识别推理，1-3句）、confidence（高/中/低）、confidence_reason（原因）、suggestion（可跨任务复用的抽象决策原则：描述结构性/语义性条件，而非当前任务的具体表述；本次无新规律可提炼则填\"\"）。\n\n" +
 
             "─── 示例(含全部三类约束 + C3 两种子类型)───\n" +
             "输入任务:三架无人机协作侦察。A机负责东区,B机负责西区(两机区域独占不重叠);" +
@@ -182,7 +183,7 @@ public class PlanningModule : MonoBehaviour
             "A和B均完成侦察后同步向指挥部回传坐标;" +
             "A与B侦察途中如需使用同一充电桩,只能一架先用,另一架等待。\n" +
             "{\n" +
-            "  \"thought\": \"A/B各负责独立区域→C1；充电桩同一时刻只能一架使用→C3互斥；均完成后统一回传→C2同步 → 【置信】高，约束类型均有明确语义对应 → 【建议】当任务含'轮流使用'语义时应识别为C3-1互斥而非C1独占\",\n" +
+            "  \"thought\": {\"reasoning\":\"A/B各负责独立区域→C1；充电桩同一时刻只能一架使用→C3互斥；均完成后统一回传→C2同步\",\"confidence\":\"高\",\"confidence_reason\":\"约束类型均有明确语义对应\",\"suggestion\":\"当资源使用顺序在规划时无法预先确定时，应用C3-1动态互斥而非C1静态分配\"},\n" +
             "  \"relType\": \"Cooperation\",\n" +
             "  \"groupCnt\": 1,\n" +
             "  \"groupMsns\": [\"A侦察东区,B侦察西区,完成后同步回传坐标\"],\n" +
@@ -253,11 +254,14 @@ public class PlanningModule : MonoBehaviour
             ? JsonConvert.SerializeObject(visibleConstraints)
             : "[]";
 
+        string slotDesignPolicies = memory?.BuildPoliciesContext(myGroup.mission, new[] { "slot_design" }, 3) ?? string.Empty;
         string prompt =
             "你是多智能体任务组长。\n" +
             "请做两件事:\n" +
             "1. 为本组生成计划槽 slots。\n" +
             "2. 回写约束 constraints 中的槽位引用。\n\n" +
+            (string.IsNullOrWhiteSpace(slotDesignPolicies) ? string.Empty :
+                "## 历史槽位设计规律（来自记忆模块，优先参考）\n" + slotDesignPolicies + "\n\n") +
             $"组任务:{myGroup.mission}\n" +
             $"成员数:{memberCount}\n" +
             $"可选角色:{roleTypes}\n\n" +
@@ -288,7 +292,7 @@ public class PlanningModule : MonoBehaviour
             GetConciseTextPromptText() + "\n" +
             "输出格式:\n" +
             "{\n" +
-            "  \"thought\": \"槽位设计推理 → 【置信】对角色分配的把握（高/中/低）及原因 → 【建议】若有值得记录的规律输出\\\"当[场景]时应[策略]\\\"，否则留空\",\n" +
+            "  \"thought\": {\"reasoning\":\"槽位设计推理（1-3句）\",\"confidence\":\"高/中/低\",\"confidence_reason\":\"原因\",\"suggestion\":\"可跨任务复用的抽象槽位设计原则，或\\\"\\\"\"},\n" +
             "  \"slots\": [PlanSlot, ...],\n" +
             "  \"constraints\": [StructuredConstraint, ...]\n" +
             "}\n\n" +
@@ -303,7 +307,7 @@ public class PlanningModule : MonoBehaviour
             "]\n" +
             "输出:\n" +
             "{\n" +
-            "  \"thought\": \"C1约束指定A负责南区、B负责北区，设2个Scout槽分工明确；C3+1要求s0先行发信号，s1等待；C3-1互斥充电桩两槽都绑定 → 【置信】高，约束与槽位一一对应无歧义 → 【建议】当C3+1约束存在时，发信号方应单独设槽以明确责任\",\n" +
+            "  \"thought\": {\"reasoning\":\"C1约束指定A负责南区、B负责北区，设2个Scout槽分工明确；C3+1要求s0先行发信号，s1等待；C3-1互斥充电桩两槽都绑定\",\"confidence\":\"高\",\"confidence_reason\":\"约束与槽位一一对应无歧义\",\"suggestion\":\"存在单向前置依赖（C3+1）时，信号发出方与等待方应分设不同槽位，避免因角色合并导致循环等待\"},\n" +
             "  \"slots\": [\n" +
             "    {\"slotId\":\"s0\",\"role\":\"Scout\",\"desc\":\"飞往南区执行搜索,需要时前往共享充电点补能\",\"doneCond\":\"南区搜索完成\",\"constraintIds\":[\"c1_area_a\",\"c2_sync_report\",\"c3_wait_cover\",\"c3_charge_mutex\"]},\n" +
             "    {\"slotId\":\"s1\",\"role\":\"Scout\",\"desc\":\"飞往北区执行搜索,需要时前往共享充电点补能\",\"doneCond\":\"北区搜索完成\",\"constraintIds\":[\"c2_sync_report\",\"c3_wait_cover\",\"c3_charge_mutex\"]}\n" +
@@ -431,10 +435,16 @@ public class PlanningModule : MonoBehaviour
         string roleHint = _personalitySystem?.GetRolePreferenceHint() ?? string.Empty;
         string personalitySection = string.IsNullOrWhiteSpace(roleHint)
             ? string.Empty
-            : roleHint + "\n请在 thought 字段中说明是否参考了上述人格倾向，以及如何影响了你的选择。\n\n";
+            : roleHint + "\n请在 thought 的 reasoning 和 factors 字段中说明是否参考了上述人格倾向，以及如何影响了你的选择。\n\n";
+
+        // 从角色列表提取查询文本，检索过去选槽经验（不知道最终角色，用可选角色名作 freeText）
+        string slotRoleSummary = string.Join(" ", availableSlots.Select(s => s.role).Distinct());
+        string slotPickPolicies = memory?.BuildPoliciesContext(slotRoleSummary, new[] { "slot_selection" }, 3) ?? string.Empty;
 
         string prompt =
             "你是无人机智能体。请从可选槽中选择最适合自己的一个,并输出合法 JSON 对象。\n\n" +
+            (string.IsNullOrWhiteSpace(slotPickPolicies) ? string.Empty :
+                "## 历史选槽规律（来自记忆模块，优先参考）\n" + slotPickPolicies + "\n\n") +
             $"可选槽:{slotsJson}\n" +
             $"当前电量:{battery:F0}%,当前位置:{pos}\n\n" +
             personalitySection +
@@ -442,10 +452,10 @@ public class PlanningModule : MonoBehaviour
             "输出要求:\n" +
             "1. 输出内容仅包含 JSON。\n" +
             "2. `slotId` 是可选槽中的一个。\n" +
-            "3. `thought` 按如下结构：选槽理由（电量/位置/槽可用性/角色匹配/人格偏好） → 【置信】对此选择的把握（高/中/低）及原因 → 【建议】若有值得记录的规律输出\"当[场景]时应[策略]\"，否则留空。\n\n" +
+            "3. `thought` 输出 JSON 对象，字段：reasoning（综合选槽理由，1-3句）、factors（决策因子字符串数组，如[\"电量充足\",\"位置靠近南区\",\"人格偏好系统性角色\"]）、confidence（高/中/低）、confidence_reason（原因）、suggestion（可跨任务复用的抽象选槽原则：描述结构性权衡条件而非具体阈值，无新规律则填\"\"）。\n\n" +
             "输出格式示例:\n" +
             "{\n" +
-            "  \"thought\": \"当前电量充足且位置靠近南区，人格倾向系统性角色，s2(Perimeter)最适合 → 【置信】高，与人格偏好高度匹配 → 【建议】当电量低于30%时应优先选择距充电点近的槽位\",\n" +
+            "  \"thought\": {\"reasoning\":\"当前电量充足且位置靠近南区，人格倾向系统性角色，s2(Perimeter)最适合\",\"factors\":[\"电量充足\",\"位置靠近南区\",\"人格偏好系统性角色\"],\"confidence\":\"高\",\"confidence_reason\":\"与人格偏好高度匹配\",\"suggestion\":\"当续航成为瓶颈时，补给可达性的优先级应高于角色最优匹配\"},\n" +
             "  \"slotId\": \"s0\"\n" +
             "}";
 
@@ -582,10 +592,10 @@ public class PlanningModule : MonoBehaviour
         "⚠️ 强制要求:【待分配约束列表】中的每一个 constraintId 都必须出现在某个步骤的 constraintIds 中，不得遗漏任何一个。\n\n" +
 
         "## 输出要求\n" +
-        "仅输出合法的 JSON 对象。thought 字段按如下结构：拆分依据与地标提取 → 约束逐条核查（对输入列表中每个 constraintId，写明分配到哪个 step 及依据）→ 【置信】对本次拆分的把握（高/中/低）及原因 → 【建议】若有值得记录的规律输出\"当[场景]时应[策略]\"，否则留空。\n" +
+        "仅输出合法的 JSON 对象。thought 字段输出 JSON 对象，字段：split_reasoning（步骤拆分依据与地标提取，1-3句）、constraint_checks（数组，对每个输入 constraintId 逐条核查，每项含 constraintId/assigned_step/reason）、confidence（高/中/低）、confidence_reason（原因）、suggestion（可跨任务复用的抽象步骤拆分/地标提取原则，描述结构性条件而非当前任务细节；无新规律则填\"\"）。\n" +
         "原始计划为：'等待安全信号后，从营地出发前往哨站附近拍照，然后穿过狭窄通道飞往能源站北侧，到达后等待全体小队汇合一起开启护盾'。\n" +
         "{\n" +
-        "  \"thought\": \"原始计划包含2个不同目的地，因此拆解为2步。step_1提取绝对地标'哨站'，挂载C3(+1)依赖约束(等待前置信号)；step_2包含位移与原地连续操作，按规则合并为1步，遇到复合描述'能源站北侧'向上追溯提取主实体'能源站'，同时挂载C3(-1)互斥约束(狭窄通道防撞)和C2同步约束(等待集体汇合) → 【置信】高，目的地和约束匹配关系清晰 → 【建议】当步骤描述含方位修饰词时应向上追溯到主实体名以避免导航失配\",\n" +
+        "  \"thought\": {\"split_reasoning\":\"原始计划含2个不同目的地，拆解为2步；step_1提取绝对地标'哨站'；step_2复合描述'能源站北侧'向上追溯提取主实体'能源站'\",\"constraint_checks\":[{\"constraintId\":\"c3_wait_signal\",\"assigned_step\":\"step_1\",\"reason\":\"C3+1等待前置信号，绑定需等待信号的前置步骤\"},{\"constraintId\":\"c3_channel_mutex\",\"assigned_step\":\"step_2\",\"reason\":\"C3-1互斥约束绑定狭窄通道移动步骤\"},{\"constraintId\":\"c2_sync_shield\",\"assigned_step\":\"step_2\",\"reason\":\"C2同步约束绑定需集体到位的到达步骤\"}],\"confidence\":\"高\",\"confidence_reason\":\"目的地和约束匹配关系清晰\",\"suggestion\":\"当步骤描述含方位修饰词时应向上追溯到主实体名以避免导航失配\"},\n" +
         "  \"steps\": [\n" +
         "    {\n" +
         "      \"stepId\": \"step_1\",\n" +

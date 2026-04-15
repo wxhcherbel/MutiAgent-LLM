@@ -516,11 +516,11 @@ public class ActionDecisionModule : MonoBehaviour
             }
         }
 
-        // thought 模板：带标签的结构化推理，强制 LLM 逐步思考
-        // 末尾两个标签补充主观维度：【置信】记录当前决策的把握程度，【建议】提炼可复用的任务处理规律
+        // thought 模板：JSON 结构，强制 LLM 逐步思考并以可解析的结构输出
+        // iterationCount>=3 时要求填写 context 和 trajectory_analysis，帮助检测循环导航
         string thoughtGuide = ctx.iterationCount >= 3
-            ? "【情境】我在哪/要去哪/走了几步 → 【轨迹分析】历史中是否出现重复节点、整体是否在朝目标方向推进 → 【完成判断】三项核对结果 → 【选择理由】下一节点是否为历史外的新路径、方向是否朝目标 → 【置信】对此决策的把握（高/中/低）及原因 → 【建议】若有值得记录的规律输出\"当[场景]时应[策略]\"，否则留空"
-            : "【完成判断】三项核对结果 → 【下一步】选择意图及依据 → 【置信】对此决策的把握（高/中/低）及原因 → 【建议】若有值得记录的规律输出\"当[场景]时应[策略]\"，否则留空";
+            ? "{\"context\":\"我在哪/要去哪/走了几步\",\"trajectory_analysis\":\"历史是否有重复节点/是否朝目标推进\",\"done_check\":{\"position_reached\":true,\"condition_met\":false,\"observation_done\":true},\"next_step_reasoning\":\"下一节点选择理由\",\"confidence\":\"高/中/低\",\"confidence_reason\":\"原因\",\"suggestion\":\"可跨任务复用的抽象导航/决策原则（描述结构性条件），无新规律则填\\\"\\\"\"}"
+            : "{\"context\":\"\",\"trajectory_analysis\":\"\",\"done_check\":{\"position_reached\":true,\"condition_met\":false,\"observation_done\":true},\"next_step_reasoning\":\"完成判断和下一步意图\",\"confidence\":\"高/中/低\",\"confidence_reason\":\"原因\",\"suggestion\":\"可跨任务复用的抽象导航/决策原则（描述结构性条件），无新规律则填\\\"\\\"\"}";
 
         // 从 MemoryModule 检索当前步骤相关的历史经验和反思洞察
         // 失败时降级为空字符串（不影响决策流程，只是少了历史参考）
@@ -620,14 +620,14 @@ public class ActionDecisionModule : MonoBehaviour
 
             "## 输出（JSON 对象，非数组）\n" +
             "{\n" +
-            $"  \"thought\": \"{thoughtGuide}\",\n" +
+            $"  \"thought\": {thoughtGuide},\n" +
             "  \"isDone\": true/false,\n" +
             "  \"doneReason\": \"完成或未完成的具体原因（引用当前位置/历史/条件对比）\",\n" +
             "  \"nextActions\": [\n" +
             "    {\"actionId\":\"aa_1\",\"type\":\"MoveTo\",\"targetName\":\"地点名\",\"targetAgentId\":\"\",\"duration\":0,\"actionParams\":\"\",\"spatialHint\":\"\"}\n" +
             "  ]\n" +
             "}\n" +
-            "1. thought 必填，按上方标签格式逐步推理（不影响执行逻辑）。\n" +
+            "1. thought 必填，按上方 JSON 结构输出实际推理内容（done_check 三项必须填写真实布尔值；迭代<3时 context/trajectory_analysis 可填空字符串）。\n" +
             "2. isDone=true 时 nextActions 填 []；isDone=false 时必须提供 1-3 个动作。\n" +
             "3. 每个动作必须包含全部字段：actionId / type / targetName / targetAgentId / duration / actionParams / spatialHint。\n" +
             "4. 若存在 C3 约束，生成的动作必须遵守其信号/互斥要求（如等待 ReadySignal、避开已占节点）；C2 约束无需在动作层面等待。\n";
@@ -1262,60 +1262,6 @@ public class ActionDecisionModule : MonoBehaviour
         }
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // 感知快照
-    // ─────────────────────────────────────────────────────────────
-
-    private string BuildPerceptionSnapshot()
-    {
-        if (agentState == null) return string.Empty;
-
-        Vector3 myPos = agentState.Position;
-        const float maxDist = 50f;
-
-        var sb = new StringBuilder();
-        bool hasData = false;
-
-        var nodes = agentState.DetectedSmallNodes;
-        if (nodes != null && nodes.Count > 0)
-        {
-            List<string> nearbyNodeLines = new List<string>();
-            foreach (var node in nodes)
-            {
-                if (Vector3.Distance(myPos, node.WorldPosition) > maxDist) continue;
-
-                string dir = GetCompassDir8(myPos, node.WorldPosition);
-                int dist = Mathf.RoundToInt(Vector3.Distance(myPos, node.WorldPosition) / 5f) * 5;
-                string label = NodeTypeDisplayName(node.NodeType);
-                string extra = node.IsDynamic ? "动态" : "静态";
-                if (node.NodeType == SmallNodeType.TemporaryObstacle)
-                    extra += "，需要规避";
-                nearbyNodeLines.Add($"  - {label}({dir}约{dist}m，{extra})");
-            }
-
-            if (nearbyNodeLines.Count > 0)
-            {
-                sb.AppendLine("附近障碍（已感知）：");
-                foreach (string line in nearbyNodeLines)
-                    sb.AppendLine(line);
-                hasData = true;
-            }
-        }
-
-        var nearbyAgents = agentState.NearbyAgents;
-        if (nearbyAgents != null && nearbyAgents.Count > 0)
-        {
-            sb.AppendLine("附近队友（本地感知）：");
-            foreach (var kv in nearbyAgents)
-            {
-                if (string.IsNullOrWhiteSpace(kv.Key)) continue;
-                sb.AppendLine($"  - {kv.Key}");
-                hasData = true;
-            }
-        }
-
-        return hasData ? sb.ToString().TrimEnd() : string.Empty;
-    }
 
     private static string GetCompassDir8(Vector3 from, Vector3 to)
     {

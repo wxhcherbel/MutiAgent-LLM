@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using Newtonsoft.Json;
 using UnityEngine;
 
 public class MemoryModule : MonoBehaviour
@@ -38,6 +40,12 @@ public class MemoryModule : MonoBehaviour
     /// 默认 150 对应约 15 条 importance=1.0 的高权重记忆进入后才触发一次。
     /// </summary>
     [Min(50f)] public float reflectionImportanceThreshold = 150f;
+
+    [Header("持久化")]
+    /// <summary>是否在每次写入 Policy/Reflection 记忆后自动保存到磁盘。关闭后可手动调用 SaveMemories()。</summary>
+    public bool autoSaveOnStore = true;
+    /// <summary>是否在初始化时自动从磁盘加载历史 Policy/Reflection。</summary>
+    public bool autoLoadOnAwake = true;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // 公共数据（Inspector 可见，方便调试）
@@ -79,15 +87,25 @@ public class MemoryModule : MonoBehaviour
     /// </summary>
     private PersonalitySystem _personalitySystem;
 
-    /// <summary>从 thought 结构化文本中提取【建议】内容（到行尾或下一个箭头止）。</summary>
-    private static readonly Regex PolicyRegex = new Regex(@"【建议】([^→\n]+)", RegexOptions.Compiled);
-    /// <summary>从 thought 结构化文本中提取【置信】等级（高/中/低）。</summary>
-    private static readonly Regex ConfidenceRegex = new Regex(@"【置信】(高|中|低)", RegexOptions.Compiled);
+    /// <summary>AgentID，仅用于日志，持久化文件不再按 AgentID 分文件。由 SetAgentId() 注入。</summary>
+    private string _agentId = "unknown";
+
+    /// <summary>从 thought JSON 中提取 suggestion 字段内容。</summary>
+    private static readonly Regex PolicyRegex = new Regex(@"""suggestion""\s*:\s*""([^""]+)""", RegexOptions.Compiled);
+    /// <summary>从 thought JSON 中提取 confidence 字段等级（高/中/低）。</summary>
+    private static readonly Regex ConfidenceRegex = new Regex(@"""confidence""\s*:\s*""(高|中|低)""", RegexOptions.Compiled);
 
     private void Awake()
     {
+        // AgentID 由 IntelligentAgent.InitializeAgent() 延迟注入，Awake 阶段跳过加载；
+        // 加载将在 SetAgentId() 中触发（确保文件名正确）。
         PruneExpiredInsights();
         TrimMemoryCapacity();
+    }
+
+    private void OnApplicationQuit()
+    {
+        SaveMemories();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -141,6 +159,10 @@ public class MemoryModule : MonoBehaviour
         if (!memory.isProceduralHint)
             TryExtractPolicyFromDetail(memory);
 
+        // 只有 Policy 类型记忆才触发持久化（情景记忆不写磁盘）
+        if (autoSaveOnStore && memory.kind == AgentMemoryKind.Policy)
+            SaveMemories();
+
         return memory;
     }
 
@@ -158,6 +180,93 @@ public class MemoryModule : MonoBehaviour
     {
         if (ps == null) return;
         _personalitySystem = ps;
+    }
+
+    /// <summary>
+    /// 注入 AgentID，用于持久化文件命名。
+    /// 由 IntelligentAgent.InitializeAgent() 在初始化阶段调用（与 SetPersonalitySystem 同期）。
+    /// 注入后若 autoLoadOnAwake=false 也可在此处手动触发加载。
+    /// </summary>
+    public void SetAgentId(string agentId)
+    {
+        if (string.IsNullOrWhiteSpace(agentId)) return;
+        _agentId = agentId;
+        // Awake 时 AgentID 尚未注入，在此补充执行一次加载
+        if (autoLoadOnAwake)
+            LoadMemories();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 持久化（仅保存 Policy + ReflectionInsight）
+    // ═══════════════════════════════════════════════════════════════════════════
+    //
+    // 设计原则：
+    //   · 情景记忆（Goal/Plan/Decision/Outcome/Observation）绑定具体 run 和角色，
+    //     跨 run 不具参考价值，每次启动重建即可，不写磁盘。
+    //   · Policy 记忆是从 thought.suggestion 提炼的通用决策原则（"当[结构条件]时应[策略]"），
+    //     与具体 AgentID 或角色无关，跨 run 有效。
+    //   · ReflectionInsight 是跨事件的抽象洞察，同样与角色无关，值得持久化。
+    //   · 使用单一全局文件（不按 AgentID 分文件），所有 agent 共享同一个规律库。
+
+    private static string SaveFilePath =>
+        Path.Combine(Application.persistentDataPath, "MemoryModule", "shared_policies.json");
+
+    /// <summary>
+    /// 将 Policy 记忆和 ReflectionInsight 保存到全局共享文件。
+    /// 情景记忆（非 Policy 类型）不写磁盘。
+    /// </summary>
+    public void SaveMemories()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(SaveFilePath));
+            var policies = memories.Where(m => m.kind == AgentMemoryKind.Policy).ToList();
+            var data = new MemorySaveData { policies = policies, reflectionInsights = reflectionInsights };
+            File.WriteAllText(SaveFilePath, JsonConvert.SerializeObject(data, Formatting.None));
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[MemoryModule] 保存失败: {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 从全局共享文件加载 Policy 记忆和 ReflectionInsight，合并到当前列表（按 id 去重）。
+    /// </summary>
+    public void LoadMemories()
+    {
+        if (!File.Exists(SaveFilePath)) return;
+        try
+        {
+            var data = JsonConvert.DeserializeObject<MemorySaveData>(File.ReadAllText(SaveFilePath));
+            if (data?.policies != null)
+            {
+                var existingIds = new HashSet<string>(memories.Select(m => m.id));
+                foreach (var m in data.policies)
+                    if (!string.IsNullOrEmpty(m.id) && !existingIds.Contains(m.id))
+                        memories.Add(m);
+            }
+            if (data?.reflectionInsights != null)
+            {
+                var existingIds = new HashSet<string>(reflectionInsights.Select(i => i.id));
+                foreach (var ins in data.reflectionInsights)
+                    if (!string.IsNullOrEmpty(ins.id) && !existingIds.Contains(ins.id))
+                        reflectionInsights.Add(ins);
+            }
+            int policyCount = memories.Count(m => m.kind == AgentMemoryKind.Policy);
+            Debug.Log($"[MemoryModule] ({_agentId}) 加载规律库: Policy={policyCount} 条，Insight={reflectionInsights.Count} 条");
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[MemoryModule] 加载失败: {e.Message}");
+        }
+    }
+
+    [Serializable]
+    private class MemorySaveData
+    {
+        public List<Memory> policies;
+        public List<ReflectionInsight> reflectionInsights;
     }
 
     /// <summary>
@@ -353,8 +462,9 @@ public class MemoryModule : MonoBehaviour
         string detail = string.IsNullOrWhiteSpace(thought)
             ? summary
             : $"{summary}\n[推理] {thought}";
+        // Plan 而非 Decision：选槽是规划阶段的决策，不应被 ADM 的 BuildActionContext 检索到
         return Remember(
-            AgentMemoryKind.Decision,
+            AgentMemoryKind.Plan,
             summary,
             detail,
             importance: 0.65f,
@@ -575,6 +685,9 @@ public class MemoryModule : MonoBehaviour
         reflectionInsights.Add(insight);
         TrimInsightCapacity();
 
+        if (autoSaveOnStore)
+            SaveMemories();
+
         // 将反思洞察同步写入 Memory 列表，供 Recall 检索
         // reflectionDepth 由 insight.insightDepth 决定（1=L2单次反思，2=L3抽象洞察）
         Remember(
@@ -690,6 +803,31 @@ public class MemoryModule : MonoBehaviour
         List<Memory> relevantMemories = Recall(query);
         List<ReflectionInsight> insights = GetRelevantInsights(query, Mathf.Max(1, request.maxInsights));
         return BuildContextSummary(relevantMemories, insights, "无相关历史经验");
+    }
+
+    /// <summary>
+    /// 仅检索与指定标签匹配的 Policy 记忆（已提炼的可复用规律），供 LLM#1/2/3 轻量注入。
+    /// 不返回情景记忆，避免无关历史经验污染规划阶段各 LLM 的 prompt。
+    /// tags 应与存储时的阶段标签一致，如 "constraint_analysis"/"slot_design"/"slot_selection"。
+    /// 无相关 Policy 时返回空字符串，调用方跳过注入即可。
+    /// </summary>
+    public string BuildPoliciesContext(string freeText, string[] tags, int maxCount = 3)
+    {
+        if (memories == null || memories.Count == 0) return string.Empty;
+
+        MemoryQuery query = new MemoryQuery
+        {
+            freeText = freeText ?? string.Empty,
+            kinds = new[] { AgentMemoryKind.Policy },
+            tags = tags != null ? new List<string>(tags) : new List<string>(),
+            maxCount = Mathf.Max(1, maxCount),
+            preferProceduralHints = true
+        };
+
+        List<Memory> policies = Recall(query);
+        if (policies == null || policies.Count == 0) return string.Empty;
+
+        return BuildContextSummary(policies, new List<ReflectionInsight>(), string.Empty);
     }
 
     public string BuildReflectionInput(MemoryQuery query, int maxMemories = 8)

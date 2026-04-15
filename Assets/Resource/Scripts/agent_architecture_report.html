@@ -217,6 +217,9 @@
   <a href="#s_example">⭐ 端到端实战案例</a>
   <a href="#s_example2">⭐ 自主日常案例（无注入）</a>
   <a href="#s10">十、实施路线图</a>
+  <a href="#s11">十一、RALLY 架构借鉴</a>
+  <a class="toc-sub" href="#s11-1">11.1 预决策意图共享（两阶段共识）</a>
+  <a class="toc-sub" href="#s11-2">11.2 自然语言通信改造</a>
   <a href="#refs">参考文献</a>
 </nav>
 
@@ -231,7 +234,7 @@
   <div class="meta">
     <span>📅 2026年4月</span>
     <span>🏗️ 基于现有 UnityLLM 项目分析</span>
-    <span>📚 参考文献 12+ 篇</span>
+    <span>📚 参考文献 14+ 篇</span>
     <span>🎯 目标：Stanford Town 级自治涌现</span>
   </div>
 </div>
@@ -3255,6 +3258,275 @@ insight_L3: "东门安全薄弱点
 
 <hr class="divider">
 
+<!-- SECTION 11: RALLY -->
+<section id="s11" class="section">
+  <h2 class="section-title">十一、RALLY 架构借鉴：预决策意图共享 + 自然语言通信改造方案</h2>
+
+  <div class="abstract-box">
+    RALLY（Role-Adaptive LLM-Driven Yoked Navigation，arXiv:2507.01378）是目前与本系统最接近的公开 UAV+LLM 多智能体框架。<strong>需要先说明一个事实：</strong>本系统已经具备 RALLY 所谓的"三层架构"——ADM rolling loop 输出语义动作名（如 <code>MoveTo("北门")</code>），AME 自主执行 A*/APF/PD 控制，Rigidbody 处理底层物理，三层已然存在。RALLY 对本系统真正有增量价值的是另外两点：<strong>① 预决策意图共享（两阶段共识）</strong>，让智能体在行动前先交换意图、再修订决策；<strong>② 自然语言通信替代枚举消息</strong>，简化 56+ 消息类型的维护负担。
+  </div>
+
+  <!-- 11.1 预决策意图共享 -->
+  <h3 id="s11-1" class="sub-title">11.1 预决策意图共享（两阶段共识，RALLY 核心创新）</h3>
+
+  <h4 class="sub-sub">当前系统的协调方式：事后约束</h4>
+  <div class="card warning">
+    <p style="font-size:14px;">当前系统通过白板 + C1/C2/C3 约束实现协调，本质是<strong>"行动后检查"</strong>：</p>
+    <div class="step-flow" style="margin:12px 0;">
+      <div class="step-box gray">智能体独立决策</div>
+      <div class="step-arrow">→</div>
+      <div class="step-box orange">写占位到白板</div>
+      <div class="step-arrow">→</div>
+      <div class="step-box gray">其他智能体读白板</div>
+      <div class="step-arrow">→</div>
+      <div class="step-box red">检测冲突→Wait/Replan</div>
+    </div>
+    <p style="font-size:13px;color:#744210;margin-top:8px;">问题：每个智能体的 LLM 在决策时只知道队友"已经做了什么"（历史占位），不知道队友"接下来打算做什么"（意图）。这导致冲突在行动层面才被发现，需要额外的等待或重规划来消解。</p>
+  </div>
+
+  <h4 class="sub-sub">RALLY 的方案：预决策意图共享（两阶段）</h4>
+  <div class="card highlight">
+    <p style="font-size:14px;margin-bottom:12px;">RALLY 将每次决策拆分为两阶段，核心在于：<strong>先形成初步意图并广播，再综合邻居意图修订最终决策</strong>。</p>
+    <div class="card-grid cols-2" style="gap:16px;">
+      <div style="background:#faf5ff;border:1px solid #d6bcfa;border-radius:8px;padding:14px;">
+        <strong style="color:#553c9a;font-size:13px;">阶段 1 — LLMinit（初步意图生成）</strong>
+        <p style="font-size:12.5px;margin-top:8px;color:#4a5568;">每个智能体基于本地观测，由 LLM 生成初步意图（"我打算去北门侦察"），立即向邻居广播。此阶段各自独立，不等待他人。</p>
+      </div>
+      <div style="background:#f0fff4;border:1px solid #9ae6b4;border-radius:8px;padding:14px;">
+        <strong style="color:#276749;font-size:13px;">阶段 2 — LLMcons（共识修订）</strong>
+        <p style="font-size:12.5px;margin-top:8px;color:#4a5568;">收集邻居的初步意图后，再次调用 LLM，将队友意图纳入上下文，修订自己的最终决策。冲突在执行前就被感知并规避。</p>
+      </div>
+    </div>
+    <div class="step-flow" style="margin:16px 0;justify-content:center;">
+      <div class="step-box purple">LLMinit<br><small>本地独立决策</small></div>
+      <div class="step-arrow">→</div>
+      <div class="step-box orange">广播初步意图</div>
+      <div class="step-arrow">→</div>
+      <div class="step-box purple">LLMcons<br><small>综合邻居修订</small></div>
+      <div class="step-arrow">→</div>
+      <div class="step-box green">执行最终动作</div>
+    </div>
+  </div>
+
+  <h4 class="sub-sub">与当前系统的本质差异</h4>
+  <table>
+    <thead>
+      <tr><th>维度</th><th>当前系统</th><th>RALLY 两阶段</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>协调时机</td>
+        <td>行动<strong>之后</strong>：写白板占位 → 后来者检测冲突</td>
+        <td>行动<strong>之前</strong>：先广播意图 → 综合他人意图再决策</td>
+      </tr>
+      <tr>
+        <td>LLM 上下文</td>
+        <td>队友的历史动作（已完成的事）</td>
+        <td>队友的当前意图（即将做的事）</td>
+      </tr>
+      <tr>
+        <td>冲突发现时机</td>
+        <td>执行层（Wait/Replan 消解）</td>
+        <td>决策层（直接规避，不产生冲突）</td>
+      </tr>
+      <tr>
+        <td>LLM 调用次数</td>
+        <td>1次/batch（rolling loop）</td>
+        <td>2次/batch（init + consensus），但冲突减少可降低 Replan 频率</td>
+      </tr>
+      <tr>
+        <td>信息新鲜度</td>
+        <td>白板信息存在延迟（写入→读取的时间差）</td>
+        <td>意图共享几乎实时（本轮 init 完成即广播）</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h4 class="sub-sub">如何在当前系统中实现</h4>
+  <p style="font-size:14px;margin-bottom:10px;">最小化改造路径：将 rolling loop 的单次 LLM 调用拆分为两步，中间插入意图广播和收集。</p>
+  <div class="card">
+    <div class="card-grid cols-2" style="gap:16px;">
+      <div>
+        <strong style="color:#2b6cb0;font-size:13px;">ActionDecisionModule.cs（核心改造）</strong>
+        <ul style="font-size:13px;padding-left:16px;margin-top:6px;color:#4a5568;">
+          <li><strong>Step A</strong>：调用 LLM（简化 prompt，只含本地状态），输出初步意图 JSON：<code>{"intent": "前往北门侦察", "targetName": "北门"}</code></li>
+          <li><strong>Step B</strong>：通过 <code>SharedWhiteboard</code> 广播此意图，等待 <code>intentBroadcastWindowMs</code>（如 500ms）收集邻居意图</li>
+          <li><strong>Step C</strong>：将收集到的邻居意图追加到完整 prompt，再次调用 LLM，输出最终 <code>nextActions[]</code></li>
+          <li>若无邻居意图（单独执行），Step A 结果直接作为 Step C 输出，跳过第二次 LLM 调用</li>
+        </ul>
+      </div>
+      <div>
+        <strong style="color:#276749;font-size:13px;">SharedWhiteboard.cs（新增意图槽位）</strong>
+        <ul style="font-size:13px;padding-left:16px;margin-top:6px;color:#4a5568;">
+          <li>新增 <code>Dictionary&lt;string, IntentEntry&gt; currentIntents</code>：key = agentId，value = 意图文本 + 时间戳</li>
+          <li><code>IntentEntry</code>：{ intent, targetName, timestamp }，TTL = 本 rolling 迭代周期</li>
+          <li>提供 <code>PublishIntent(agentId, intent)</code> 和 <code>GetNeighborIntents(agentId)</code> 接口</li>
+          <li>意图仅在本 batch 有效，下一轮自动清除（避免过时意图干扰决策）</li>
+        </ul>
+      </div>
+    </div>
+    <div class="alert warn" style="margin-top:14px;">
+      <strong>与现有白板的区别：</strong>当前白板存储的是"已完成动作的占位声明"（C3互斥、DoneSignal等），意图槽位存储的是"本轮即将执行的初步计划"。两者并存，语义不同，不应合并。
+    </div>
+  </div>
+
+  <div class="alert info" style="margin-top:12px;">
+    <strong>预期效果：</strong>减少因意图冲突导致的 Wait/Replan 轮次，提升多机协作效率。在密集任务（多机竞争同一目标）场景下效果最显著。代价是每 batch 增加一次 LLM 调用，需权衡协作质量与调用成本。
+  </div>
+
+  <!-- 11.2 自然语言通信 -->
+  <h3 id="s11-2" class="sub-title">11.2 自然语言通信替代数值向量（简化通信架构）</h3>
+
+  <h4 class="sub-sub">问题诊断：56+ 消息类型的维护负担</h4>
+  <div class="card warning">
+    <p style="font-size:14px;">当前 <code>CommunicationEnums.cs</code> 中定义了 56+ 种消息类型，每种类型对应固定结构体和解析逻辑。问题在于：</p>
+    <ul style="font-size:13px;padding-left:18px;margin-top:10px;color:#744210;">
+      <li>新增协作模式需要新增消息类型 + 解析代码，扩展成本高</li>
+      <li>非约束性消息（"我准备好了"、"需要支援"）用结构体描述信息损失大</li>
+      <li>LLM 无法直接"读取"结构体消息，需要额外序列化注入 prompt</li>
+      <li>消息语义僵化，无法表达上下文依赖的灵活意图</li>
+    </ul>
+  </div>
+
+  <h4 class="sub-sub">RALLY 的方案：自然语言替代数值向量</h4>
+  <div class="card highlight">
+    <p style="font-size:14px;">RALLY 用自然语言字符串替代传统的数值消息向量。智能体广播：</p>
+    <pre style="margin:12px 0;font-size:13px;">"UAV-1 已到达北门区域，正在执行侦察，预计完成时间 45 秒，当前电量 82%"</pre>
+    <p style="font-size:14px;">而非结构体：<code>{type: StatusUpdate, agentId: "UAV-1", location: [x,y], battery: 0.82, eta: 45}</code></p>
+    <p style="font-size:14px;margin-top:10px;">接收方 LLM 直接理解语义并在决策时使用，<strong>无需解析代码</strong>。这也是 RALLY 实现带宽压缩的核心机制之一。</p>
+  </div>
+
+  <h4 class="sub-sub">分层改造策略：不是全部改，而是按类型分层</h4>
+  <p style="font-size:14px;margin-bottom:12px;">关键原则：<strong>精确约束信号保留结构体（正确性优先），非约束性协作意图改为自然语言（灵活性优先）</strong>。</p>
+
+  <table>
+    <thead>
+      <tr><th>消息类别</th><th>策略</th><th>理由</th><th>示例</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>C1/C2/C3 约束信号（互斥、同步、等待）</td>
+        <td><span class="badge-tag green">保留结构体</span></td>
+        <td>高频、低延迟、精确性要求高，不容语义歧义</td>
+        <td><code>DoneSignal / MutexRequest</code></td>
+      </tr>
+      <tr>
+        <td>槽位认领/释放</td>
+        <td><span class="badge-tag green">保留结构体</span></td>
+        <td>Slot 系统的核心信号，需要原子性保证</td>
+        <td><code>SlotClaim / SlotRelease</code></td>
+      </tr>
+      <tr>
+        <td>紧急事件广播</td>
+        <td><span class="badge-tag blue">改为 NL</span></td>
+        <td>事件语义复杂，NL 表达更完整，LLM 可直接推断响应策略</td>
+        <td>"UAV-2 在东南角发现可疑人员，建议北侧智能体支援"</td>
+      </tr>
+      <tr>
+        <td>状态共享/意图广播</td>
+        <td><span class="badge-tag blue">改为 NL</span></td>
+        <td>非实时信号，语义丰富度比结构体精度更重要</td>
+        <td>"UAV-1 完成北区巡逻，准备返回基地充电，任务可移交"</td>
+      </tr>
+      <tr>
+        <td>MAD 辩论发言</td>
+        <td><span class="badge-tag blue">已是 NL（保持）</span></td>
+        <td>辩论本就是自然语言，复用此通道即可</td>
+        <td>辩论 JSON 中的 argument 字段</td>
+      </tr>
+      <tr>
+        <td>非约束性协作请求</td>
+        <td><span class="badge-tag blue">改为 NL</span></td>
+        <td>新增协作模式无需修改枚举定义，直接广播意图文本</td>
+        <td>"需要一名智能体协助覆盖西侧感知盲区，持续约 60 秒"</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h4 class="sub-sub">具体代码改造点</h4>
+  <div class="card">
+    <div class="card-grid cols-2" style="gap:16px;">
+      <div>
+        <strong style="color:#2b6cb0;font-size:13px;">CommunicationModule.cs</strong>
+        <ul style="font-size:13px;padding-left:16px;margin-top:6px;color:#4a5568;">
+          <li>新增 <code>BroadcastNL(string nlMessage, NLPriority priority)</code> 方法</li>
+          <li>将 NL 消息写入 <code>SharedWhiteboard</code> 的 NL 消息队列（带时间戳）</li>
+          <li>保留所有约束类结构体消息的原有通道</li>
+        </ul>
+      </div>
+      <div>
+        <strong style="color:#c05621;font-size:13px;">SharedWhiteboard.cs</strong>
+        <ul style="font-size:13px;padding-left:16px;margin-top:6px;color:#4a5568;">
+          <li>新增 <code>Queue&lt;NLMessage&gt; nlBroadcastQueue</code>（最近 K 条，滑动窗口）</li>
+          <li><code>NLMessage</code>：{ senderId, content, timestamp, priority }</li>
+          <li>提供 <code>GetRecentNLMessages(int k)</code> 供 ADM 读取</li>
+        </ul>
+      </div>
+      <div>
+        <strong style="color:#276749;font-size:13px;">ActionDecisionModule.cs</strong>
+        <ul style="font-size:13px;padding-left:16px;margin-top:6px;color:#4a5568;">
+          <li>LLM prompt 新增"最近队友广播"输入段：</li>
+          <li><code>recentBroadcasts: ["UAV-2: ...", "UAV-3: ..."]</code></li>
+          <li>LLM 直接在 thought 中引用广播内容推理决策，无需额外解析</li>
+        </ul>
+      </div>
+      <div>
+        <strong style="color:#553c9a;font-size:13px;">CommunicationEnums.cs（精简）</strong>
+        <ul style="font-size:13px;padding-left:16px;margin-top:6px;color:#4a5568;">
+          <li>删除所有非约束性消息类型（状态更新、意图广播、协作请求类）</li>
+          <li>目标：从 56+ 类型精简至 ~20 个精确约束信号类型</li>
+          <li>新增 <code>NLBroadcast</code> 作为统一通用类型</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <h4 class="sub-sub">与 MAD 辩论的协同复用</h4>
+  <div class="card success">
+    <p style="font-size:14px;">MAD 辩论系统（<code>DebateParticipant.cs</code>）已经实现了结构化的自然语言消息交换机制（JSON 中的 <code>argument</code> 字段）。<strong>NL 通信通道可以直接复用辩论消息的传输基础设施</strong>，无需重新实现消息路由和接收逻辑，降低实现成本。</p>
+    <div class="step-flow" style="margin-top:12px;">
+      <div class="step-box purple">辩论发言（已有）</div>
+      <div class="step-arrow">→</div>
+      <div class="step-box blue" style="background:#2b6cb0;">NL 广播通道（新增）</div>
+      <div class="step-arrow">→</div>
+      <div class="step-box green">ADM LLM prompt 上下文</div>
+    </div>
+  </div>
+
+  <div class="alert key" style="margin-top:16px;">
+    <strong>预期效果：</strong>通信枚举从 56+ 收缩至 ~20，新增协作模式无需修改枚举定义（直接用 NL 广播），LLM 决策可直接引用队友意图文本。代价是每次 LLM 调用的 prompt 长度略有增加（加入最近 K 条广播文本）。
+  </div>
+
+  <!-- 两点对比总结 -->
+  <h3 class="sub-title" style="margin-top:32px;">11.3 两点改造的综合效益评估</h3>
+  <table>
+    <thead>
+      <tr><th>改造点</th><th>收益</th><th>代价</th><th>实施难度</th><th>优先级</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>预决策意图共享</strong></td>
+        <td>冲突在决策前规避；减少 Wait/Replan 轮次；多机密集竞争场景效果显著</td>
+        <td>每 batch 增加一次 LLM 调用（init → consensus）；需要意图广播时间窗口（约 500ms）</td>
+        <td>🟠 中等（改造 rolling loop 结构，新增 SharedWhiteboard 意图槽位）</td>
+        <td>P1（Phase 3 多机协同场景后引入）</td>
+      </tr>
+      <tr>
+        <td><strong>NL 通信替代</strong></td>
+        <td>通信枚举从 56+ → ~20；新协作模式零改动扩展；LLM 理解更自然；与 MAD 辩论基础设施复用</td>
+        <td>每次 LLM prompt 略增长（加入最近 K 条广播文本）</td>
+        <td>🟢 较低（新增通道，完全不破坏现有约束消息通道）</td>
+        <td>P2（可随时启动，与主线开发并行）</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="alert info">
+    <strong>建议顺序：</strong>先实施 NL 通信改造（风险极低、立即可见收益）。预决策意图共享建议在 Phase 3 多机自主场景验证后再引入，届时智能体数量和任务密度足够高，意图共识的收益才会超过额外 LLM 调用的成本。
+  </div>
+</section>
+
+<hr class="divider">
+
 <!-- REFERENCES -->
 <section id="refs" class="section">
   <h2 class="section-title">参考文献</h2>
@@ -3338,6 +3610,20 @@ insight_L3: "东门安全薄弱点
       <span class="ref-title"> Toolformer: Language models can teach themselves to use tools.</span>
       <em> arXiv preprint arXiv:2302.04761.</em>
       <a href="https://arxiv.org/abs/2302.04761" style="color:#2b6cb0;font-size:12px;"> [arXiv:2302.04761]</a>
+    </li>
+    <li>
+      <span class="ref-num">[13]</span>
+      <span class="ref-authors">Tian, Y., Lin, F., Li, Y., Zhang, T., Fu, X., et al. (2025).</span>
+      <span class="ref-title"> UAVs Meet LLMs: Overviews and Perspectives Toward Agentic Low-Altitude Mobility.</span>
+      <em> Information Fusion, Vol. 122.</em>
+      <a href="https://arxiv.org/abs/2501.02341" style="color:#2b6cb0;font-size:12px;"> [arXiv:2501.02341]</a>
+    </li>
+    <li>
+      <span class="ref-num">[14]</span>
+      <span class="ref-authors">Zhang, T., et al. (2025).</span>
+      <span class="ref-title"> RALLY: Role-Adaptive LLM-Driven Yoked Navigation for Multi-UAV Swarm Systems.</span>
+      <em> arXiv preprint.</em>
+      <a href="https://arxiv.org/abs/2507.01378" style="color:#2b6cb0;font-size:12px;"> [arXiv:2507.01378]</a>
     </li>
   </ul>
 

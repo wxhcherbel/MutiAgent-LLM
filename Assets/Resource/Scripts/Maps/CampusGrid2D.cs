@@ -1471,7 +1471,7 @@ public class CampusGrid2D : MonoBehaviour
                 for (int z = 0; z < gridLength; z++)
                     if (blockedGrid[x, z]) blockedCount++;
 
-            Debug.Log($"[CampusGrid2D] 鏋勫缓瀹屾垚: {gridWidth}x{gridLength}, cell={cellSize}m, 闃诲={blockedCount}/{gridWidth * gridLength}");
+            Debug.Log($"[CampusGrid2D] : {gridWidth}x{gridLength}, cell={cellSize}m, blocked={blockedCount}/{gridWidth * gridLength}");
         }
     }
 

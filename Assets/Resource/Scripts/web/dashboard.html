@@ -939,10 +939,30 @@ textarea.ctrl-input { resize: vertical; min-height: 60px; }
                   onclick="switchMemSub('memories')" style="font-size:10px;padding:7px 12px">记忆列表</button>
           <button class="tab-btn" id="mem-sub-insights"
                   onclick="switchMemSub('insights')" style="font-size:10px;padding:7px 12px">反思洞察</button>
+          <button class="tab-btn" id="mem-sub-policies"
+                  onclick="switchMemSub('policies')" style="font-size:10px;padding:7px 12px">持久化规律库</button>
           <span id="mem-total-count"
                 style="margin-left:auto;align-self:center;padding-right:10px;font-size:9px;color:var(--muted)"></span>
         </div>
         <div id="mem-body"></div>
+        <!-- 持久化规律库面板（独立于 mem-body，不参与 renderMemory 渲染逻辑） -->
+        <div id="mem-policies-panel" style="display:none;padding:8px;overflow-y:auto;flex:1">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+            <input id="policy-search" type="text" placeholder="搜索规律/洞察…"
+                   oninput="if(lastPoliciesData)renderPolicies(lastPoliciesData)"
+                   style="flex:1;min-width:160px;padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px">
+            <select id="policy-tag-filter" onchange="if(lastPoliciesData)renderPolicies(lastPoliciesData)"
+                    style="padding:4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px">
+              <option value="">全部标签</option>
+            </select>
+            <button class="ctrl-btn" onclick="fetchPolicies()" style="padding:2px 10px;font-size:10px">刷新</button>
+          </div>
+          <div id="policy-stats" style="font-size:11px;color:var(--muted);margin-bottom:8px"></div>
+          <div style="font-size:12px;font-weight:600;color:#a78bfa;margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid var(--border)">Policy 规律（可复用原则）</div>
+          <div id="policy-list"></div>
+          <div style="font-size:12px;font-weight:600;color:#60a5fa;margin-top:14px;margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid var(--border)">反思洞察（跨任务抽象）</div>
+          <div id="persistent-insight-list"></div>
+        </div>
       </div>
 
       <!-- Debug tab -->
@@ -1039,8 +1059,9 @@ let agentView    = 'agent';   // 'agent' | 'team'
 let currentTab   = 'agents';
 
 // ── 记忆 / 洞察面板状态 ───────────────────────────────────────────────────────
-let memoryData = [];          // AgentMemoryPayload[]
-let memSubTab  = 'memories';  // 'memories' | 'insights'
+let memoryData     = [];          // AgentMemoryPayload[]
+let memSubTab      = 'memories';  // 'memories' | 'insights' | 'policies'
+let lastPoliciesData = null;      // PersistentMemoryPayload
 
 // ── 地图气泡状态 ──────────────────────────────────────────────────────────────
 const bubbleMap   = new Map(); // agentId → [{key, msg, eventType, shownAt}]
@@ -2355,7 +2376,10 @@ async function poll() {
     if (currentTab === 'debug') renderDebug();
     if (currentTab === 'whiteboard') fetchWhiteboard();
     if (currentTab === 'incidents') fetchIncidents();
-    if (currentTab === 'memory') renderMemory();
+    if (currentTab === 'memory') {
+      if (memSubTab === 'policies') fetchPolicies();
+      else renderMemory();
+    }
     // 运动事件独立拉取，不影响主 poll 失败判断
     fetchMotionEvents();
   } catch(e) {
@@ -2581,7 +2605,17 @@ function switchMemSub(sub) {
   memSubTab = sub;
   document.getElementById('mem-sub-memories')?.classList.toggle('active', sub === 'memories');
   document.getElementById('mem-sub-insights')?.classList.toggle('active', sub === 'insights');
-  renderMemory();
+  document.getElementById('mem-sub-policies')?.classList.toggle('active', sub === 'policies');
+  // 持久化规律库面板与 mem-body 互斥显示
+  const body   = document.getElementById('mem-body');
+  const polPnl = document.getElementById('mem-policies-panel');
+  if (body)   body.style.display   = sub === 'policies' ? 'none' : '';
+  if (polPnl) polPnl.style.display = sub === 'policies' ? ''     : 'none';
+  if (sub === 'policies') {
+    fetchPolicies();
+  } else {
+    renderMemory();
+  }
 }
 
 function renderMemory() {
@@ -2750,6 +2784,117 @@ function renderInsightList(body, payloads, agentF, countEl) {
   body.innerHTML = html ||
     '<div style="padding:24px;color:var(--muted);text-align:center">暂无反思洞察（L2/L3 反思触发后此处显示）</div>';
   if (countEl) countEl.textContent = `${total} 条洞察`;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 持久化规律库面板
+// ══════════════════════════════════════════════════════════════════════════════
+
+async function fetchPolicies() {
+  try {
+    const res = await fetch('/api/memory/policies');
+    lastPoliciesData = await res.json();
+    renderPolicies(lastPoliciesData);
+  } catch(e) {
+    console.warn('[Policies] fetch failed', e);
+  }
+}
+
+function renderPolicies(data) {
+  const search    = (document.getElementById('policy-search')?.value || '').toLowerCase();
+  const tagFilter = document.getElementById('policy-tag-filter')?.value || '';
+
+  const statsEl = document.getElementById('policy-stats');
+  if (statsEl) statsEl.textContent =
+    `Policy: ${data.policyCount} 条　Insight: ${data.insightCount} 条（全局去重，跨 run 持久化）`;
+
+  // 更新标签下拉（保留当前选中）
+  const allTags = new Set();
+  (data.policies || []).forEach(p => (p.tags || []).forEach(t => allTags.add(t)));
+  (data.insights || []).forEach(i => (i.tags || []).forEach(t => allTags.add(t)));
+  const sel = document.getElementById('policy-tag-filter');
+  if (sel) {
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">全部标签</option>' +
+      [...allTags].sort().map(t =>
+        `<option value="${escHtml(t)}"${t === cur ? ' selected' : ''}>${escHtml(t)}</option>`).join('');
+  }
+
+  // ── Policy 过滤 + 渲染 ──
+  const policies = (data.policies || []).filter(p => {
+    const txt = ((p.summary || '') + (p.detail || '') + (p.tags || []).join(' ')).toLowerCase();
+    return (!search || txt.includes(search)) && (!tagFilter || (p.tags || []).includes(tagFilter));
+  });
+  const pEl = document.getElementById('policy-list');
+  if (pEl) {
+    pEl.innerHTML = policies.length ? policies.map(p => {
+      const confColor = p.confidence > 0.75 ? 'var(--green)' :
+                        p.confidence > 0.45 ? 'var(--orange)' : 'var(--red)';
+      const strPct = Math.round((p.strengthScore || 0) * 100);
+      return `<div class="mem-card" style="border-left:2px solid #7c3aed">
+        <div class="mem-card-header">
+          <span class="mem-kind-badge mem-kind-policy">Policy</span>
+          ${p.isProceduralHint ? '<span class="mem-proc-badge">🔧 程序性</span>' : ''}
+          <span style="font-size:10px;color:${confColor}">置信 ${(p.confidence*100).toFixed(0)}%</span>
+          <span style="font-size:10px;color:var(--muted);margin-left:4px">强度 ${strPct}%</span>
+          <span style="font-size:10px;color:var(--muted);margin-left:4px">访问 ${p.accessCount||0} 次</span>
+        </div>
+        <div class="mem-imp-bar" style="width:${strPct}%;background:#7c3aed"></div>
+        <div class="mem-summary">${escHtml(p.summary || '（无摘要）')}</div>
+        ${(p.tags && p.tags.length) ? `<div style="margin-top:4px">${p.tags.map(t=>`<span class="mem-tag-chip">${escHtml(t)}</span>`).join('')}</div>` : ''}
+        ${p.sourceModule ? `<div style="font-size:10px;color:var(--muted);margin-top:3px">来源: ${escHtml(p.sourceModule)}</div>` : ''}
+      </div>`;
+    }).join('')
+    : '<div style="padding:16px;color:var(--muted);font-size:11px;text-align:center">暂无 Policy 规律（等待任务执行后提炼）</div>';
+  }
+
+  // ── Insight 过滤 + 渲染 ──
+  const insights = (data.insights || []).filter(i => {
+    const txt = ((i.title || '') + (i.summary || '') + (i.applyWhen || '') + (i.tags || []).join(' ')).toLowerCase();
+    return (!search || txt.includes(search)) && (!tagFilter || (i.tags || []).includes(tagFilter));
+  });
+  const iEl = document.getElementById('persistent-insight-list');
+  if (iEl) {
+    iEl.innerHTML = insights.length ? insights.map(i => {
+      const depthLbl   = i.insightDepth >= 2 ? 'L3 抽象' : 'L2 推断';
+      const depthColor = i.insightDepth >= 2 ? 'var(--red)' : '#bc8cff';
+      const confColor  = i.confidence > 0.75 ? 'var(--green)' :
+                         i.confidence > 0.45 ? 'var(--orange)' : 'var(--red)';
+      const confPct    = Math.round((i.confidence || 0) * 100);
+      let ttlHtml = i.remainingSeconds < 0
+        ? '<span class="insight-never">永久有效</span>'
+        : i.remainingSeconds <= 0
+          ? '<span class="insight-expired">已过期</span>'
+          : `<span class="insight-ttl">剩 ${formatAgeSec(i.remainingSeconds)}</span>`;
+      return `<div class="insight-card" style="border-left:2px solid ${depthColor}">
+        <div class="insight-header">
+          <span class="insight-depth" style="background:${depthColor}22;color:${depthColor};border:1px solid ${depthColor}55">${depthLbl}</span>
+          <span class="insight-title">${escHtml(i.title || '（无标题）')}</span>
+          ${ttlHtml}
+        </div>
+        <div class="insight-conf-bar">
+          <div class="insight-conf-fill" style="width:${confPct}%;background:${confColor}"></div>
+        </div>
+        <div class="insight-field">
+          <div class="insight-field-lbl">摘要</div>
+          <div style="color:var(--text)">${escHtml(i.summary || '')}</div>
+        </div>
+        ${i.applyWhen ? `<div class="insight-field">
+          <div class="insight-field-lbl">适用场景</div>
+          <div style="color:var(--orange)">${escHtml(i.applyWhen)}</div>
+        </div>` : ''}
+        ${i.suggestedAdjustment ? `<div class="insight-field">
+          <div class="insight-field-lbl">建议策略</div>
+          <div style="color:var(--green)">${escHtml(i.suggestedAdjustment)}</div>
+        </div>` : ''}
+        ${(i.tags && i.tags.length) ? `<div style="margin-top:3px">${i.tags.map(t=>`<span class="mem-tag-chip">${escHtml(t)}</span>`).join('')}</div>` : ''}
+        <div style="font-size:9px;color:var(--muted);margin-top:3px">
+          置信度 ${confPct}%${i.missionId ? ' · 任务 ' + escHtml(i.missionId) : ''}
+        </div>
+      </div>`;
+    }).join('')
+    : '<div style="padding:16px;color:var(--muted);font-size:11px;text-align:center">暂无反思洞察（L2/L3 反思触发后此处显示）</div>';
+  }
 }
 
 function toggleMemDetail(btn) {

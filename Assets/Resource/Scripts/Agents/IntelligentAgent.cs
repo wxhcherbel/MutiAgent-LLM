@@ -128,6 +128,7 @@ public class IntelligentAgent : MonoBehaviour
         // 将人格系统注入 MemoryModule，后续所有 StoreMemory 调用都会自动注入人格信息
         var memoryModule = GetComponent<MemoryModule>();
         memoryModule?.SetPersonalitySystem(personalitySystem);
+        memoryModule?.SetAgentId(Properties.AgentID);
         // ────────────────────────────────────────────────────────────────────────
 
         // 启动决策检查

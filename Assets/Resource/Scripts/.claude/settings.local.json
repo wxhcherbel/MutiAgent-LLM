@@ -26,7 +26,9 @@
       "WebSearch",
       "WebFetch(domain:arxiv.org)",
       "Bash(sed 's/<[^>]*>//g')",
-      "Bash(wc -l Agents/*.cs LLM_Modules/*.cs Communication_Module/*.cs Enums/*.cs LLM_API/*.cs)"
+      "Bash(wc -l Agents/*.cs LLM_Modules/*.cs Communication_Module/*.cs Enums/*.cs LLM_API/*.cs)",
+      "Bash(xargs wc:*)",
+      "Bash(ls -la *.html)"
     ]
   }
 }
