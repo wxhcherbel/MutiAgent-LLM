@@ -30,6 +30,10 @@ public class IntelligentAgent : MonoBehaviour
     private float decisionCheckInterval = 2.0f; // 决策检查间隔
     private float lastDecisionTime = 0f;    // 上次决策时间
 
+    // MAD 集成
+    private IMADGateway _madGateway;        // MAD 网关（同 GameObject 上的 MADGateway 组件）
+    private bool _batteryIncidentReported;  // 电量预警 MAD 去重标志
+
     void Start()
     {
         InitializeAgent();
@@ -131,6 +135,9 @@ public class IntelligentAgent : MonoBehaviour
         memoryModule?.SetAgentId(Properties.AgentID);
         // ────────────────────────────────────────────────────────────────────────
 
+        // 获取 MAD 网关（挂在同一 Agent GameObject 上）
+        _madGateway = GetComponent<MADGateway>();
+
         // 启动决策检查
         lastDecisionTime = Time.time;
         //PrintPerceivedGrid();
@@ -155,7 +162,7 @@ public class IntelligentAgent : MonoBehaviour
         float powerConsumption = CurrentState.Status == AgentStatus.ExecutingTask ? 0.3f : 0.08f;
         CurrentState.BatteryLevel -= Time.deltaTime * powerConsumption;
         
-        if (CurrentState.BatteryLevel <= 0)
+        if (CurrentState.BatteryLevel <= 20f && CurrentState.Status != AgentStatus.Error)
         {
             HandleBatteryDepletion();
         }
@@ -283,29 +290,30 @@ public class IntelligentAgent : MonoBehaviour
     }
 
     /// <summary>
-    /// 处理电量耗尽
+    /// 处理电量预警（≤20%）。触发一次 MAD 辩论，让队伍讨论任务接管方案。
+    /// 使用 _batteryIncidentReported 去重，每次生命周期内仅触发一次。
     /// </summary>
     private void HandleBatteryDepletion()
     {
         CurrentState.Status = AgentStatus.Error;
         CurrentState.BatteryLevel = 0;
 
-        Debug.LogError($"智能体 {Properties.AgentID} 电量耗尽！");
+        Debug.LogError($"智能体 {Properties.AgentID} 电量即将耗尽！");
 
-        // 发送紧急求助消息
-        if (CommModule != null)
+        // 发起 MAD 辩论（早期预警，不等耗尽后才通知）
+        if (!_batteryIncidentReported && _madGateway != null)
         {
-            AgentMessage helpMessage = new AgentMessage
+            _batteryIncidentReported = true;
+            _madGateway.Raise(new DebateRequest
             {
-                SenderID = Properties.AgentID,
-                ReceiverID = "All",
-                Type = MessageType.RequestHelp,
-                Priority = 10, // 最高优先级
-                Timestamp = Time.time,
-                Content = $"{{\"type\":\"battery_exhausted\",\"position\":\"{CurrentState.Position}\",\"agent\":\"{Properties.AgentID}\"}}"
-            };
-
-            CommModule.SendMessage(helpMessage);
+                initiatorId     = Properties.AgentID,
+                affectedAgentId = Properties.AgentID,
+                incidentType    = IncidentType.AgentUnavailable,
+                topic           = $"Battery depletion warning - {Properties.AgentID}",
+                context         = $"Agent {Properties.AgentID} 电量即将耗尽（当前 {CurrentState.BatteryLevel:F0}%）。" +
+                                  $"请团队讨论：由谁接管剩余任务？充电后是否恢复？",
+                estimatedRounds = 2
+            });
         }
     }
 

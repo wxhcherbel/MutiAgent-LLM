@@ -64,6 +64,13 @@ public class PlanningModule : MonoBehaviour
     /// </summary>
     private PersonalitySystem _personalitySystem;
 
+    /// <summary>
+    /// MAD 网关（挂在同一 agent GameObject 上）。
+    /// 在 ResolveAndConfirm() 中检测到槽位冲突时调用 Raise() 发起辩论。
+    /// 为 null 时跳过 MAD 触发，不影响正常分配流程。
+    /// </summary>
+    private IMADGateway _madGateway;
+
     private static int msnCounter;
 
     void Start()
@@ -74,6 +81,9 @@ public class PlanningModule : MonoBehaviour
 
         // 获取人格系统（挂在同一 agent GameObject 上）
         _personalitySystem = GetComponent<PersonalitySystem>();
+
+        // 获取 MAD 网关（挂在同一 agent GameObject 上）
+        _madGateway = GetComponent<MADGateway>();
 
         IntelligentAgent agent = GetComponent<IntelligentAgent>();
         if (agent != null)
@@ -906,6 +916,47 @@ public class PlanningModule : MonoBehaviour
         List<PlanSlot> remaining = new List<PlanSlot>(slots);
         var assignedSlotsByAgent = new Dictionary<string, PlanSlot>(StringComparer.OrdinalIgnoreCase);
 
+        // ── 槽位冲突检测：发现 2+ Agent 选同一槽时触发 MAD 辩论（非阻塞）──────────
+        // MAD 结果通过 DebateResolved → ADM.OnDebateResolved → PlanningModule.RequestReplan 异步生效。
+        // 此处继续原先到先得分配，不阻塞规划流程。
+        if (_madGateway != null)
+        {
+            var slotConflicts = selections
+                .GroupBy(kv => kv.Value)
+                .Where(g => g.Count() > 1)
+                .ToList();
+
+            if (slotConflicts.Count > 0)
+            {
+                string ctx = string.Join("\n", slotConflicts.SelectMany(g =>
+                    g.Select(kv =>
+                    {
+                        float bat = 0f;
+                        var mod = CommunicationManager.Instance?.GetAgentModule(kv.Key);
+                        if (mod != null)
+                        {
+                            var ia = mod.GetComponent<IntelligentAgent>();
+                            if (ia != null) bat = ia.CurrentState?.BatteryLevel ?? 0f;
+                        }
+                        return $"- {kv.Key} selected {kv.Value} (battery={bat:F0}%)";
+                    })));
+
+                string conflictedSlots = string.Join(", ",
+                    slotConflicts.Select(g => g.Key).Distinct());
+
+                _madGateway.Raise(new DebateRequest
+                {
+                    initiatorId     = props?.AgentID ?? string.Empty,
+                    incidentType    = IncidentType.AgentImpaired,
+                    topic           = $"Slot conflict: {conflictedSlots}",
+                    context         = ctx,
+                    estimatedRounds = 2
+                });
+
+                Debug.Log($"[PlanningModule] {props?.AgentID} 检测到槽位冲突，已触发 MAD 辩论（仍继续先到先得分配）");
+            }
+        }
+
         foreach (string agentId in ordered)
         {
             if (!selections.TryGetValue(agentId, out string wantedSlotId)) continue;
@@ -1097,6 +1148,9 @@ public class PlanningModule : MonoBehaviour
 
     /// <summary>返回本 Agent 所属组的组 ID(供白板读写使用)。</summary>
     public string GetGroupId() => myGroup?.groupId ?? string.Empty;
+
+    /// <summary>返回本 Agent 所属组的组长 ID（供 MADGateway 路由 IncidentReport 使用）。</summary>
+    public string GetLeaderId() => myGroup?.leaderId ?? string.Empty;
 
     private void ReplaceConstraintDict(StructuredConstraint[] constraints, string sourceTag)
     {

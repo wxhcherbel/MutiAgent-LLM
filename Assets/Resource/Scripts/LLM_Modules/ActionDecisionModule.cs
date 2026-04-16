@@ -50,13 +50,21 @@ public class ActionDecisionModule : MonoBehaviour
     // ─── JSON 提取正则 ────────────────────────────────────────────
     private static readonly Regex JsonBlockRe = new Regex(@"```(?:json)?\s*([\s\S]*?)```");
 
-    // ─── 辩论参与模块 ─────────────────────────────────────────────
+    // ─── MAD 网关 ──────────────────────────────────────────────────
     /// <summary>
-    /// 个体辩论参与模块，封装全部 MAD 个体侧逻辑。
-    /// 在 Start() 中初始化，Rolling Loop Step 11.5 处通过此实例触发辩论参与协程。
+    /// MAD 网关（同 GameObject），封装全部 MAD 个体侧逻辑（成员侧辩论参与）
+    /// 和 Raise() 发起辩论的能力。
+    /// ADM 在 Start() 中注入回调，Rolling Loop Step 11.5 处通过此接口触发辩论参与协程。
     /// 群组级协调（广播角色、收敛判断、仲裁）由 IncidentCoordinator 负责，与本模块无关。
     /// </summary>
-    private DebateParticipant _debateParticipant;
+    private IMADGateway _madGateway;
+
+    // ─── C3 互斥超时 MAD 触发 ────────────────────────────────────────
+    /// <summary>C3-1 互斥锁等待超过此时间（秒）后触发 MAD 辩论。</summary>
+    private const float C3MutexDebateThreshold = 5f;
+
+    /// <summary>每步骤最多触发一次 C3 超时 MAD（防止重复发起）。</summary>
+    private bool _c3DebateTriggered = false;
 
     // ─── 记忆与反思模块 ───────────────────────────────────────────
     /// <summary>
@@ -105,12 +113,10 @@ public class ActionDecisionModule : MonoBehaviour
         // 获取人格系统（挂在同一 agent GameObject 上，Inspector 中配置人格档案）
         _personalitySystem = GetComponent<PersonalitySystem>();
 
-        // 初始化个体辩论参与模块，注入所需依赖和回调
-        _debateParticipant = new DebateParticipant(
-            owner:               this,
-            agentProps:          agentProperties,
-            comm:                commModule,
-            llm:                 llmInterface,
+        // 获取 MAD 网关并注入 ADM 状态回调
+        // MADGateway 内部持有 DebateParticipant，ADM 只通过 IMADGateway 接口交互。
+        var madGateway = GetComponent<MADGateway>();
+        madGateway?.SetAdmCallbacks(
             isAdmRunning:        () => status == ADMStatus.Running,
             onCriticalInterrupt: () => SetStatus(ADMStatus.BatchDone),
             onConsensusReceived: consensus =>
@@ -121,6 +127,7 @@ public class ActionDecisionModule : MonoBehaviour
                     planningModule.RequestReplan($"DebateResolved: {consensus.resolution}");
                 }
             });
+        _madGateway = madGateway;
     }
 
     private void Update()
@@ -173,6 +180,7 @@ public class ActionDecisionModule : MonoBehaviour
 
         replanCount = 0;
         _emptyActionRetries   = 0;
+        _c3DebateTriggered    = false;
         SetStatus(ADMStatus.Idle);
         activeCoroutine = StartCoroutine(RunRollingLoop(step));
     }
@@ -234,17 +242,17 @@ public class ActionDecisionModule : MonoBehaviour
     // 具体逻辑已迁移至 DebateParticipant，此处仅做委托转发。
     // ─────────────────────────────────────────────────────────────
 
-    /// <summary>收到 IncidentAnnounce 消息，转发给辩论参与模块处理。</summary>
-    public void OnIncidentAnnounced(IncidentReport report)  => _debateParticipant?.OnIncidentAnnounced(report);
+    /// <summary>收到 IncidentAnnounce 消息，转发给 MAD 网关处理。</summary>
+    public void OnIncidentAnnounced(IncidentReport report)       => _madGateway?.OnIncidentAnnounced(report);
 
-    /// <summary>收到 DebateProposal 角色分配消息，转发给辩论参与模块入队。</summary>
-    public void AssignDebateRole(DebateRoleAssignment assignment) => _debateParticipant?.AssignDebateRole(assignment);
+    /// <summary>收到 DebateProposal 角色分配消息，转发给 MAD 网关入队。</summary>
+    public void AssignDebateRole(DebateRoleAssignment assignment) => _madGateway?.AssignDebateRole(assignment);
 
-    /// <summary>收到 DebateResolved 共识消息，转发给辩论参与模块，由其触发重规划回调。</summary>
-    public void OnDebateResolved(DebateConsensusEntry consensus)  => _debateParticipant?.OnDebateResolved(consensus);
+    /// <summary>收到 DebateResolved 共识消息，转发给 MAD 网关，由其触发重规划回调。</summary>
+    public void OnDebateResolved(DebateConsensusEntry consensus)  => _madGateway?.OnDebateResolved(consensus);
 
-    /// <summary>Critical 事件快速路径，转发给辩论参与模块，由其通过回调中断当前 batch。</summary>
-    public void OnCriticalIncident(IncidentReport report)        => _debateParticipant?.OnCriticalIncident(report);
+    /// <summary>Critical 事件快速路径，转发给 MAD 网关，由其通过回调中断当前 batch。</summary>
+    public void OnCriticalIncident(IncidentReport report)        => _madGateway?.OnCriticalIncident(report);
 
     /// <summary>返回当前 ADM 状态（供外部监控使用）。</summary>
     public ADMStatus GetStatus() => status;
@@ -470,8 +478,8 @@ public class ActionDecisionModule : MonoBehaviour
             // ── 11.5 辩论参与窗口 ──────────────────────────────────
             // 非 Critical 情况：action batch 自然结束后才参与，不打断当前 action
             // 每次最多 1 个 LLM 调用，不延误超过 1 次 rolling 迭代
-            if (_debateParticipant != null && _debateParticipant.HasPendingDebateRole())
-                yield return StartCoroutine(_debateParticipant.ParticipateInActiveDebates());
+            if (_madGateway != null && _madGateway.HasPendingDebateRole())
+                yield return StartCoroutine(_madGateway.ParticipateInActiveDebates());
 
             ctx.iterationCount++;
             SetStatus(ADMStatus.Interpreting);
@@ -1135,6 +1143,25 @@ public class ActionDecisionModule : MonoBehaviour
             // 部分失败：全部释放，等待后重试
             foreach (var cid in constraintIds)
                 SharedWhiteboard.Instance.ReleaseMutexLock(cid, myId);
+
+            // ── C3 超时 MAD 触发（5s 阈值，每步骤最多一次）──────────────────
+            if (!_c3DebateTriggered && elapsed > C3MutexDebateThreshold && _madGateway != null)
+            {
+                _c3DebateTriggered = true;
+                string conflictCids = string.Join(", ", constraintIds);
+                _madGateway.Raise(new DebateRequest
+                {
+                    initiatorId     = myId,
+                    affectedAgentId = myId,
+                    affectedTaskId  = ctx?.stepId ?? string.Empty,
+                    incidentType    = IncidentType.AgentImpaired,
+                    topic           = $"C3 mutex blocked: {conflictCids}",
+                    context         = $"{myId} 等待 C3-1 互斥锁 [{conflictCids}] 已超过 {elapsed:F0}s，" +
+                                     $"当前持锁方未释放。建议讨论强制转让目标或跳过约束。",
+                    estimatedRounds = 1
+                });
+                Debug.LogWarning($"[ADM] {myId} C3 互斥等待超 {C3MutexDebateThreshold}s，已触发 MAD 辩论");
+            }
 
             yield return new WaitForSeconds(0.1f);
             elapsed += 0.1f;
