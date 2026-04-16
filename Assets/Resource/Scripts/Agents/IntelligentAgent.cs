@@ -136,7 +136,12 @@ public class IntelligentAgent : MonoBehaviour
         // ────────────────────────────────────────────────────────────────────────
 
         // 获取 MAD 网关（挂在同一 Agent GameObject 上）
-        _madGateway = GetComponent<MADGateway>();
+        var madGateway = GetComponent<MADGateway>();
+        if (madGateway == null) madGateway = gameObject.AddComponent<MADGateway>();
+        _madGateway = madGateway;
+
+        // GroupMonitor 只响应路由给 leader 的 IncidentReport，非 leader 上挂载无害
+        if (GetComponent<GroupMonitor>() == null) gameObject.AddComponent<GroupMonitor>();
 
         // 启动决策检查
         lastDecisionTime = Time.time;

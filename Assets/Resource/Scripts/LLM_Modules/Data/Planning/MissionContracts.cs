@@ -1,4 +1,5 @@
 using System;
+using Newtonsoft.Json;
 
 /// <summary>
 /// LLM#1 输出的任务解析结果。
@@ -6,7 +7,8 @@ using System;
 [Serializable]
 public class ParsedMission
 {
-    /// <summary>LLM#1 对任务约束结构的推理说明。</summary>
+    /// <summary>LLM#1 对任务约束结构的推理说明（可为 JSON 对象字符串）。</summary>
+    [JsonConverter(typeof(ThoughtJsonConverter))]
     public string thought;
 
     /// <summary>任务唯一 ID。</summary>

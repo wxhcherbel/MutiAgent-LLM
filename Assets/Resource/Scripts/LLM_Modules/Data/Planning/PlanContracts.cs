@@ -1,4 +1,5 @@
 using System;
+using Newtonsoft.Json;
 
 /// <summary>
 /// 结构化协同约束，涵盖三种约束类型（C1~C3）。
@@ -94,7 +95,8 @@ public class PlanSlot
 [Serializable]
 public class LLM2SlotPlanResult
 {
-    /// <summary>LLM#2 设计角色槽的推理说明。</summary>
+    /// <summary>LLM#2 设计角色槽的推理说明（可为 JSON 对象字符串）。</summary>
+    [JsonConverter(typeof(ThoughtJsonConverter))]
     public string thought;
     public PlanSlot[] slots;
     public StructuredConstraint[] constraints;
@@ -106,7 +108,8 @@ public class LLM2SlotPlanResult
 [Serializable]
 public class LLM3SlotPickResult
 {
-    /// <summary>LLM#3 选择该槽位的推理说明。</summary>
+    /// <summary>LLM#3 选择该槽位的推理说明（可为 JSON 对象字符串）。</summary>
+    [JsonConverter(typeof(ThoughtJsonConverter))]
     public string thought;
 
     /// <summary>选定的槽位 ID。</summary>
@@ -146,7 +149,8 @@ public class PlanStep
 [Serializable]
 public class LLM4StepGenResult
 {
-    /// <summary>LLM#4 对步骤拆解与约束绑定的简短推理。</summary>
+    /// <summary>LLM#4 对步骤拆解与约束绑定的简短推理（可为 JSON 对象字符串）。</summary>
+    [JsonConverter(typeof(ThoughtJsonConverter))]
     public string thought;
 
     /// <summary>最终输出的步骤数组。</summary>
@@ -171,7 +175,8 @@ public class AgentPlan
     /// <summary>槽位的原始职责描述。</summary>
     public string desc;
 
-    /// <summary>LLM#4 的步骤拆解推理，仅用于追踪和调试。</summary>
+    /// <summary>LLM#4 的步骤拆解推理，仅用于追踪和调试（可为 JSON 对象字符串）。</summary>
+    [JsonConverter(typeof(ThoughtJsonConverter))]
     public string thought;
 
     /// <summary>该计划拆解出的全部步骤。</summary>

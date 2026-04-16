@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Newtonsoft.Json;
 
 /// <summary>
 /// ADM 最小可执行动作单元。
@@ -35,7 +36,8 @@ public class AtomicAction
 [Serializable]
 public class RollingPlanResult
 {
-    /// <summary>LLM 对当前局势的推理过程（ReAct Thought，1-2句）。</summary>
+    /// <summary>LLM 对当前局势的推理过程（ReAct Thought，可为 JSON 对象字符串）。</summary>
+    [JsonConverter(typeof(ThoughtJsonConverter))]
     public string thought;
 
     /// <summary>LLM 判断当前步骤是否已完成。</summary>
