@@ -219,18 +219,6 @@ public class CampusGrid2D : MonoBehaviour
         return cellTypeGrid[x, z];
     }
 
-    public string GetCellFeatureUid(int x, int z)
-    {
-        if (!IsInBounds(x, z) || cellFeatureUidGrid == null) return string.Empty;
-        return cellFeatureUidGrid[x, z] ?? string.Empty;
-    }
-
-    public string GetCellFeatureName(int x, int z)
-    {
-        if (!IsInBounds(x, z) || cellFeatureNameGrid == null) return string.Empty;
-        return cellFeatureNameGrid[x, z] ?? string.Empty;
-    }
-
     public bool TryGetCellFeatureInfo(int x, int z, out string uid, out string name, out CampusGridCellType type, out bool blocked)
     {
         uid = string.Empty;
@@ -261,295 +249,6 @@ public class CampusGrid2D : MonoBehaviour
         }
 
         return TryGetCellFeatureInfo(grid.x, grid.y, out uid, out name, out type, out blocked);
-    }
-
-    public List<Vector2Int> GetCellsByFeatureName(string featureName, bool ignoreCase = true)
-    {
-        var cells = new List<Vector2Int>();
-        if (string.IsNullOrWhiteSpace(featureName) || cellFeatureNameGrid == null) return cells;
-
-        StringComparison comp = ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        for (int x = 0; x < gridWidth; x++)
-        {
-            for (int z = 0; z < gridLength; z++)
-            {
-                string n = cellFeatureNameGrid[x, z];
-                if (!string.IsNullOrEmpty(n) && string.Equals(n, featureName, comp))
-                {
-                    cells.Add(new Vector2Int(x, z));
-                }
-            }
-        }
-        return cells;
-    }
-
-    public bool TryGetFeatureFirstCell(string featureName, out Vector2Int cell,
-        bool preferWalkable = false, bool ignoreCase = true)
-    {
-        cell = new Vector2Int(-1, -1);
-        if (string.IsNullOrWhiteSpace(featureName)) return false;
-        if (!TryResolveFeatureSpatialIndex(featureName, out FeatureSpatialIndex idx, ignoreCase)
-            || idx == null || idx.occupiedCells == null || idx.occupiedCells.Count == 0)
-            return false;
-
-        // 使用质心作为参考，返回外围最近的可行走接近cell
-        FeatureSpatialProfile profile = BuildSpatialProfileFromIndex(idx);
-        Vector2Int[] approachCells = ComputeFeatureApproachCells(idx, profile.centroidCell, 1);
-        if (approachCells.Length > 0)
-        {
-            cell = approachCells[0];
-            return true;
-        }
-
-        // 回退：返回质心cell（小要素如道路节点，外围无接近cell时）
-        cell = profile.centroidCell;
-        return cell.x >= 0;
-    }
-
-    /// <summary>
-    /// 鎸?feature uid 鏌ユ壘棣栦釜缃戞牸銆?    /// </summary>
-    public bool TryGetFeatureFirstCellByUid(string featureUid, out Vector2Int cell, bool preferWalkable = false, bool ignoreCase = true)
-    {
-        cell = new Vector2Int(-1, -1);
-        if (string.IsNullOrWhiteSpace(featureUid) || featureSpatialIndexByUid == null) return false;
-
-        if (!featureSpatialIndexByUid.TryGetValue(featureUid.Trim(), out FeatureSpatialIndex idx)
-            || idx == null || idx.occupiedCells == null || idx.occupiedCells.Count == 0)
-            return false;
-
-        if (preferWalkable)
-        {
-            foreach (Vector2Int c in idx.occupiedCells)
-            {
-                if (IsWalkable(c.x, c.y)) { cell = c; return true; }
-            }
-        }
-        cell = idx.occupiedCells[0];
-        return true;
-    }
-
-
-    public bool TryResolveFeatureCell(string query, out Vector2Int cell, out string matchedUid, out string matchedName, bool preferWalkable = true, bool ignoreCase = true)
-    {
-        cell = new Vector2Int(-1, -1);
-        matchedUid = string.Empty;
-        matchedName = string.Empty;
-        if (string.IsNullOrWhiteSpace(query)) return false;
-
-        string q = query.Trim();
-        TryStripStructuredTargetPrefix(q, out _, out q);
-        if (string.IsNullOrWhiteSpace(q)) return false;
-
-        // 1) 绮剧‘ name
-        if (TryGetFeatureFirstCell(q, out cell, preferWalkable, ignoreCase))
-        {
-            TryGetCellFeatureInfo(cell.x, cell.y, out matchedUid, out matchedName, out _, out _);
-            return true;
-        }
-
-        // 2) 绮剧‘ uid
-        if (TryGetFeatureFirstCellByUid(q, out cell, preferWalkable, ignoreCase))
-        {
-            TryGetCellFeatureInfo(cell.x, cell.y, out matchedUid, out matchedName, out _, out _);
-            return true;
-        }
-
-        // 3) 精确 runtime alias
-        // alias 来自 CampusJsonMapLoader 为 Unity 场景对象生成的实例别名，
-        // 例如 building_7、a_3、forest_2。
-        // 它不直接存放在 cellFeatureNameGrid 中，所以要先翻译回真实 uid/name 再回到网格。
-        if (TryResolveFeatureAliasCell(q, out cell, out matchedUid, out matchedName, preferWalkable, ignoreCase))
-        {
-            return true;
-        }
-
-        if (cellFeatureNameGrid == null && cellFeatureUidGrid == null) return false;
-
-        if (TryResolveFeatureAliasCellByNormalized(q, out cell, out matchedUid, out matchedName, preferWalkable, ignoreCase))
-        {
-            return true;
-        }
-
-        string normalizedQ = NormalizeFeatureToken(q);
-        int bestScore = int.MaxValue;
-        Vector2Int bestCell = new Vector2Int(-1, -1);
-        string bestUid = string.Empty;
-        string bestName = string.Empty;
-        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        for (int x = 0; x < gridWidth; x++)
-        {
-            for (int z = 0; z < gridLength; z++)
-            {
-                string uid = cellFeatureUidGrid != null ? (cellFeatureUidGrid[x, z] ?? string.Empty) : string.Empty;
-                string name = cellFeatureNameGrid != null ? (cellFeatureNameGrid[x, z] ?? string.Empty) : string.Empty;
-                if (string.IsNullOrWhiteSpace(uid) && string.IsNullOrWhiteSpace(name)) continue;
-
-                string key = $"{uid}|{name}";
-                if (!visited.Add(key)) continue;
-
-                if (preferWalkable && !IsWalkable(x, z))
-                {
-                    // 即便当前单元不可通行，也允许它进入候选评分；
-                    // 这里只是在后面的 score 上附加更大的惩罚，避免全是 blocked 时完全找不到目标。
-                }
-
-                string nu = NormalizeFeatureToken(uid);
-                string nn = NormalizeFeatureToken(name);
-                bool exactNormalized = (!string.IsNullOrEmpty(nu) && nu == normalizedQ) || (!string.IsNullOrEmpty(nn) && nn == normalizedQ);
-
-                bool contains = (!string.IsNullOrEmpty(uid) && uid.IndexOf(q, ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) >= 0) ||
-                                (!string.IsNullOrEmpty(name) && name.IndexOf(q, ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) >= 0);
-
-                if (!exactNormalized && !contains) continue;
-
-                int score = 1000;
-                if (exactNormalized) score = 0;
-                else if (contains) score = 50;
-
-                if (!IsWalkable(x, z)) score += 200;
-                score += Math.Abs((name ?? string.Empty).Length - q.Length);
-
-                if (score < bestScore)
-                {
-                    bestScore = score;
-                    bestCell = new Vector2Int(x, z);
-                    bestUid = uid;
-                    bestName = name;
-                }
-            }
-        }
-
-        if (bestCell.x < 0) return false;
-        cell = bestCell;
-        matchedUid = bestUid ?? string.Empty;
-        matchedName = bestName ?? string.Empty;
-        return true;
-    }
-
-    public string BuildFeatureCatalogSummary(int maxMembersPerCollection = 8)
-    {
-        if (featureCollectionMembers == null || featureCollectionMembers.Count == 0)
-        {
-            return "[CampusGrid2D] No feature collections available.";
-        }
-
-        System.Text.StringBuilder sb = new System.Text.StringBuilder();
-        foreach (KeyValuePair<string, string[]> kv in featureCollectionMembers.OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase))
-        {
-            string[] members = kv.Value ?? Array.Empty<string>();
-            int previewCount = Mathf.Clamp(maxMembersPerCollection, 1, Mathf.Max(1, members.Length));
-            string preview = members.Length > 0
-                ? string.Join("|", members.Take(previewCount).ToArray())
-                : "none";
-            sb.Append("- collectionKey=")
-              .Append(kv.Key)
-              .Append(",count=")
-              .Append(members.Length)
-              .Append(",members=")
-              .Append(preview);
-            if (members.Length > previewCount)
-            {
-                sb.Append("|...");
-            }
-            sb.AppendLine();
-        }
-
-        return sb.ToString().TrimEnd();
-    }
-
-    public bool TryGetFeatureCollectionMembers(string collectionKey, out FeatureSpatialProfile[] profiles)
-    {
-        profiles = Array.Empty<FeatureSpatialProfile>();
-        if (string.IsNullOrWhiteSpace(collectionKey) ||
-            featureCollectionMembers == null ||
-            featureSpatialProfileByUid == null)
-        {
-            return false;
-        }
-
-        if (!featureCollectionMembers.TryGetValue(collectionKey.Trim(), out string[] memberTokens) ||
-            memberTokens == null ||
-            memberTokens.Length == 0)
-        {
-            return false;
-        }
-
-        List<FeatureSpatialProfile> result = new List<FeatureSpatialProfile>(memberTokens.Length);
-        for (int i = 0; i < memberTokens.Length; i++)
-        {
-            string token = memberTokens[i];
-            if (string.IsNullOrWhiteSpace(token)) continue;
-            if (!TryResolveFeatureSpatialIndex(token, out FeatureSpatialIndex index) || index == null) continue;
-            result.Add(BuildSpatialProfileFromIndex(index));
-        }
-
-        if (result.Count == 0) return false;
-
-        result.Sort((a, b) =>
-        {
-            int byX = a.centroidWorld.x.CompareTo(b.centroidWorld.x);
-            if (byX != 0) return byX;
-            return a.centroidWorld.z.CompareTo(b.centroidWorld.z);
-        });
-        profiles = result.ToArray();
-        return true;
-    }
-
-    public bool TryResolveFeatureCollectionBySelector(string selectorText, out string collectionKey, out FeatureSpatialProfile[] profiles)
-    {
-        collectionKey = string.Empty;
-        profiles = Array.Empty<FeatureSpatialProfile>();
-        if (string.IsNullOrWhiteSpace(selectorText) ||
-            featureCollectionMembers == null ||
-            featureCollectionMembers.Count == 0)
-        {
-            return false;
-        }
-
-        string normalizedSelector = NormalizeCollectionSelectorToken(selectorText);
-        if (string.IsNullOrWhiteSpace(normalizedSelector))
-        {
-            return false;
-        }
-
-        string bestKey = string.Empty;
-        int bestScore = int.MaxValue;
-        foreach (KeyValuePair<string, string[]> kv in featureCollectionMembers)
-        {
-            string key = string.IsNullOrWhiteSpace(kv.Key) ? string.Empty : kv.Key.Trim();
-            if (string.IsNullOrWhiteSpace(key)) continue;
-
-            string tail = key.Contains(":")
-                ? key.Substring(key.LastIndexOf(':') + 1)
-                : key;
-
-            int score = ComputeCollectionSelectorScore(
-                normalizedSelector,
-                NormalizeCollectionSelectorToken(key),
-                NormalizeCollectionSelectorToken(tail));
-
-            if (score < bestScore)
-            {
-                bestScore = score;
-                bestKey = key;
-            }
-        }
-
-        if (string.IsNullOrWhiteSpace(bestKey))
-        {
-            return false;
-        }
-
-        if (!TryGetFeatureCollectionMembers(bestKey, out profiles) ||
-            profiles == null ||
-            profiles.Length == 0)
-        {
-            return false;
-        }
-
-        collectionKey = bestKey;
-        return true;
     }
 
     public bool TryResolveFeatureSpatialProfile(string query, Vector3 referenceWorld, out FeatureSpatialProfile profile, bool preferWalkableApproach = true, bool ignoreCase = true, Vector2Int? anchorBias = null)
@@ -599,107 +298,18 @@ public class CampusGrid2D : MonoBehaviour
         return approachCells.Length > 0;
     }
 
-    public bool TryBuildFeatureRingPath(string query, Vector3 referenceWorld, out Vector2Int[] ringPath, int maxApproachCells = 48, bool ignoreCase = true, Vector2Int? anchorBias = null)
-    {
-        ringPath = Array.Empty<Vector2Int>();
-        if (!TryResolveFeatureSpatialIndex(query, out FeatureSpatialIndex index, ignoreCase) || index == null || index.occupiedCells.Count == 0)
-        {
-            return false;
-        }
-
-        FeatureSpatialProfile profile = BuildSpatialProfileFromIndex(index);
-        Vector2Int referenceCell = WorldToGrid(referenceWorld);
-        if (!IsInBounds(referenceCell.x, referenceCell.y))
-        {
-            referenceCell = profile.centroidCell;
-        }
-
-        Vector2Int[] approachCells = ComputeFeatureApproachCells(index, referenceCell, Mathf.Max(8, maxApproachCells), anchorBias);
-        if (approachCells.Length < 4)
-        {
-            return false;
-        }
-
-        Vector2 center = profile.centroidGrid;
-        Vector2Int[] ordered = approachCells
-            .OrderBy(cell => Mathf.Atan2(cell.y - center.y, cell.x - center.x))
-            .ToArray();
-
-        if (!TryBuildVisitPath(ordered[0], ordered, out Vector2Int[] closedPath, closeLoop: true))
-        {
-            return false;
-        }
-
-        ringPath = closedPath;
-        return ringPath.Length > 0;
-    }
-
-
-    public bool TryBuildVisitPath(Vector2Int startCell, IReadOnlyList<Vector2Int> visitCells, out Vector2Int[] path, bool closeLoop = false)
-    {
-        path = Array.Empty<Vector2Int>();
-        if (visitCells == null || visitCells.Count == 0) return false;
-
-        List<Vector2Int> orderedTargets = OrderVisitCellsByNearest(startCell, visitCells);
-        if (orderedTargets.Count == 0) return false;
-
-        List<Vector2Int> built = new List<Vector2Int>();
-        Vector2Int cursor = IsInBounds(startCell.x, startCell.y) ? startCell : orderedTargets[0];
-        if (!IsPathWalkable(cursor.x, cursor.y, null))
-        {
-            if (!TryFindNearestWalkable(cursor, 8, out cursor))
-            {
-                cursor = orderedTargets[0];
-            }
-        }
-
-        AppendPathSegment(built, cursor, includeFirst: true);
-        for (int i = 0; i < orderedTargets.Count; i++)
-        {
-            Vector2Int target = orderedTargets[i];
-            List<Vector2Int> segment = FindPathAStar(cursor, target);
-            if (segment == null || segment.Count == 0)
-            {
-                continue;
-            }
-
-            AppendPathSegment(built, segment, includeFirst: built.Count == 0);
-            cursor = target;
-        }
-
-        if (closeLoop && built.Count > 1)
-        {
-            Vector2Int end = built[built.Count - 1];
-            Vector2Int begin = built[0];
-            List<Vector2Int> closure = FindPathAStar(end, begin);
-            if (closure != null && closure.Count > 0)
-            {
-                AppendPathSegment(built, closure, includeFirst: false);
-            }
-        }
-
-        path = RemoveConsecutiveDuplicateCells(built).ToArray();
-        return path.Length > 0;
-    }
-
-
-    private static List<Vector2Int> RemoveConsecutiveDuplicateCells(IReadOnlyList<Vector2Int> path)
-    {
-        List<Vector2Int> result = new List<Vector2Int>();
-        if (path == null || path.Count == 0) return result;
-
-        result.Add(path[0]);
-        for (int i = 1; i < path.Count; i++)
-        {
-            if (path[i] != result[result.Count - 1])
-            {
-                result.Add(path[i]);
-            }
-        }
-
-        return result;
-    }
-
+    /// <summary>
+    /// 根据查询字符串解析对应的要素空间索引（FeatureSpatialIndex）。
+    /// 依次尝试三种匹配策略：
+    ///   1. 直接以 UID 精确匹配 featureSpatialIndexByUid；
+    ///   2. 通过别名表 featureAliasUidMap 将别名映射到 UID 后再查找；
+    ///   3. 通过名称表 featureUidsByName 获取候选 UID 列表，取第一个匹配项。
+    /// 查询前会先剥离结构化目标前缀（如 "target:"）。
+    /// </summary>
+    /// <param name="query">要素标识字符串，可以是 UID、别名或显示名称。</param>
+    /// <param name="index">输出找到的空间索引；未找到时为 null。</param>
+    /// <param name="ignoreCase">保留参数，当前实现中匹配逻辑依赖字典键的大小写规则。</param>
+    /// <returns>成功解析到非空索引时返回 true，否则返回 false。</returns>
     private bool TryResolveFeatureSpatialIndex(string query, out FeatureSpatialIndex index, bool ignoreCase = true)
     {
         index = null;
@@ -709,14 +319,17 @@ public class CampusGrid2D : MonoBehaviour
         }
 
         string q = query.Trim();
+        // 剥离结构化前缀（如 "building:图书馆" → "图书馆"），保留纯查询词
         TryStripStructuredTargetPrefix(q, out _, out q);
         if (string.IsNullOrWhiteSpace(q)) return false;
 
+        // 策略 1：直接 UID 精确查找
         if (featureSpatialIndexByUid.TryGetValue(q, out index) && index != null)
         {
             return true;
         }
 
+        // 策略 2：别名 → UID → 索引
         if (featureAliasUidMap != null &&
             featureAliasUidMap.TryGetValue(q, out string aliasUid) &&
             !string.IsNullOrWhiteSpace(aliasUid) &&
@@ -726,6 +339,7 @@ public class CampusGrid2D : MonoBehaviour
             return true;
         }
 
+        // 策略 3：显示名称 → UID 列表 → 取首个有效索引
         if (featureUidsByName != null &&
             featureUidsByName.TryGetValue(q, out List<string> namedUids) &&
             namedUids != null &&
@@ -826,131 +440,6 @@ public class CampusGrid2D : MonoBehaviour
             .ToArray();
     }
 
-    private static List<Vector2Int> OrderVisitCellsByNearest(Vector2Int startCell, IReadOnlyList<Vector2Int> visitCells)
-    {
-        var seen = new HashSet<Vector2Int>();
-        List<Vector2Int> remaining = new List<Vector2Int>(visitCells.Count);
-        for (int i = 0; i < visitCells.Count; i++)
-        {
-            Vector2Int c = visitCells[i];
-            if (seen.Add(c))
-                remaining.Add(c);
-        }
-
-        List<Vector2Int> ordered = new List<Vector2Int>(remaining.Count);
-        Vector2Int cursor = startCell;
-        while (remaining.Count > 0)
-        {
-            int bestIndex = 0;
-            float bestDist = float.MaxValue;
-            for (int i = 0; i < remaining.Count; i++)
-            {
-                float dist = (remaining[i] - cursor).sqrMagnitude;
-                if (dist < bestDist)
-                {
-                    bestDist = dist;
-                    bestIndex = i;
-                }
-            }
-
-            Vector2Int next = remaining[bestIndex];
-            ordered.Add(next);
-            remaining.RemoveAt(bestIndex);
-            cursor = next;
-        }
-
-        return ordered;
-    }
-
-
-    private static void AppendPathSegment(List<Vector2Int> output, IReadOnlyList<Vector2Int> segment, bool includeFirst)
-    {
-        if (output == null || segment == null || segment.Count == 0) return;
-
-        int start = includeFirst ? 0 : 1;
-        for (int i = start; i < segment.Count; i++)
-        {
-            if (output.Count > 0 && output[output.Count - 1] == segment[i]) continue;
-            output.Add(segment[i]);
-        }
-    }
-
-    private static void AppendPathSegment(List<Vector2Int> output, Vector2Int cell, bool includeFirst)
-    {
-        if (output == null) return;
-        if (!includeFirst && output.Count > 0 && output[output.Count - 1] == cell) return;
-        if (output.Count == 0 || output[output.Count - 1] != cell)
-        {
-            output.Add(cell);
-        }
-    }
-
-
-    private static int ComputeCollectionSelectorScore(string normalizedSelector, string normalizedKey, string normalizedTail)
-    {
-        if (string.IsNullOrWhiteSpace(normalizedSelector))
-        {
-            return int.MaxValue;
-        }
-
-        int best = int.MaxValue;
-        if (!string.IsNullOrWhiteSpace(normalizedTail))
-        {
-            if (normalizedSelector == normalizedTail)
-            {
-                best = 0;
-            }
-            else if (normalizedSelector.Contains(normalizedTail))
-            {
-                best = Math.Min(best, 10 + normalizedSelector.Length - normalizedTail.Length);
-            }
-            else if (normalizedTail.Contains(normalizedSelector))
-            {
-                best = Math.Min(best, 30 + normalizedTail.Length - normalizedSelector.Length);
-            }
-        }
-
-        if (!string.IsNullOrWhiteSpace(normalizedKey))
-        {
-            if (normalizedSelector == normalizedKey)
-            {
-                best = Math.Min(best, 1);
-            }
-            else if (normalizedSelector.Contains(normalizedKey))
-            {
-                best = Math.Min(best, 20 + normalizedSelector.Length - normalizedKey.Length);
-            }
-            else if (normalizedKey.Contains(normalizedSelector))
-            {
-                best = Math.Min(best, 40 + normalizedKey.Length - normalizedSelector.Length);
-            }
-        }
-
-        return best;
-    }
-
-
-    private static string NormalizeCollectionSelectorToken(string raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
-
-        string s = raw.Trim().ToLowerInvariant();
-        System.Text.StringBuilder sb = new System.Text.StringBuilder(s.Length);
-        for (int i = 0; i < s.Length; i++)
-        {
-            char c = s[i];
-            bool asciiLetter = c >= 'a' && c <= 'z';
-            bool digit = c >= '0' && c <= '9';
-            bool cjk = c >= 0x4e00 && c <= 0x9fff;
-            if (asciiLetter || digit || cjk)
-            {
-                sb.Append(c);
-            }
-        }
-
-        return sb.ToString();
-    }
-
     private FeatureSpatialProfile BuildSpatialProfileFromIndex(FeatureSpatialIndex index)
     {
         FeatureSpatialProfile profile = new FeatureSpatialProfile
@@ -1006,31 +495,6 @@ public class CampusGrid2D : MonoBehaviour
 
         profile.footprintRadius = Mathf.Sqrt(maxDistSq) + cellSize * 0.75f;
         return profile;
-    }
-
-    private static FeatureSpatialProfile CloneSpatialProfile(FeatureSpatialProfile src)
-    {
-        if (src == null) return null;
-        return new FeatureSpatialProfile
-        {
-            uid = src.uid,
-            name = src.name,
-            runtimeAlias = src.runtimeAlias,
-            kind = src.kind,
-            collectionKey = src.collectionKey,
-            cellType = src.cellType,
-            occupiedCellCount = src.occupiedCellCount,
-            minX = src.minX,
-            maxX = src.maxX,
-            minZ = src.minZ,
-            maxZ = src.maxZ,
-            centroidGrid = src.centroidGrid,
-            centroidCell = src.centroidCell,
-            centroidWorld = src.centroidWorld,
-            anchorCell = src.anchorCell,
-            anchorWorld = src.anchorWorld,
-            footprintRadius = src.footprintRadius
-        };
     }
 
     private static float ComputeAnchorBiasPenalty(Vector2Int candidate, Vector2 centroid, Vector2Int? anchorBias)
@@ -2426,30 +1890,6 @@ public class CampusGrid2D : MonoBehaviour
         return string.IsNullOrWhiteSpace(k) ? "other" : k;
     }
 
-    private static string SanitizeFeatureAliasToken(string raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw)) return "feature";
-
-        string s = raw.Trim().ToLowerInvariant();
-        System.Text.StringBuilder sb = new System.Text.StringBuilder(s.Length);
-        for (int i = 0; i < s.Length; i++)
-        {
-            char c = s[i];
-            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c > 127)
-            {
-                sb.Append(c);
-            }
-            else if (c == '_' || c == '-' || char.IsWhiteSpace(c))
-            {
-                sb.Append('_');
-            }
-        }
-
-        string result = sb.ToString().Trim('_');
-        return string.IsNullOrWhiteSpace(result) ? "feature" : result;
-    }
-
-
     private void InitializeFeatureSpatialIndexes(List<Feature2D> features)
     {
         if (features == null || featureSpatialIndexByUid == null) return;
@@ -2611,88 +2051,6 @@ public class CampusGrid2D : MonoBehaviour
         }
     }
 
-    public bool TryResolveFeatureAliasCell(string alias, out Vector2Int cell, out string matchedUid, out string matchedName, bool preferWalkable = true, bool ignoreCase = true)
-    {
-        cell = new Vector2Int(-1, -1);
-        matchedUid = string.Empty;
-        matchedName = string.Empty;
-        if (string.IsNullOrWhiteSpace(alias) || featureAliasCellMap == null || featureAliasUidMap == null || featureAliasNameMap == null) return false;
-
-        string key = alias.Trim();
-        if (!featureAliasUidMap.TryGetValue(key, out matchedUid) && !featureAliasNameMap.TryGetValue(key, out matchedName))
-        {
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(matchedName) && featureAliasNameMap.TryGetValue(key, out string aliasName))
-        {
-            matchedName = aliasName;
-        }
-
-        if (!string.IsNullOrWhiteSpace(matchedUid) &&
-            (TryGetFeatureFirstCellByUid(matchedUid, out cell, preferWalkable, ignoreCase) ||
-             TryGetFeatureFirstCellByUid(matchedUid, out cell, false, ignoreCase)))
-        {
-            TryGetCellFeatureInfo(cell.x, cell.y, out string uid, out string name, out _, out _);
-            matchedUid = string.IsNullOrWhiteSpace(uid) ? matchedUid : uid;
-            matchedName = string.IsNullOrWhiteSpace(name) ? matchedName : name;
-            return true;
-        }
-
-        if (!string.IsNullOrWhiteSpace(matchedName) &&
-            (TryGetFeatureFirstCell(matchedName, out cell, preferWalkable, ignoreCase) ||
-             TryGetFeatureFirstCell(matchedName, out cell, false, ignoreCase)))
-        {
-            TryGetCellFeatureInfo(cell.x, cell.y, out string uid, out string name, out _, out _);
-            matchedUid = string.IsNullOrWhiteSpace(uid) ? matchedUid : uid;
-            matchedName = string.IsNullOrWhiteSpace(name) ? matchedName : name;
-            return true;
-        }
-
-        if (featureAliasCellMap.TryGetValue(key, out Vector2Int aliasCell) && IsInBounds(aliasCell.x, aliasCell.y))
-        {
-            cell = aliasCell;
-            return true;
-        }
-
-        return false;
-    }
-
-    private bool TryResolveFeatureAliasCellByNormalized(string query, out Vector2Int cell, out string matchedUid, out string matchedName, bool preferWalkable = true, bool ignoreCase = true)
-    {
-        cell = new Vector2Int(-1, -1);
-        matchedUid = string.Empty;
-        matchedName = string.Empty;
-        if (string.IsNullOrWhiteSpace(query) || featureAliasUidMap == null || featureAliasUidMap.Count == 0) return false;
-
-        string normalizedQuery = NormalizeFeatureToken(query);
-        if (string.IsNullOrWhiteSpace(normalizedQuery)) return false;
-
-        string bestAlias = null;
-        int bestScore = int.MaxValue;
-        foreach (KeyValuePair<string, string> kv in featureAliasUidMap)
-        {
-            string alias = kv.Key;
-            if (string.IsNullOrWhiteSpace(alias)) continue;
-
-            string normalizedAlias = NormalizeFeatureToken(alias);
-            bool exactNormalized = normalizedAlias == normalizedQuery;
-            bool contains = normalizedAlias.Contains(normalizedQuery) || normalizedQuery.Contains(normalizedAlias);
-            if (!exactNormalized && !contains) continue;
-
-            int score = exactNormalized ? 0 : 50;
-            score += Math.Abs(alias.Length - query.Trim().Length);
-            if (score < bestScore)
-            {
-                bestScore = score;
-                bestAlias = alias;
-            }
-        }
-
-        if (string.IsNullOrWhiteSpace(bestAlias)) return false;
-        return TryResolveFeatureAliasCell(bestAlias, out cell, out matchedUid, out matchedName, preferWalkable, ignoreCase);
-    }
-
     private static double SignedArea2D(List<Vector2> poly)
     {
         if (poly == null || poly.Count < 3) return 0.0;
@@ -2824,51 +2182,6 @@ public class CampusGrid2D : MonoBehaviour
         return inside;
     }
 
-    private static bool PointInMultiPolygonWithHoles(Vector2 p, List<List<Vector2>> outers, List<List<Vector2>> inners)
-    {
-        bool inOuter = false;
-        for (int i = 0; i < outers.Count; i++)
-        {
-            List<Vector2> ring = outers[i];
-            if (ring != null && ring.Count >= 3 && PointInPolygon2D(p, ring))
-            {
-                inOuter = true;
-                break;
-            }
-        }
-        if (!inOuter) return false;
-
-        for (int i = 0; i < inners.Count; i++)
-        {
-            List<Vector2> hole = inners[i];
-            if (hole != null && hole.Count >= 3 && PointInPolygon2D(p, hole))
-                return false;
-        }
-        return true;
-    }
-
-    private static float DistPointToSegment2D(Vector2 p, Vector2 a, Vector2 b)
-    {
-        Vector2 ab = b - a;
-        float len2 = ab.sqrMagnitude;
-        if (len2 < 1e-12f) return (p - a).magnitude;
-
-        float t = Mathf.Clamp01(Vector2.Dot(p - a, ab) / len2);
-        Vector2 q = a + t * ab;
-        return (p - q).magnitude;
-    }
-
-    private static float DistPointToPolyline(Vector2 p, List<Vector2> line)
-    {
-        float best = float.PositiveInfinity;
-        for (int i = 0; i < line.Count - 1; i++)
-        {
-            float d = DistPointToSegment2D(p, line[i], line[i + 1]);
-            if (d < best) best = d;
-        }
-        return best;
-    }
-
     private void AssignCellFeatureIdentity(int x, int z, string uid, string name)
     {
         if (cellFeatureUidGrid != null) cellFeatureUidGrid[x, z] = string.IsNullOrWhiteSpace(uid) ? null : uid.Trim();
@@ -2953,26 +2266,6 @@ public class CampusGrid2D : MonoBehaviour
     private static long PackCellKey(int x, int z)
     {
         return (((long)x) << 32) ^ (uint)z;
-    }
-
-    /// <summary>
-    /// 将世界坐标列表转为 A* 临时阻挡键集合，供 FindPathAStar 的 transientBlockedKeys 参数使用。
-    /// bufferRadius=0 仅阻挡节点所在格；bufferRadius=1 同时阻挡周围一圈（共9格）。
-    /// </summary>
-    public HashSet<long> WorldPositionsToBlockedKeys(IEnumerable<Vector3> positions, int bufferRadius = 0)
-    {
-        var keys = new HashSet<long>();
-        foreach (var pos in positions)
-        {
-            Vector2Int cell = WorldToGrid(pos);
-            for (int dx = -bufferRadius; dx <= bufferRadius; dx++)
-            for (int dz = -bufferRadius; dz <= bufferRadius; dz++)
-            {
-                int x = cell.x + dx, z = cell.y + dz;
-                if (IsInBounds(x, z)) keys.Add(PackCellKey(x, z));
-            }
-        }
-        return keys;
     }
 
     private bool IsPathWalkable(int x, int z, HashSet<long> transientBlockedKeys)
