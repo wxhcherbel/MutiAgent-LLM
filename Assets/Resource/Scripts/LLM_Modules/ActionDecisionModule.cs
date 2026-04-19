@@ -55,7 +55,7 @@ public class ActionDecisionModule : MonoBehaviour
     /// MAD 网关（同 GameObject），封装全部 MAD 个体侧逻辑（成员侧辩论参与）
     /// 和 Raise() 发起辩论的能力。
     /// ADM 在 Start() 中注入回调，Rolling Loop Step 11.5 处通过此接口触发辩论参与协程。
-    /// 群组级协调（广播角色、收敛判断、仲裁）由 IncidentCoordinator 负责，与本模块无关。
+    /// 群组级协调（广播角色、收敛判断、仲裁）由 DebateCoordinator 负责，与本模块无关。
     /// </summary>
     private IMADGateway _madGateway;
 

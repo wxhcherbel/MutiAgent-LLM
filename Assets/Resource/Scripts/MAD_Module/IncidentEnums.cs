@@ -1,4 +1,4 @@
-// Enums/IncidentEnums.cs
+// MAD_Module/IncidentEnums.cs
 // MAD 白板协同与紧急情况处理枚举定义。
 
 /// <summary>

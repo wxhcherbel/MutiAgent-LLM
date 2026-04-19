@@ -4,27 +4,25 @@
 
 /// <summary>
 /// MAD 辩论过程指标收集接口。
-/// MADGateway 持有一个 IMADMetrics 实例（默认为 NullMADMetrics）。
+/// MADGateway 持有一个 IMADMetricsCollector 实例（默认为 NullMetricsCollector）。
 /// </summary>
-public interface IMADMetrics
+public interface IMADMetricsCollector
 {
-    /// <summary>辩论启动时记录（incidentId、触发模块、层级）。</summary>
-    void RecordDebateStart(string incidentId, string triggerSource, DebateLayer layer);
-
-    /// <summary>辩论完成时记录（incidentId、耗时秒数、是否收敛）。</summary>
-    void RecordDebateEnd(string incidentId, float durationSeconds, bool converged);
-
-    /// <summary>单轮辩论条目提交时记录（用于统计 LLM 调用次数）。</summary>
-    void RecordDebateEntry(string incidentId, int round, string agentId);
+    void OnDebateStarted(string debateId, IncidentType type, DebateLayer layer);
+    void OnDebateResolved(string debateId, int rounds, int totalTokens, float elapsedMs);
+    void OnLayerDowngraded(string debateId, DebateLayer from, DebateLayer to, string reason);
+    void OnParticipantDropped(string debateId, string agentId);
+    void OnReplanTriggered(string debateId, string agentId);
 }
 
 /// <summary>
 /// 空指标收集器（默认实现）：所有方法均为空操作，不产生任何副作用。
-/// 当不需要指标采集时使用，避免 null 检查。
 /// </summary>
-public class NullMADMetrics : IMADMetrics
+public class NullMetricsCollector : IMADMetricsCollector
 {
-    public void RecordDebateStart(string incidentId, string triggerSource, DebateLayer layer) { }
-    public void RecordDebateEnd(string incidentId, float durationSeconds, bool converged) { }
-    public void RecordDebateEntry(string incidentId, int round, string agentId) { }
+    public void OnDebateStarted(string debateId, IncidentType type, DebateLayer layer) { }
+    public void OnDebateResolved(string debateId, int rounds, int totalTokens, float elapsedMs) { }
+    public void OnLayerDowngraded(string debateId, DebateLayer from, DebateLayer to, string reason) { }
+    public void OnParticipantDropped(string debateId, string agentId) { }
+    public void OnReplanTriggered(string debateId, string agentId) { }
 }

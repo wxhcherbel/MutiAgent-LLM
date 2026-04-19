@@ -275,7 +275,7 @@ public class DebateEntrySnapshot
 }
 
 /// <summary>
-/// 单个紧急事件及其辩论记录的完整快照（由 IncidentCoordinator 暴露）。
+/// 单个紧急事件及其辩论记录的完整快照（由 DebateCoordinator 暴露）。
 /// </summary>
 [Serializable]
 public class IncidentDebateSnapshot

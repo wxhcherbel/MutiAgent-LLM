@@ -1,4 +1,4 @@
-// LLM_Modules/Data/Emergency/IncidentContracts.cs
+// MAD_Module/Data/IncidentContracts.cs
 // 紧急情况处理与 MAD 辩论协议的核心数据契约。
 using System;
 using UnityEngine;
@@ -53,7 +53,7 @@ public class IncidentReport
 
 /// <summary>
 /// 辩论条目：单个 agent 在一轮辩论中的发言记录。
-/// 走 CommunicationModule 路由，不进白板（由 IncidentCoordinator 汇总）。
+/// 走 CommunicationModule 路由，不进白板（由 DebateCoordinator 汇总）。
 /// </summary>
 [Serializable]
 public class DebateEntry

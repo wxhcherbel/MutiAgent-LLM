@@ -44,7 +44,7 @@ public class MADGateway : MonoBehaviour, IMADGateway
 
     // ─── 指标收集（默认空实现）──────────────────────────────────────────────
 
-    private readonly IMADMetrics _metrics = new NullMADMetrics();
+    private readonly IMADMetricsCollector _metrics = new NullMetricsCollector();
 
     // ─────────────────────────────────────────────────────────────────────────
     // Unity 生命周期
@@ -128,7 +128,7 @@ public class MADGateway : MonoBehaviour, IMADGateway
         };
 
         Debug.Log($"[MADGateway] {_props?.AgentID} 发起辩论: {request.incidentType} - {request.topic}");
-        _metrics.RecordDebateStart(report.reporterId + "_pending", GetType().Name, DebateLayer.FullLLM);
+        _metrics.OnDebateStarted(report.reporterId + "_pending", request.incidentType, DebateLayer.FullLLM);
 
         string leaderId = _planning?.GetLeaderId();
 

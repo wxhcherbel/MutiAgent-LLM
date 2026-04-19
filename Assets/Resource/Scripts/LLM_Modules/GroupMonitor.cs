@@ -5,7 +5,7 @@
 //   [数据结构区] 裁判事件和白板通知的序列化数据类
 //   [通信区]     向裁判层广播本队完成事件；轮询裁判层并将事件写入本队白板
 //   [监控区]     定时检查本队完成状态（规则 → LLM 两阶段判断）
-//   [紧急事件区] 接收 IncidentReport，启动 IncidentCoordinator 运行 MAD 辩论
+//   [紧急事件区] 接收 IncidentReport，启动 DebateCoordinator 运行 MAD 辩论
 // ═══════════════════════════════════════════════════════════════════════════
 using UnityEngine;
 using System;
@@ -49,8 +49,8 @@ public class GroupMonitor : MonoBehaviour
     // ─── 紧急事件状态 ─────────────────────────────────────────────────────────
 
     /// <summary>活跃的辩论协调器（key = incidentId）。</summary>
-    private readonly Dictionary<string, IncidentCoordinator> _activeCoordinators
-        = new Dictionary<string, IncidentCoordinator>();
+    private readonly Dictionary<string, DebateCoordinator> _activeCoordinators
+        = new Dictionary<string, DebateCoordinator>();
 
     /// <summary>最近上报的事件（用于去重）：key = "type_affectedAgent_affectedTask"，value = 上报时间。</summary>
     private readonly Dictionary<string, float> _recentIncidentKeys
@@ -340,7 +340,7 @@ public class GroupMonitor : MonoBehaviour
 
     /// <summary>
     /// 接收任意成员上报的紧急事件报告（MessageType.IncidentReport）。
-    /// 自动去重（30s 内相同类型+受影响目标不重复开启辩论）并启动 IncidentCoordinator。
+    /// 自动去重（30s 内相同类型+受影响目标不重复开启辩论）并启动 DebateCoordinator。
     /// Low severity 事件由 leader 单方记录，不触发辩论。
     /// </summary>
     public void HandleIncidentReport(IncidentReport report)
@@ -376,14 +376,14 @@ public class GroupMonitor : MonoBehaviour
         }
 
         // 启动辩论协调器
-        var coordinator = new IncidentCoordinator(
+        var coordinator = new DebateCoordinator(
             this, myGroup, groupId, leaderId, llmInterface, _commModule);
         _activeCoordinators[report.incidentId] = coordinator;
         StartCoroutine(coordinator.RunDebate(report));
     }
 
     /// <summary>
-    /// IncidentCoordinator 收到 DebateEntry 时回调（由 CommunicationModule 转发）。
+    /// DebateCoordinator 收到 DebateEntry 时回调（由 CommunicationModule 转发）。
     /// </summary>
     public void OnDebateEntryReceived(DebateEntry entry)
     {
@@ -394,7 +394,7 @@ public class GroupMonitor : MonoBehaviour
             Debug.LogWarning($"[GroupMonitor] {leaderId} 收到 DebateEntry 但找不到协调器: {entry.incidentId}");
     }
 
-    /// <summary>IncidentCoordinator 辩论完成后回调，清理协调器引用。</summary>
+    /// <summary>DebateCoordinator 辩论完成后回调，清理协调器引用。</summary>
     public void OnCoordinatorFinished(string incidentId)
     {
         _activeCoordinators.Remove(incidentId);

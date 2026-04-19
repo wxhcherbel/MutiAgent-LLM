@@ -1,7 +1,7 @@
 // MAD_Module/IMADGateway.cs
 // MAD 模块对外的统一接口。
 // 其他模块（IntelligentAgent / ActionDecisionModule / PlanningModule）
-// 只需持有 IMADGateway 引用，不感知内部的 DebateParticipant / IncidentCoordinator。
+// 只需持有 IMADGateway 引用，不感知内部的 DebateParticipant / DebateCoordinator。
 using System.Collections;
 
 /// <summary>
