@@ -38,18 +38,18 @@ public enum MessageType
     StartExecution,
 
     // ── 紧急情况 & MAD 辩论协议 ──────────────────────────────────────────
-    /// <summary>任意 agent 上报紧急事件给 leader（GroupMonitor 处理）。</summary>
+    /// <summary>任意 Agent 上报紧急事件给 leader（MADCoordinator 处理）。</summary>
     IncidentReport,
 
-    /// <summary>Leader 宣布活跃事件，广播给全组并写白板 IncidentAnnounce。</summary>
+    /// <summary>Leader 广播紧急事件通知，isCritical=true 时中断成员 ADM。</summary>
     IncidentAnnounce,
 
-    /// <summary>Leader 给每位成员分配辩论角色，触发其 LLM 辩论调用。</summary>
-    DebateProposal,
+    /// <summary>Leader → 成员：发起辩论查询（round=1 独立提案，round=2 参考修正）。</summary>
+    IncidentQuery,
 
-    /// <summary>成员将辩论结果（DebateEntry）回传给 leader。</summary>
-    DebateUpdate,
+    /// <summary>成员 → Leader：回传 LLM 生成的辩论意见（MemberOpinion）。</summary>
+    IncidentOpinion,
 
-    /// <summary>Leader 广播最终共识（DebateConsensusEntry），全员执行决策。</summary>
-    DebateResolved,
+    /// <summary>Leader → 全组：广播最终决策（IncidentDecision），含逐人指令。</summary>
+    IncidentResolved,
 }

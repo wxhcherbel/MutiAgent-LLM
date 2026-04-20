@@ -28,7 +28,9 @@
       "Bash(sed 's/<[^>]*>//g')",
       "Bash(wc -l Agents/*.cs LLM_Modules/*.cs Communication_Module/*.cs Enums/*.cs LLM_API/*.cs)",
       "Bash(xargs wc:*)",
-      "Bash(ls -la *.html)"
+      "Bash(ls -la *.html)",
+      "Bash(rm -f IMADGateway.cs DebateCoordinator.cs DebateParticipant.cs DebatePromptBuilder.cs IncidentEnums.cs ResourceBudget.cs MADMetrics.cs)",
+      "Bash(rm -f Data/IncidentContracts.cs)"
     ]
   }
 }

@@ -31,7 +31,7 @@ public class IntelligentAgent : MonoBehaviour
     private float lastDecisionTime = 0f;    // 上次决策时间
 
     // MAD 集成
-    private IMADGateway _madGateway;        // MAD 网关（同 GameObject 上的 MADGateway 组件）
+    private MADGateway _madGateway;         // MAD 网关（同 GameObject 上的 MADGateway 组件）
     private bool _batteryIncidentReported;  // 电量预警 MAD 去重标志
 
     void Start()
@@ -142,6 +142,9 @@ public class IntelligentAgent : MonoBehaviour
 
         // GroupMonitor 只响应路由给 leader 的 IncidentReport，非 leader 上挂载无害
         if (GetComponent<GroupMonitor>() == null) gameObject.AddComponent<GroupMonitor>();
+
+        // MAD 决策转发器：接收 MADGateway 转来的 AgentDirective，路由到对应模块执行
+        if (GetComponent<MADDecisionForwarder>() == null) gameObject.AddComponent<MADDecisionForwarder>();
 
         // 启动决策检查
         lastDecisionTime = Time.time;
@@ -309,15 +312,15 @@ public class IntelligentAgent : MonoBehaviour
         if (!_batteryIncidentReported && _madGateway != null)
         {
             _batteryIncidentReported = true;
-            _madGateway.Raise(new DebateRequest
+            _madGateway.Raise(new IncidentReport
             {
-                initiatorId     = Properties.AgentID,
-                affectedAgentId = Properties.AgentID,
-                incidentType    = IncidentType.AgentUnavailable,
-                topic           = $"Battery depletion warning - {Properties.AgentID}",
-                context         = $"Agent {Properties.AgentID} 电量即将耗尽（当前 {CurrentState.BatteryLevel:F0}%）。" +
-                                  $"请团队讨论：由谁接管剩余任务？充电后是否恢复？",
-                estimatedRounds = 2
+                reporterId   = Properties.AgentID,
+                incidentType = IncidentTypes.AgentUnavailable,
+                isCritical   = true,
+                description  = $"Agent {Properties.AgentID} 电量耗尽，无法继续执行任务",
+                context      = $"受影响Agent: {Properties.AgentID}\n" +
+                               $"当前电量: {CurrentState.BatteryLevel:F0}%\n" +
+                               $"当前任务: {CurrentState.CurrentTaskId ?? "无"}",
             });
         }
     }

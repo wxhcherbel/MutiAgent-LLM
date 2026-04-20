@@ -55,9 +55,8 @@ public class ActionDecisionModule : MonoBehaviour
     /// MAD 网关（同 GameObject），封装全部 MAD 个体侧逻辑（成员侧辩论参与）
     /// 和 Raise() 发起辩论的能力。
     /// ADM 在 Start() 中注入回调，Rolling Loop Step 11.5 处通过此接口触发辩论参与协程。
-    /// 群组级协调（广播角色、收敛判断、仲裁）由 DebateCoordinator 负责，与本模块无关。
     /// </summary>
-    private IMADGateway _madGateway;
+    private MADGateway _madGateway;
 
     // ─── C3 互斥超时 MAD 触发 ────────────────────────────────────────
     /// <summary>C3-1 互斥锁等待超过此时间（秒）后触发 MAD 辩论。</summary>
@@ -113,20 +112,11 @@ public class ActionDecisionModule : MonoBehaviour
         // 获取人格系统（挂在同一 agent GameObject 上，Inspector 中配置人格档案）
         _personalitySystem = GetComponent<PersonalitySystem>();
 
-        // 获取 MAD 网关并注入 ADM 状态回调
-        // MADGateway 内部持有 DebateParticipant，ADM 只通过 IMADGateway 接口交互。
+        // 获取 MAD 网关并注入 ADM 中断回调
+        // 决策执行已由 MADDecisionForwarder 统一路由，此处只注入 Critical 中断回调
         var madGateway = GetComponent<MADGateway>();
         madGateway?.SetAdmCallbacks(
-            isAdmRunning:        () => status == ADMStatus.Running,
-            onCriticalInterrupt: () => SetStatus(ADMStatus.BatchDone),
-            onConsensusReceived: consensus =>
-            {
-                if (consensus.missionScopeChanged && planningModule != null)
-                {
-                    Debug.Log($"[ADM] {agentProperties?.AgentID} 任务范围已变更，触发重规划");
-                    planningModule.RequestReplan($"DebateResolved: {consensus.resolution}");
-                }
-            });
+            onCriticalInterrupt: () => SetStatus(ADMStatus.BatchDone));
         _madGateway = madGateway;
     }
 
@@ -238,21 +228,66 @@ public class ActionDecisionModule : MonoBehaviour
         status == ADMStatus.Idle || status == ADMStatus.Done || status == ADMStatus.Failed;
 
     // ─────────────────────────────────────────────────────────────
-    // 辩论协议公共接口（由 CommunicationModule 转发调用）
-    // 具体逻辑已迁移至 DebateParticipant，此处仅做委托转发。
+    // MAD 消息接收接口（由 CommunicationModule 转发调用）
     // ─────────────────────────────────────────────────────────────
 
-    /// <summary>收到 IncidentAnnounce 消息，转发给 MAD 网关处理。</summary>
-    public void OnIncidentAnnounced(IncidentReport report)       => _madGateway?.OnIncidentAnnounced(report);
+    /// <summary>收到 IncidentAnnounce：isCritical=true 时 MADGateway 回调中断 ADM。</summary>
+    public void OnIncidentAnnounced(IncidentReport report)   => _madGateway?.OnIncidentAnnounced(report);
 
-    /// <summary>收到 DebateProposal 角色分配消息，转发给 MAD 网关入队。</summary>
-    public void AssignDebateRole(DebateRoleAssignment assignment) => _madGateway?.AssignDebateRole(assignment);
+    /// <summary>收到 IncidentQuery：MADGateway 立即 StartCoroutine 响应，不等 ADM 轮次。</summary>
+    public void OnIncidentQuery(IncidentQuery query)          => _madGateway?.OnIncidentQuery(query);
 
-    /// <summary>收到 DebateResolved 共识消息，转发给 MAD 网关，由其触发重规划回调。</summary>
-    public void OnDebateResolved(DebateConsensusEntry consensus)  => _madGateway?.OnDebateResolved(consensus);
+    /// <summary>收到 IncidentResolved：MADGateway 路由给 MADDecisionForwarder 执行。</summary>
+    public void OnIncidentResolved(IncidentDecision decision) => _madGateway?.OnIncidentResolved(decision);
 
-    /// <summary>Critical 事件快速路径，转发给 MAD 网关，由其通过回调中断当前 batch。</summary>
-    public void OnCriticalIncident(IncidentReport report)        => _madGateway?.OnCriticalIncident(report);
+    // ─────────────────────────────────────────────────────────────
+    // MAD 决策执行接口（由 MADDecisionForwarder 调用）
+    // ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 向当前动作队列插入原子动作。由 MADDecisionForwarder 在处理 operation="insert_actions" 时调用。
+    /// <para>immediate=true：在 currentActionIdx 之后立即插入，接下来就执行（如紧急绕路、回充）。</para>
+    /// <para>immediate=false：追加到 actionQueue 末尾，当前批次执行完后再执行。</para>
+    /// 若当前无活跃动作队列，则将 actions 作为新队列设置。
+    /// </summary>
+    /// <param name="actions">要插入的原子动作数组。</param>
+    /// <param name="immediate">true=立即插入当前位置后；false=追加到末尾。</param>
+    public void InsertActions(AtomicAction[] actions, bool immediate)
+    {
+        if (actions == null || actions.Length == 0) return;
+
+        if (ctx == null || ctx.actionQueue == null || ctx.actionQueue.Length == 0)
+        {
+            // 无活跃队列，直接设置为新队列
+            if (ctx != null)
+            {
+                ctx.actionQueue      = actions;
+                ctx.currentActionIdx = 0;
+                Debug.Log($"[ADM] {agentProperties?.AgentID} MAD 插入 {actions.Length} 个动作（初始化队列）");
+            }
+            return;
+        }
+
+        AtomicAction[] merged;
+        if (immediate)
+        {
+            // 立即插入：在 currentActionIdx 之后插入，currentIdx 所指动作仍继续完成后再执行新动作
+            int insertAt = ctx.currentActionIdx + 1;
+            merged = ctx.actionQueue.Take(insertAt)
+                .Concat(actions)
+                .Concat(ctx.actionQueue.Skip(insertAt))
+                .ToArray();
+        }
+        else
+        {
+            // 追加到末尾：当前批次执行完后再执行
+            merged = ctx.actionQueue.Concat(actions).ToArray();
+        }
+
+        ctx.actionQueue = merged;
+        Debug.Log($"[ADM] {agentProperties?.AgentID} MAD 插入 {actions.Length} 个动作（immediate={immediate}），" +
+                  $"队列总长={merged.Length}");
+    }
 
     /// <summary>返回当前 ADM 状态（供外部监控使用）。</summary>
     public ADMStatus GetStatus() => status;
@@ -475,11 +510,9 @@ public class ActionDecisionModule : MonoBehaviour
             // ── 11. 更新执行历史，进入下一迭代 ──────────────────────
             UpdateHistory(planResult.nextActions);
 
-            // ── 11.5 辩论参与窗口 ──────────────────────────────────
-            // 非 Critical 情况：action batch 自然结束后才参与，不打断当前 action
-            // 每次最多 1 个 LLM 调用，不延误超过 1 次 rolling 迭代
-            if (_madGateway != null && _madGateway.HasPendingDebateRole())
-                yield return StartCoroutine(_madGateway.ParticipateInActiveDebates());
+            // ── 11.5 辩论参与窗口（已移除）─────────────────────────
+            // MADGateway.OnIncidentQuery() 收到查询时立即 StartCoroutine 响应，
+            // 不再依赖 ADM Rolling Loop 的执行窗口，避免 leader 等待超时。
 
             ctx.iterationCount++;
             SetStatus(ADMStatus.Interpreting);
@@ -1149,16 +1182,15 @@ public class ActionDecisionModule : MonoBehaviour
             {
                 _c3DebateTriggered = true;
                 string conflictCids = string.Join(", ", constraintIds);
-                _madGateway.Raise(new DebateRequest
+                _madGateway.Raise(new IncidentReport
                 {
-                    initiatorId     = myId,
-                    affectedAgentId = myId,
-                    affectedTaskId  = ctx?.stepId ?? string.Empty,
-                    incidentType    = IncidentType.AgentImpaired,
-                    topic           = $"C3 mutex blocked: {conflictCids}",
-                    context         = $"{myId} 等待 C3-1 互斥锁 [{conflictCids}] 已超过 {elapsed:F0}s，" +
-                                     $"当前持锁方未释放。建议讨论强制转让目标或跳过约束。",
-                    estimatedRounds = 1
+                    reporterId   = myId,
+                    incidentType = IncidentTypes.C3MutexTimeout,
+                    isCritical   = false,
+                    description  = $"{myId} 等待 C3 互斥锁超时，疑似死锁",
+                    context      = $"阻塞Agent: {myId}\n" +
+                                   $"等待时长: {elapsed:F0}s\n" +
+                                   $"冲突约束: {conflictCids}",
                 });
                 Debug.LogWarning($"[ADM] {myId} C3 互斥等待超 {C3MutexDebateThreshold}s，已触发 MAD 辩论");
             }

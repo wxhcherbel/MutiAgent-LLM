@@ -69,7 +69,7 @@ public class PlanningModule : MonoBehaviour
     /// 在 ResolveAndConfirm() 中检测到槽位冲突时调用 Raise() 发起辩论。
     /// 为 null 时跳过 MAD 触发，不影响正常分配流程。
     /// </summary>
-    private IMADGateway _madGateway;
+    private MADGateway _madGateway;
 
     private static int msnCounter;
 
@@ -84,6 +84,10 @@ public class PlanningModule : MonoBehaviour
 
         // 获取 MAD 网关（挂在同一 agent GameObject 上）
         _madGateway = GetComponent<MADGateway>();
+
+        // 向 AgentPlanRegistry 注册，供 MADDecisionForwarder 在任务继承时查询本 agent 的剩余步骤
+        if (props != null)
+            AgentPlanRegistry.Register(props.AgentID, this);
 
         IntelligentAgent agent = GetComponent<IntelligentAgent>();
         if (agent != null)
@@ -905,99 +909,114 @@ public class PlanningModule : MonoBehaviour
     /// <summary>所有成员选择收齐后做唯一分配,按到达时间先到先得,重复选择者分配剩余槽。</summary>
     private void ResolveAndConfirm()
     {
-        // 组长自身排最前,其余按到达时间排序
+        // ── Step 1: 确定分配顺序（先到先得的"先到"依据）──────────────────────
+        // 按成员选槽时间戳（selectionTs）升序排列：到达越早优先级越高，对应"先到先得"语义。
+        // 未收到选择的成员（selectionTs 中无记录）赋值 float.MaxValue，排在最末尾。
         List<string> ordered = myGroup.memberIds
             .OrderBy(id => selectionTs.ContainsKey(id) ? selectionTs[id] : float.MaxValue)
             .ToList();
 
-        ordered.Remove(props.AgentID);
-        ordered.Insert(0, props.AgentID);
+        ordered.Remove(props.AgentID);   // 先把组长从时间戳排序中移除
+        ordered.Insert(0, props.AgentID); // 再把组长插回到最前：组长拥有最高优先级，自身选槽总是最先确认
 
-        List<PlanSlot> remaining = new List<PlanSlot>(slots);
-        var assignedSlotsByAgent = new Dictionary<string, PlanSlot>(StringComparer.OrdinalIgnoreCase);
+        List<PlanSlot> remaining = new List<PlanSlot>(slots); // 可用槽池的副本，随分配逐步缩减
+        var assignedSlotsByAgent = new Dictionary<string, PlanSlot>(StringComparer.OrdinalIgnoreCase); // 最终分配结果：agentId → 分配到的槽
 
-        // ── 槽位冲突检测：发现 2+ Agent 选同一槽时触发 MAD 辩论（非阻塞）──────────
-        // MAD 结果通过 DebateResolved → ADM.OnDebateResolved → PlanningModule.RequestReplan 异步生效。
-        // 此处继续原先到先得分配，不阻塞规划流程。
+        // ── Step 2: 冲突检测 + MAD 辩论触发 ──────────────────────────────────
+        // 在实际执行先到先得分配之前，先扫描是否有多个 Agent 同时选了同一个槽（冲突）。
+        // 若有冲突，异步发起 MAD 辩论让全组讨论更优的分配方案；
+        // 但本函数不等待辩论结果——辩论是异步的，当前周期仍继续先到先得分配，
+        // 保证任务执行不被辩论阻塞；辩论结果将在下一次 Replan 时体现。
         if (_madGateway != null)
         {
+            // 将所有 agentId→slotId 的选择按 slotId 分组，找出被多个 Agent 同时选中的槽
             var slotConflicts = selections
-                .GroupBy(kv => kv.Value)
-                .Where(g => g.Count() > 1)
+                .GroupBy(kv => kv.Value)   // key=slotId, 组内是所有选了该槽的 agentId
+                .Where(g => g.Count() > 1) // 只保留有 2 个及以上 Agent 选了同一槽的冲突组
                 .ToList();
 
             if (slotConflicts.Count > 0)
             {
+                // 为 MAD 辩论构建详细的上下文描述：列出每个冲突 Agent 的当前电量，
+                // 供辩论参与者（LLM）参考，提出更合理的重新分配建议
                 string ctx = string.Join("\n", slotConflicts.SelectMany(g =>
                     g.Select(kv =>
                     {
                         float bat = 0f;
-                        var mod = CommunicationManager.Instance?.GetAgentModule(kv.Key);
+                        var mod = CommunicationManager.Instance?.GetAgentModule(kv.Key); // 获取对应 Agent 的通信模块
                         if (mod != null)
                         {
                             var ia = mod.GetComponent<IntelligentAgent>();
-                            if (ia != null) bat = ia.CurrentState?.BatteryLevel ?? 0f;
+                            if (ia != null) bat = ia.CurrentState?.BatteryLevel ?? 0f; // 读取实时电量
                         }
-                        return $"- {kv.Key} selected {kv.Value} (battery={bat:F0}%)";
+                        return $"- {kv.Key} selected {kv.Value} (battery={bat:F0}%)"; // 格式：- AgentA selected slot_1 (battery=72%)
                     })));
 
+                // 汇总所有发生冲突的槽 ID，作为辩论 topic 的简要标题
                 string conflictedSlots = string.Join(", ",
                     slotConflicts.Select(g => g.Key).Distinct());
 
-                _madGateway.Raise(new DebateRequest
+                // 发起 MAD 辩论：槽位冲突需要协商，确定最终分配方案
+                _madGateway.Raise(new IncidentReport
                 {
-                    initiatorId     = props?.AgentID ?? string.Empty,
-                    incidentType    = IncidentType.AgentImpaired,
-                    topic           = $"Slot conflict: {conflictedSlots}",
-                    context         = ctx,
-                    estimatedRounds = 2
+                    reporterId   = props?.AgentID ?? string.Empty,
+                    incidentType = IncidentTypes.SlotConflict,
+                    isCritical   = false,
+                    description  = "多个 Agent 选择了相同任务槽，需重新分配",
+                    context      = $"冲突槽: {conflictedSlots}\n{ctx}",
                 });
 
                 Debug.Log($"[PlanningModule] {props?.AgentID} 检测到槽位冲突，已触发 MAD 辩论（仍继续先到先得分配）");
+                // 注意：Raise() 是异步的，辩论在后台进行；本函数继续往下执行先到先得分配，不等待辩论完成
             }
         }
 
+        // ── Step 3: 先到先得分配（按 ordered 顺序逐个处理）──────────────────
         foreach (string agentId in ordered)
         {
-            if (!selections.TryGetValue(agentId, out string wantedSlotId)) continue;
+            if (!selections.TryGetValue(agentId, out string wantedSlotId)) continue; // 该成员未提交选择，跳过
 
-            PlanSlot wanted   = remaining.Find(s => s.slotId == wantedSlotId);
+            PlanSlot wanted   = remaining.Find(s => s.slotId == wantedSlotId); // 检查该成员首选槽是否仍在可用池中
             PlanSlot assigned;
 
             if (wanted != null)
             {
-                assigned  = wanted;
+                assigned  = wanted; // 首选槽还在，直接分配给该成员（正常路径）
             }
             else
             {
+                // 首选槽已被更高优先级的成员占用；降级分配：取剩余池中的第一个槽
                 if (remaining.Count == 0)
                 {
                     Debug.LogWarning($"{props?.AgentID ?? "Unknown"}: [PlanningModule] 没有剩余槽可分配给 {agentId}");
-                    continue;
+                    continue; // 槽池已空，无法分配，跳过该成员（后续需依赖辩论结果 Replan）
                 }
-                assigned  = remaining[0];
+                assigned  = remaining[0]; // 降级：取剩余池中排在最前的槽
                 Debug.Log($"[PlanningModule] {agentId} 选择的槽 {wantedSlotId} 已被占用,改分配 {assigned.slotId}");
             }
 
-            remaining.Remove(assigned);
-            occupiedSlots.Add(assigned.slotId);
-            assignedSlotsByAgent[agentId] = assigned;
+            remaining.Remove(assigned);           // 从可用池移除，后续成员无法再选到该槽
+            occupiedSlots.Add(assigned.slotId);   // 记录到已占用集合，供白板约束检查使用
+            assignedSlotsByAgent[agentId] = assigned; // 记录最终分配结果，后续构建运行态约束时使用
 
             if (string.Equals(agentId, props.AgentID, StringComparison.OrdinalIgnoreCase))
             {
+                // 组长自身：直接更新本地 confirmedSlot，不需要发消息给自己
                 confirmedSlot = assigned;
                 Debug.Log($"[PlanningModule] {props.AgentID}(组长)确认槽 {assigned.slotId}");
             }
             else
             {
+                // 非组长成员：通过 SlotConfirm 消息通知该成员其最终分配结果
+                // reliable=true：确保消息必达，槽确认丢失会导致成员停在等待状态
                 comm.SendScopedMessage(
                     CommunicationScope.DirectAgent,
                     MessageType.SlotConfirm,
                     new SlotConfirmPayload
                     {
-                        msnId     = parsed.msnId,
-                        agentId   = agentId,
-                        slot      = assigned
+                        msnId     = parsed.msnId, // 任务 ID，成员用于校验消息属于当前规划轮次
+                        agentId   = agentId,       // 接收方 ID（成员侧校验自己才是消息目标）
+                        slot      = assigned        // 最终分配到的槽定义（含 slotId、目标点、约束等）
                     },
                     targetAgentId: agentId,
                     reliable: true);
@@ -1007,61 +1026,65 @@ public class PlanningModule : MonoBehaviour
         Debug.Log($"[PlanningModule] {props.AgentID} 最终分槽结果: " +
                   string.Join(", ", assignedSlotsByAgent.Select(kv => $"{kv.Key}->{kv.Value.slotId}")));
 
-        // StartExecution 不是简单广播同一份约束,而是“按成员逐个发送”。
-        // 原因:
-        // 1. 最终分槽后,watchAgent / syncWith 要从抽象引用(slotId / role / desc)回填成真实 agentId。
-        // 2. 这个回填结果对不同接收者可能不完全一样。
-        //    尤其是 C2.syncWith,需要从“参与同步的全部成员”里去掉当前接收者自己,
-        //    否则会出现 A 的约束里还包含 A 自己,导致自己等自己。
-        // 3. 所以这里不能直接复用一份全组公共 constraints,而是要对每个 memberId
-        //    单独调用 BuildRuntimeConstraintsForAgent(memberId, assignedSlotsByAgent),
-        //    生成“这个成员视角下可直接执行的运行态约束”。
+        // ── Step 4: 向每个非组长成员发送 StartExecution（按成员逐个发送，非广播）──────
+        // 为何不能广播同一份约束？
+        // ① 分槽后约束中的抽象引用（slotId / role / desc）需回填成真实 agentId。
+        // ② C2（同步约束）的 syncWith 字段：需要从”参与同步的全部成员”中去掉接收者自身，
+        //    否则 A 的约束里还包含 A 自己，会导致 A 等自己 → 死锁。
+        // ③ C3（等待约束）的 watchAgent 字段：也需要回填成真实被等待 agentId。
+        // 因此必须对每个 memberId 单独调用 BuildRuntimeConstraintsForAgent 生成专属约束。
         foreach (string memberId in myGroup.memberIds)
         {
-            if (string.Equals(memberId, props.AgentID, StringComparison.OrdinalIgnoreCase)) continue;
+            if (string.Equals(memberId, props.AgentID, StringComparison.OrdinalIgnoreCase)) continue; // 跳过组长自身，组长另行处理
 
-            // 为当前接收者生成一份专属的运行态约束:
-            // - C3 sign=+1: watchAgent 会被回填成真实的被等待 agentId
-            // - C2: syncWith 会被回填成真实 agentId 数组,并移除当前接收者自己
+            // 生成该成员视角下的运行态约束：
+            // - C3 sign=+1 的 watchAgent 回填为真实被等待 agentId
+            // - C2 的 syncWith 回填为真实 agentId 数组，并移除当前接收者自身
             StructuredConstraint[] runtimeConstraints = BuildRuntimeConstraintsForAgent(memberId, assignedSlotsByAgent);
 
-            // 将“最终分槽结果 + 当前成员专属约束”一起发给该成员。
-            // 成员侧收到 StartExecution 后,会先用这份 constraints 覆盖本地约束字典,
-            // 然后再进入 LLM#4 / ADM。这样后续执行阶段读取到的就是已经回填完成的约束。
+            // 将”最终槽定义 + 该成员专属运行态约束”打包发给成员。
+            // 成员侧收到 StartExecution 后先用此 constraints 覆盖本地约束字典，
+            // 再进入 LLM#4 / ADM 执行，保证约束已经完全回填，无需再做额外解析。
+            // reliable=true：StartExecution 是关键控制消息，丢失会导致成员永远不启动执行。
             comm.SendScopedMessage(
                 CommunicationScope.DirectAgent,
                 MessageType.StartExecution,
                 new StartExecPayload
                 {
-                    msnId = parsed.msnId,
-                    groupId = myGroup.groupId,
-                    constraints = runtimeConstraints
+                    msnId = parsed.msnId,         // 任务 ID，成员侧校验当前消息属于哪一轮规划
+                    groupId = myGroup.groupId,    // 组 ID，供成员侧白板分区使用
+                    constraints = runtimeConstraints // 该成员专属的已回填运行态约束
                 },
                 targetAgentId: memberId,
                 reliable: true);
         }
 
-        // 组长自身触发 LLM#4
+        // ── Step 5: 组长自身触发 LLM#4（本地调用，不走消息队列）─────────────────
+        // 组长收到自身的 StartExecution 不通过网络发送，而是直接调用 OnStartExec，
+        // 确保与成员侧相同的执行逻辑，同时避免自发自收造成的消息顺序问题。
         OnStartExec(new StartExecPayload
         {
             msnId = parsed.msnId,
             groupId = myGroup.groupId,
-            constraints = BuildRuntimeConstraintsForAgent(props.AgentID, assignedSlotsByAgent)
+            constraints = BuildRuntimeConstraintsForAgent(props.AgentID, assignedSlotsByAgent) // 组长自身视角的专属约束
         });
 
-        // 仅组长初始化 GroupMonitor（含通信层和监控层）
+        // ── Step 6: 仅组长初始化 GroupMonitor（MAD 辩论的服务端）────────────────
+        // GroupMonitor 是 MAD 辩论的处理入口（HandleIncidentReport），只在组长侧存在。
+        // 检查是否已挂载：避免 Replan 时重复 AddComponent 导致多个 GroupMonitor 同时监听。
         if (GetComponent<GroupMonitor>() == null)
         {
+            // 收集其他所有组的组长 ID，供 GroupMonitor 跨组通信使用
             string[] otherLeaderIds = allGroups != null
                 ? allGroups
-                    .Where(g => g.groupId != myGroup.groupId)
+                    .Where(g => g.groupId != myGroup.groupId) // 排除自身所在组
                     .Select(g => g.leaderId)
                     .ToArray()
                 : Array.Empty<string>();
 
-            var monitor = gameObject.AddComponent<GroupMonitor>();
+            var monitor = gameObject.AddComponent<GroupMonitor>(); // 运行时动态挂载，随组长 Agent 的 GameObject 生命周期
             monitor.Initialize(myGroup, myGroup.groupId, myGroup.leaderId,
-                               otherLeaderIds, llm);
+                               otherLeaderIds, llm); // 注入本组成员列表、组长 ID、LLM 接口
         }
     }
 
@@ -1460,6 +1483,104 @@ public class PlanningModule : MonoBehaviour
             agentPlan = null;
             Debug.Log($"[PlanningModule] {props?.AgentID} 规划已重置,等待重新规划");
         }
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // MAD 决策接口（由 MADDecisionForwarder 调用的最小接口）
+    // ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 返回当前计划中尚未执行的步骤（当前步骤及其后所有步骤）。
+    /// 由 MADDecisionForwarder 通过 AgentPlanRegistry 调用，用于任务继承场景：
+    /// 源 agent 故障时，MADDecisionForwarder 取出其剩余步骤并插入目标 agent 的计划。
+    /// </summary>
+    public PlanStep[] GetRemainingSteps()
+    {
+        if (agentPlan?.steps == null || agentPlan.steps.Length == 0)
+            return Array.Empty<PlanStep>();
+
+        int cur = Mathf.Max(0, agentPlan.curIdx);
+        // curIdx 已超出数组表示所有步骤已完成，返回空数组
+        if (cur >= agentPlan.steps.Length)
+            return Array.Empty<PlanStep>();
+
+        return agentPlan.steps.Skip(cur).ToArray();
+    }
+
+    /// <summary>
+    /// 向当前计划中插入步骤。由 MADDecisionForwarder 在处理 operation="insert_steps" 时调用。
+    /// <para>immediate=true：在 curIdx+1 处立即插入，接下来就执行（如任务接管）。</para>
+    /// <para>immediate=false：追加到 steps 数组末尾，当前步骤执行完后再执行。</para>
+    /// 若当前无活跃计划（state != Active），操作静默跳过并打 Warning。
+    /// </summary>
+    /// <param name="steps">要插入的步骤数组。</param>
+    /// <param name="immediate">true=立即插入当前位置后；false=追加到末尾。</param>
+    public void InsertSteps(PlanStep[] steps, bool immediate)
+    {
+        if (steps == null || steps.Length == 0) return;
+
+        if (agentPlan == null || agentPlan.steps == null)
+        {
+            Debug.LogWarning($"[PlanningModule] {props?.AgentID} InsertSteps：当前无活跃计划，跳过");
+            return;
+        }
+
+        int insertAt = immediate
+            ? Mathf.Min(agentPlan.curIdx + 1, agentPlan.steps.Length)
+            : agentPlan.steps.Length;
+
+        agentPlan.steps = agentPlan.steps.Take(insertAt)
+            .Concat(steps)
+            .Concat(agentPlan.steps.Skip(insertAt))
+            .ToArray();
+
+        Debug.Log($"[PlanningModule] {props?.AgentID} 插入 {steps.Length} 个步骤（immediate={immediate}，" +
+                  $"位置={insertAt}），总步骤数={agentPlan.steps.Length}");
+    }
+
+    /// <summary>
+    /// 强制指派槽位，跳过选槽协议，直接进入 LLM#4 步骤拆解阶段。
+    /// 由 MADDecisionForwarder 在处理 operation="force_slot" 时调用（用于 MAD 仲裁 slot 冲突）。
+    /// 若 startExecReceived 为 true（已收到 StartExec 信号），立即启动 LLM#4；
+    /// 否则仅记录 confirmedSlot，等待 StartExec 信号到达后触发。
+    /// </summary>
+    /// <param name="slot">MAD 仲裁裁决的目标槽位。</param>
+    public void ForceAssignSlot(PlanSlot slot)
+    {
+        if (slot == null)
+        {
+            Debug.LogWarning($"[PlanningModule] {props?.AgentID} ForceAssignSlot：slot 为 null，跳过");
+            return;
+        }
+
+        confirmedSlot = slot;
+        Debug.Log($"[PlanningModule] {props?.AgentID} MAD 强制指派槽位 {slot.slotId}（{slot.role}）");
+
+        // 若已收到 StartExec 信号，立即启动步骤拆解（同 OnSlotConfirm 的触发逻辑）
+        if (startExecReceived)
+        {
+            Debug.Log($"[PlanningModule] {props?.AgentID} StartExec 已就绪，立即启动 LLM#4");
+            StartCoroutine(RunLLM4());
+        }
+        else
+        {
+            Debug.Log($"[PlanningModule] {props?.AgentID} 等待 StartExec 信号后启动 LLM#4");
+        }
+    }
+
+    /// <summary>
+    /// 重置规划状态，供 MADDecisionForwarder 在调用 SubmitMissionRequest 之前执行。
+    /// 清空当前计划和 busy 标志，确保 SubmitMissionRequest 能正常启动新任务。
+    /// 由 MADDecisionForwarder 在处理 operation="new_mission" 时调用。
+    /// </summary>
+    public void ResetForNewMission()
+    {
+        Debug.Log($"[PlanningModule] {props?.AgentID} MAD 触发重置，准备执行新任务");
+        SetState(PlanningState.Idle);
+        busy      = false;
+        agentPlan = null;
+        confirmedSlot     = null;
+        startExecReceived = false;
     }
 
     private IEnumerator TimeLimitCoroutine(float seconds)

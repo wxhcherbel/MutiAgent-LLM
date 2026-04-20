@@ -1,82 +1,164 @@
 // MAD_Module/MADContracts.cs
-// MAD（Multi-Agent Debate）模块的核心数据契约。
-// 其他模块通过 DebateRequest 发起辩论，不直接操作 IncidentReport 等内部类型。
+// MAD（Multi-Agent Debate）模块全部数据契约。
+// 新事件类型：在 IncidentTypes 加一行常量即可，MAD 内部逻辑零改动。
 using System;
+using Newtonsoft.Json;
 using UnityEngine;
 
-// ── 辩论请求（外部入口契约）─────────────────────────────────────────────────
+// ── 触发侧（Raise 的唯一参数）────────────────────────────────────────────────
 
 /// <summary>
-/// 辩论发起请求，由任意模块创建并传给 IMADGateway.Raise()。
-/// MADGateway 负责将其转换为 IncidentReport 路由给 leader 的 GroupMonitor。
+/// 任意 Agent 调用 MADGateway.Raise() 时传入的事件上报对象。
+/// leader 侧 MADCoordinator 在收到后赋值 incidentId。
 /// </summary>
 [Serializable]
-public class DebateRequest
+public class IncidentReport
 {
-    /// <summary>发起方 agentId（通常为检测到问题的 agent 自身）。</summary>
-    public string initiatorId;
+    /// <summary>上报者 agentId。</summary>
+    public string reporterId;
 
-    /// <summary>直接受影响的 agentId（可与 initiatorId 相同，如电量耗尽自报）。</summary>
-    public string affectedAgentId;
+    /// <summary>事件类型字符串常量（见 IncidentTypes），新类型无需修改 MAD 逻辑。</summary>
+    public string incidentType;
 
-    /// <summary>受影响的任务/步骤 ID（可为空，用于 slot 冲突或跨步骤事件）。</summary>
-    public string affectedTaskId;
+    /// <summary>true = 立即中断 ADM Rolling Loop；false = 下一轮窗口处理。</summary>
+    public bool isCritical;
 
-    /// <summary>事件类型（AgentUnavailable / AgentImpaired / PlanInvalid / CapacityShortfall）。</summary>
-    public IncidentType incidentType;
+    /// <summary>"发生了什么" 1-2 句自然语言，直接注入 LLM Prompt。</summary>
+    public string description;
 
-    /// <summary>简短主题，供日志和白板摘要使用（1 行）。</summary>
-    public string topic;
-
-    /// <summary>自然语言详细描述，供 LLM 理解具体情况（2-5 句）。</summary>
+    /// <summary>结构化补充信息（key=value 多行），由调用方按实际情况填写。</summary>
     public string context;
 
-    /// <summary>建议辩论轮数（GroupMonitor 可根据 severity 覆盖）。默认 2。</summary>
-    public int estimatedRounds;
+    /// <summary>由 MADCoordinator 在收到报告后统一赋值（如 "inc_001"）。调用方留空。</summary>
+    public string incidentId;
 }
 
-// ── 结构化论据（辩论 prompt 增强）───────────────────────────────────────────
+// ── 已知事件类型常量（新增类型直接加行，MAD 内部零改动）─────────────────────
 
 /// <summary>
-/// 可附加在 DebateParticipant prompt 中的量化论据，帮助 LLM 输出更有依据的提案。
-/// 由 DebateParticipant 在构建 prompt 前可选注入，空字段将被跳过。
+/// 内置事件类型字符串常量。
+/// 新事件只需在此加一个 public const string，MAD 协调逻辑无需任何修改。
+/// </summary>
+public static class IncidentTypes
+{
+    /// <summary>Agent 电量耗尽或硬件故障，无法继续执行任务。</summary>
+    public const string AgentUnavailable = "AgentUnavailable";
+
+    /// <summary>Agent 仍可运行但需要其他成员协助（如低电量）。</summary>
+    public const string AgentImpaired = "AgentImpaired";
+
+    /// <summary>多个 Agent 选择了相同任务槽，需重新分配。</summary>
+    public const string SlotConflict = "SlotConflict";
+
+    /// <summary>等待 C3 互斥锁超时，疑似死锁。</summary>
+    public const string C3MutexTimeout = "C3MutexTimeout";
+
+    /// <summary>任务计划的前提假设失效，需要重新规划。</summary>
+    public const string PlanInvalid = "PlanInvalid";
+}
+
+// ── Leader → Member 查询（替代旧 DebateRoleAssignment）────────────────────────
+
+/// <summary>
+/// Leader 向每位成员发送的辩论查询消息。
+/// round=1 时 round1Summary 为空；round=2 时附带第一轮汇总供成员参考。
 /// </summary>
 [Serializable]
-public class StructuredArgument
+public class IncidentQuery
 {
-    /// <summary>当前电量百分比（0-100）。</summary>
-    public float batteryLevel;
+    public string incidentId;
 
-    /// <summary>到任务目标的直线距离（Unity 单位）。</summary>
-    public float distanceToTarget;
+    /// <summary>发送方 leaderId，成员用于将 MemberOpinion 回传。</summary>
+    public string leaderId;
 
-    /// <summary>任务优先级权重（来自 PlanSlot.priority，如有）。</summary>
-    public float taskPriorityWeight;
+    public string description;
+    public string context;
 
-    /// <summary>历史成功率（来自 MemoryModule，0-1）。</summary>
-    public float historicalSuccessRate;
+    /// <summary>1 = 独立提案轮；2 = 参考第一轮结果的修正轮。</summary>
+    public int round;
 
-    /// <summary>剩余步骤数（来自 PlanStep 列表长度）。</summary>
-    public int remainingStepsCount;
-
-    /// <summary>提议的应对动作（自然语言，一句话）。</summary>
-    public string proposedAction;
+    /// <summary>第一轮各成员建议的汇总文本，仅 round==2 时填入。</summary>
+    public string round1Summary;
 }
 
-// ── 辩论层级（三层降级策略）─────────────────────────────────────────────────
+// ── Member → Leader 回复（替代旧 DebateEntry）────────────────────────────────
 
 /// <summary>
-/// 辩论资源层级，由 ResourceBudget.SelectLayer() 根据电量/紧急度/复杂度选择。
-/// 当前始终返回 FullLLM，Rule/JsonSummary 为预留扩展。
+/// 成员 LLM 生成的辩论意见，回传给 leader MADCoordinator。
 /// </summary>
-public enum DebateLayer
+[Serializable]
+public class MemberOpinion
 {
-    /// <summary>确定性规则仲裁（0 次 LLM 调用，最快）。</summary>
-    Rule,
+    public string incidentId;
+    public string agentId;
 
-    /// <summary>收集结构化 JSON 论据后 1 次 LLM 综合（中等成本）。</summary>
-    JsonSummary,
+    /// <summary>对应的辩论轮次（1 或 2）。</summary>
+    public int round;
 
-    /// <summary>完整多轮 MAD（Proposer/Critic/Voter 角色，最高质量）。</summary>
-    FullLLM
+    /// <summary>具体建议（必须包含执行主体 agentId）。</summary>
+    public string recommendation;
+
+    /// <summary>置信度，0-1。</summary>
+    public float confidence;
+
+    /// <summary>LLM 推理过程（JSON 字符串）。LLM 实际输出 JSON 对象，由 ThoughtJsonConverter 序列化为字符串。</summary>
+    [JsonConverter(typeof(ThoughtJsonConverter))]
+    public string thought;
+}
+
+// ── 仲裁决策（替代旧 DebateConsensusEntry）──────────────────────────────────
+
+/// <summary>
+/// Leader 经两轮辩论 + LLM 仲裁后输出的最终决策。
+/// MADCoordinator 据此选择执行路径：重规划 or 逐人指令。
+/// </summary>
+[Serializable]
+public class IncidentDecision
+{
+    public string incidentId;
+
+    /// <summary>一句话决策摘要，用于日志和白板。</summary>
+    public string summary;
+
+    /// <summary>true = 任务结构需要调整，触发 RequestReplan(replanHint)。</summary>
+    public bool requiresReplan;
+
+    /// <summary>requiresReplan=true 时填入，告知 PlanningModule 期望的重规划方向。</summary>
+    public string replanHint;
+
+    /// <summary>requiresReplan=false 时填入，每个受影响 Agent 的具体行动指令。</summary>
+    public AgentDirective[] directives;
+
+    /// <summary>LLM 推理过程（JSON 字符串）。LLM 实际输出 JSON 对象，由 ThoughtJsonConverter 序列化为字符串。</summary>
+    [JsonConverter(typeof(ThoughtJsonConverter))]
+    public string thought;
+}
+
+/// <summary>
+/// 针对单个 Agent 的具体行动指令（仲裁决策的原子单元）。
+/// MADDecisionForwarder 根据 targetModule 和 payload 将指令路由到对应模块执行。
+/// </summary>
+[Serializable]
+public class AgentDirective
+{
+    /// <summary>执行指令的 Agent ID。</summary>
+    public string agentId;
+
+    /// <summary>人类可读的指令描述，用于日志和记忆，始终存在。</summary>
+    public string instruction;
+
+    /// <summary>
+    /// 目标模块标识，由仲裁 LLM 填写。
+    /// 可选值："planning"（规划模块）、"adm"（动作决策模块）。
+    /// MADDecisionForwarder 据此路由到对应模块执行逻辑。
+    /// </summary>
+    public string targetModule;
+
+    /// <summary>
+    /// JSON 字符串，含 operation 字段及该操作所需参数，由仲裁 LLM 填写。
+    /// operation 可选值：
+    ///   planning: "force_slot"（强制指派槽位）| "insert_steps"（插入步骤）| "new_mission"（重启 LLM#1）| "request_replan"（软重规划）
+    ///   adm:      "insert_actions"（插入原子动作）
+    /// </summary>
+    public string payload;
 }

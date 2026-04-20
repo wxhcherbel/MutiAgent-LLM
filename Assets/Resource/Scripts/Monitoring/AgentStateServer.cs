@@ -547,16 +547,9 @@ public partial class AgentStateServer : MonoBehaviour
 
     private void CaptureIncidents()
     {
-        var monitors = FindObjectsOfType<GroupMonitor>();
-        var all = new List<IncidentDebateSnapshot>();
-        foreach (var m in monitors)
-        {
-            var snaps = m.GetIncidentSnapshots();
-            if (snaps != null)
-                all.AddRange(snaps);
-        }
-        var json = JsonConvert.SerializeObject(all);
-        lock (snapshotLock) { incidentsJson = json; }
+        // MAD 重构后 GroupMonitor 不再暴露 GetIncidentSnapshots()；
+        // 活跃辩论状态由 MADCoordinator 内部管理，监控端留空等待后续可视化扩展。
+        lock (snapshotLock) { incidentsJson = "[]"; }
     }
 
     // ─────────────────────────────────────────────────────────

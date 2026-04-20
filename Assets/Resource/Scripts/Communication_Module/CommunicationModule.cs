@@ -248,31 +248,31 @@ public class CommunicationModule : MonoBehaviour
             case MessageType.IncidentReport:
                 // 成员 → Leader：上报紧急事件（仅组长 GameObject 上有 GroupMonitor）
                 ForwardPayload<IncidentReport>(message,
-                    r => GetGroupMonitor()?.HandleIncidentReport(r));
+                    r => GetGroupMonitor()?.HandleIncident(r));
                 break;
 
             case MessageType.IncidentAnnounce:
-                // Leader → 成员：宣告活跃事件（ADM 存储以便在辩论窗口响应）
+                // Leader → 成员：广播 Critical 事件通知，ADM 检测 isCritical 后中断 Rolling Loop
                 ForwardPayload<IncidentReport>(message,
                     admModule != null ? (Action<IncidentReport>)admModule.OnIncidentAnnounced : null);
                 break;
 
-            case MessageType.DebateProposal:
-                // Leader → 成员：分配辩论角色，触发其下一个 debate window 调用 LLM
-                ForwardPayload<DebateRoleAssignment>(message,
-                    admModule != null ? (Action<DebateRoleAssignment>)admModule.AssignDebateRole : null);
+            case MessageType.IncidentQuery:
+                // Leader → 成员：发起辩论查询（Round 1 独立提案 / Round 2 参考修正）
+                ForwardPayload<IncidentQuery>(message,
+                    admModule != null ? (Action<IncidentQuery>)admModule.OnIncidentQuery : null);
                 break;
 
-            case MessageType.DebateUpdate:
-                // 成员 → Leader：回传 DebateEntry（仅组长 GameObject 上有 GroupMonitor）
-                ForwardPayload<DebateEntry>(message,
-                    e => GetGroupMonitor()?.OnDebateEntryReceived(e));
+            case MessageType.IncidentOpinion:
+                // 成员 → Leader：回传 LLM 生成的辩论意见（仅组长 GameObject 上有 GroupMonitor）
+                ForwardPayload<MemberOpinion>(message,
+                    o => GetGroupMonitor()?.OnOpinionReceived(o));
                 break;
 
-            case MessageType.DebateResolved:
-                // Leader → 成员：广播最终共识，ADM 按决策行动
-                ForwardPayload<DebateConsensusEntry>(message,
-                    admModule != null ? (Action<DebateConsensusEntry>)admModule.OnDebateResolved : null);
+            case MessageType.IncidentResolved:
+                // Leader → 成员：广播最终决策（IncidentDecision），ADM 按 directives 执行
+                ForwardPayload<IncidentDecision>(message,
+                    admModule != null ? (Action<IncidentDecision>)admModule.OnIncidentResolved : null);
                 break;
 
             default:
