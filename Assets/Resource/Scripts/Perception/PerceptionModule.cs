@@ -7,9 +7,8 @@ using System.Collections.Generic;
 /// 1. 执行场景采样，产出本轮感知结果。
 /// 2. 将结果同步到 IntelligentAgent.CurrentState。
 /// 3. 将小节点写入共享注册表，并把关键事件上报给 ActionDecisionModule。
-/// 4. 不负责任何可视化逻辑，显示层应由 PerceptionVisualizer 等脚本主动读取结果。
+/// 4. 不负责任何可视化逻辑。
 /// </summary>
-[RequireComponent(typeof(PerceptionVisualizer))]
 public class PerceptionModule : MonoBehaviour
 {
     // ------------------------------------------------------------------
@@ -87,11 +86,7 @@ public class PerceptionModule : MonoBehaviour
     private static bool sharedRegistryInitialized;
     private readonly HashSet<int> sensedObjectIdsThisTick = new HashSet<int>();
 
-    /// <summary>
-    /// 对外只读接口。
-    /// 调用方：PerceptionVisualizer、监控脚本等。
-    /// 含义：最近一次完成整轮感知的时间戳。
-    /// </summary>
+    /// <summary>最近一次完成整轮感知的时间戳（只读）。</summary>
     public float LastPerceptionTime => lastPerceptionTime;
 
     // ------------------------------------------------------------------

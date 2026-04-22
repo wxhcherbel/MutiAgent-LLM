@@ -576,7 +576,7 @@ textarea.ctrl-input { resize: vertical; min-height: 60px; }
 }
 .wb-history-time { color: var(--muted); flex-shrink: 0; min-width: 40px; }
 
-/* ── Incidents / Debate tab ────────────────────────────────────────────────── */
+/* ── Incidents / MAD Debate tab ─────────────────────────────────────────────── */
 .inc-card {
   background: var(--card);
   border: 1px solid var(--border);
@@ -596,22 +596,20 @@ textarea.ctrl-input { resize: vertical; min-height: 60px; }
 }
 .inc-id   { font-size: 11px; font-weight: bold; color: var(--blue); }
 .inc-desc { font-size: 10px; color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sev-badge {
+/* isCritical badge */
+.crit-badge {
   padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; flex-shrink: 0;
 }
-.sev-Critical { background: rgba(248,81,73,0.25); color: var(--red); border: 1px solid var(--red); }
-.sev-High     { background: rgba(210,153,34,0.25); color: var(--orange); border: 1px solid var(--orange); }
-.sev-Medium   { background: rgba(88,166,255,0.2); color: var(--blue); border: 1px solid var(--blue); }
-.sev-Low      { background: rgba(139,148,158,0.2); color: var(--muted); border: 1px solid var(--muted); }
+.crit-true  { background: rgba(248,81,73,0.25); color: var(--red);   border: 1px solid var(--red); }
+.crit-false { background: rgba(139,148,158,0.15); color: var(--muted); border: 1px solid var(--border); }
 .status-badge {
   padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; flex-shrink: 0;
 }
-.status-Open      { color: var(--muted); border: 1px solid var(--border); }
-.status-Debating  { color: var(--orange); border: 1px solid var(--orange); animation: badgePulse 2s ease-in-out infinite; }
-.status-Resolved  { color: var(--green); border: 1px solid var(--green); }
-.status-Abandoned { color: var(--red); border: 1px solid var(--red); }
+.status-Debating { color: var(--orange); border: 1px solid var(--orange); animation: badgePulse 2s ease-in-out infinite; }
+.status-Resolved { color: var(--green);  border: 1px solid var(--green); }
 .inc-meta { font-size: 10px; color: var(--muted); padding: 4px 10px 0; display:flex; gap:16px; flex-wrap:wrap; }
 .inc-meta span { white-space: nowrap; }
+.inc-context { font-size: 10px; color: var(--muted); padding: 3px 10px 0; line-height: 1.4; white-space: pre-wrap; }
 .inc-rounds { padding: 8px 10px 10px; }
 .inc-round-header {
   font-size: 10px; color: var(--blue); font-weight: bold;
@@ -628,18 +626,9 @@ textarea.ctrl-input { resize: vertical; min-height: 60px; }
   border: 1px solid var(--border);
   font-size: 10px;
 }
-.de-role {
-  flex-shrink: 0; width: 58px; padding: 1px 5px; border-radius: 3px; font-size: 9px;
-  font-weight: bold; text-align: center; align-self: flex-start; margin-top: 1px;
-}
-.role-Proposer { background: rgba(88,166,255,0.2);  color: var(--blue); }
-.role-Critic   { background: rgba(210,153,34,0.2);  color: var(--orange); }
-.role-Voter    { background: rgba(63,185,80,0.2);   color: var(--green); }
-.role-Arbiter  { background: rgba(248,81,73,0.2);   color: var(--red); }
 .de-body       { flex: 1; min-width: 0; }
 .de-author     { color: var(--blue); font-weight: bold; margin-bottom: 2px; }
 .de-content    { color: var(--text); line-height: 1.5; word-break: break-word; }
-.de-vote       { color: var(--purple); font-size: 9px; margin-top: 2px; }
 .de-conf       { display: flex; align-items: center; gap: 5px; margin-top: 3px; }
 .conf-bar      { flex: 1; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
 .conf-fill     { height: 100%; border-radius: 2px; }
@@ -652,8 +641,12 @@ textarea.ctrl-input { resize: vertical; min-height: 60px; }
   border-radius: 4px;
   font-size: 10px;
 }
-.inc-res-title { color: var(--green); font-weight: bold; margin-bottom: 3px; }
-.inc-res-body  { color: var(--text); line-height: 1.5; word-break: break-word; }
+.inc-res-title    { color: var(--green); font-weight: bold; margin-bottom: 3px; }
+.inc-res-body     { color: var(--text); line-height: 1.5; word-break: break-word; }
+.inc-directive    { font-size: 9px; margin-top: 4px; padding: 3px 6px; background: rgba(88,166,255,0.07); border-left: 2px solid var(--blue); border-radius: 2px; }
+.inc-dir-agent    { color: var(--blue); font-weight: bold; }
+.inc-dir-module   { color: var(--orange); margin: 0 4px; }
+.inc-dir-instr    { color: var(--text); }
 .inc-empty { color: var(--muted); font-size: 11px; text-align: center; padding: 30px; }
 
 /* ── Memory tab ────────────────────────────────────────────────────────────── */
@@ -851,7 +844,7 @@ textarea.ctrl-input { resize: vertical; min-height: 60px; }
         <div id="wb-body"></div>
       </div>
 
-      <!-- Incidents / Debate tab -->
+      <!-- Incidents / MAD Debate tab -->
       <div class="tab-pane" id="tab-incidents">
         <div id="inc-toolbar" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--card)">
           <label style="font-size:10px;color:var(--muted)">状态:</label>
@@ -859,16 +852,12 @@ textarea.ctrl-input { resize: vertical; min-height: 60px; }
             <option value="">全部</option>
             <option value="Debating">Debating</option>
             <option value="Resolved">Resolved</option>
-            <option value="Open">Open</option>
-            <option value="Abandoned">Abandoned</option>
           </select>
-          <label style="font-size:10px;color:var(--muted)">Severity:</label>
-          <select id="inc-sev-filter" onchange="renderIncidents()" style="font-size:10px">
+          <label style="font-size:10px;color:var(--muted)">类型:</label>
+          <select id="inc-crit-filter" onchange="renderIncidents()" style="font-size:10px">
             <option value="">全部</option>
-            <option value="Critical">Critical</option>
-            <option value="High">High</option>
-            <option value="Medium">Medium</option>
-            <option value="Low">Low</option>
+            <option value="critical">Critical</option>
+            <option value="normal">Normal</option>
           </select>
           <button class="ctrl-btn" style="margin-left:auto;padding:2px 10px;font-size:10px" onclick="fetchIncidents()">刷新</button>
         </div>
@@ -2058,64 +2047,64 @@ async function fetchIncidents() {
 }
 
 function renderIncidents() {
-  const body = document.getElementById('inc-body');
+  const body         = document.getElementById('inc-body');
   const statusFilter = document.getElementById('inc-status-filter').value;
-  const sevFilter    = document.getElementById('inc-sev-filter').value;
+  const critFilter   = document.getElementById('inc-crit-filter').value;
 
   let data = incidentsData;
   if (statusFilter) data = data.filter(i => i.status === statusFilter);
-  if (sevFilter)    data = data.filter(i => i.severity === sevFilter);
+  if (critFilter === 'critical') data = data.filter(i => i.isCritical);
+  if (critFilter === 'normal')   data = data.filter(i => !i.isCritical);
 
   if (!data || data.length === 0) {
-    body.innerHTML = '<div class="inc-empty">暂无紧急事件</div>';
+    body.innerHTML = '<div class="inc-empty">暂无 MAD 辩论事件</div>';
     return;
   }
 
-  // Sort: Debating first, then by reportedAt desc
+  // Sort: Debating first, then by startedAt desc
   data = [...data].sort((a, b) => {
-    const order = { Debating:0, Open:1, Resolved:2, Abandoned:3 };
-    const od = (order[a.status]??9) - (order[b.status]??9);
+    const order = { Debating: 0, Resolved: 1 };
+    const od = (order[a.status] ?? 9) - (order[b.status] ?? 9);
     if (od !== 0) return od;
-    return (b.reportedAt||0) - (a.reportedAt||0);
+    return (b.startedAt || 0) - (a.startedAt || 0);
   });
 
   let html = '';
   for (const inc of data) {
-    const entries = inc.entries || [];
-    const rounds = [...new Set(entries.map(e => e.debateRound))].sort((a,b)=>a-b);
+    const opinions = inc.opinions || [];
+    const rounds   = [...new Set(opinions.map(o => o.round))].sort((a, b) => a - b);
+    const critCls  = inc.isCritical ? 'crit-true' : 'crit-false';
+    const critTxt  = inc.isCritical ? 'Critical'  : 'Normal';
 
     html += `<div class="inc-card">
       <div class="inc-card-header">
         <span class="inc-id">${escHtml(inc.incidentId || '—')}</span>
-        <span class="sev-badge sev-${escHtml(inc.severity||'')}">${escHtml(inc.severity||'?')}</span>
+        <span class="crit-badge ${critCls}">${critTxt}</span>
         <span class="status-badge status-${escHtml(inc.status||'')}">${escHtml(inc.status||'?')}</span>
         <span class="inc-desc" title="${escHtml(inc.description||'')}">${escHtml(inc.description||'')}</span>
       </div>
       <div class="inc-meta">
         <span><span style="color:var(--muted)">类型</span> <span style="color:var(--blue)">${escHtml(inc.incidentType||'?')}</span></span>
         <span><span style="color:var(--muted)">组</span> ${escHtml(inc.groupId||'?')}</span>
-        ${inc.affectedAgentId ? `<span><span style="color:var(--muted)">受影响</span> <span style="color:var(--orange)">${escHtml(inc.affectedAgentId)}</span></span>` : ''}
-        ${inc.affectedTaskId  ? `<span><span style="color:var(--muted)">任务</span> ${escHtml(inc.affectedTaskId)}</span>` : ''}
         <span><span style="color:var(--muted)">上报者</span> ${escHtml(inc.reporterId||'?')}</span>
-        <span><span style="color:var(--muted)">上报于</span> ${formatTime(inc.reportedAt||0)}</span>
+        <span><span style="color:var(--muted)">开始于</span> ${formatTime(inc.startedAt||0)}</span>
         ${inc.resolvedAt ? `<span><span style="color:var(--muted)">解决于</span> ${formatTime(inc.resolvedAt)}</span>` : ''}
-      </div>`;
+      </div>
+      ${inc.context ? `<div class="inc-context">${escHtml(inc.context)}</div>` : ''}`;
 
-    // Debate rounds
-    if (entries.length > 0) {
+    // Member opinions grouped by round
+    if (opinions.length > 0) {
       html += '<div class="inc-rounds">';
       for (const round of rounds) {
-        const roundEntries = entries.filter(e => e.debateRound === round);
+        const roundOps = opinions.filter(o => o.round === round);
         html += `<div class="inc-round-header">Round ${round}</div>`;
-        for (const e of roundEntries) {
-          const confPct = Math.round((e.confidence||0) * 100);
-          const confColor = e.confidence > 0.7 ? '#3fb950' : e.confidence > 0.4 ? '#d29922' : '#f85149';
+        for (const op of roundOps) {
+          const confPct   = Math.round((op.confidence || 0) * 100);
+          const confColor = op.confidence > 0.7 ? '#3fb950' : op.confidence > 0.4 ? '#d29922' : '#f85149';
           html += `<div class="debate-entry">
-            <span class="de-role role-${escHtml(e.role||'')}">${escHtml(e.role||'?')}</span>
             <div class="de-body">
-              <div class="de-author">${escHtml(e.authorId||'?')} <span style="color:var(--muted);font-size:9px">${formatTime(e.createdAt||0)}</span></div>
-              <div class="de-content">${escHtml(e.content||'')}</div>
-              ${e.voteFor ? `<div class="de-vote">→ 支持: ${escHtml(e.voteFor)}</div>` : ''}
+              <div class="de-author">${escHtml(op.agentId||'?')}</div>
+              <div class="de-content">${escHtml(op.recommendation||'')}</div>
               <div class="de-conf">
                 <div class="conf-bar"><div class="conf-fill" style="width:${confPct}%;background:${confColor}"></div></div>
                 <span class="conf-label">${confPct}%</span>
@@ -2126,14 +2115,23 @@ function renderIncidents() {
       }
       html += '</div>';
     } else {
-      html += '<div style="padding:6px 10px;font-size:10px;color:var(--muted)">等待辩论参与者响应…</div>';
+      html += '<div style="padding:6px 10px;font-size:10px;color:var(--muted)">等待成员意见响应…</div>';
     }
 
-    // Final resolution
-    if (inc.status === 'Resolved' && inc.finalResolutionSummary) {
+    // Decision (Resolved)
+    if (inc.status === 'Resolved' && inc.decision) {
+      const dec  = inc.decision;
+      const dirs = dec.directives || [];
+      const dirHtml = dirs.map(d => `
+        <div class="inc-directive">
+          <span class="inc-dir-agent">${escHtml(d.agentId||'?')}</span>
+          <span class="inc-dir-module">[${escHtml(d.targetModule||'?')}]</span>
+          <span class="inc-dir-instr">${escHtml(d.instruction||'')}</span>
+        </div>`).join('');
       html += `<div class="inc-resolution">
-        <div class="inc-res-title">✓ 最终决策</div>
-        <div class="inc-res-body">${escHtml(inc.finalResolutionSummary)}</div>
+        <div class="inc-res-title">✓ 仲裁决策</div>
+        <div class="inc-res-body">${escHtml(dec.summary||'')}</div>
+        ${dirHtml}
       </div>`;
     }
 
@@ -2378,7 +2376,7 @@ async function poll() {
     if (currentTab === 'incidents') fetchIncidents();
     if (currentTab === 'memory') {
       if (memSubTab === 'policies') fetchPolicies();
-      else renderMemory();
+      else fetchMemory();
     }
     // 运动事件独立拉取，不影响主 poll 失败判断
     fetchMotionEvents();
@@ -2805,8 +2803,9 @@ function renderPolicies(data) {
   const tagFilter = document.getElementById('policy-tag-filter')?.value || '';
 
   const statsEl = document.getElementById('policy-stats');
-  if (statsEl) statsEl.textContent =
-    `Policy: ${data.policyCount} 条　Insight: ${data.insightCount} 条（全局去重，跨 run 持久化）`;
+  if (statsEl) statsEl.innerHTML =
+    `Policy: ${data.policyCount} 条　Insight: ${data.insightCount} 条（全局去重，跨 run 持久化）` +
+    (data.saveFilePath ? `<br><span style="color:var(--muted);font-size:9px;word-break:break-all">📁 ${escHtml(data.saveFilePath)}</span>` : '');
 
   // 更新标签下拉（保留当前选中）
   const allTags = new Set();

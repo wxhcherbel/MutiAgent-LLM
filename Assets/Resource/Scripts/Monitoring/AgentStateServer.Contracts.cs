@@ -256,43 +256,62 @@ public class WhiteboardSnapshot
     public WhiteboardWriteRecord[] history;
 }
 
-// ── MAD 辩论快照 ─────────────────────────────────────────────────────────────
+// ── MAD 辩论快照（与当前 MADCoordinator / MADContracts 对齐）────────────────
 
 /// <summary>
-/// 单个辩论条目的仪表板快照（隐藏 incidentId 冗余字段以减小传输量）。
+/// 单个成员意见的仪表板快照（对应 MemberOpinion）。
 /// </summary>
 [Serializable]
-public class DebateEntrySnapshot
+public class MadMemberOpinionSnapshot
 {
-    public string entryId;
-    public string authorId;
-    public int    debateRound;
-    public string role;
-    public string content;
-    public float  confidence;
-    public string voteFor;
-    public float  createdAt;
+    public string agentId;
+    public int    round;           // 1 = 独立提案；2 = 参考汇总后修正
+    public string recommendation;  // 成员建议
+    public float  confidence;      // 0-1
+    public string thought;         // LLM 推理过程 JSON 字符串，可能为空
 }
 
 /// <summary>
-/// 单个紧急事件及其辩论记录的完整快照（由 DebateCoordinator 暴露）。
+/// 单条 AgentDirective 的仪表板快照。
 /// </summary>
 [Serializable]
-public class IncidentDebateSnapshot
+public class MadDirectiveSnapshot
+{
+    public string agentId;
+    public string instruction;
+    public string targetModule;   // "planning" | "adm"
+    public string payload;        // JSON 字符串
+}
+
+/// <summary>
+/// 仲裁决策的仪表板快照（对应 IncidentDecision）。
+/// </summary>
+[Serializable]
+public class MadDecisionSnapshot
+{
+    public string summary;
+    public MadDirectiveSnapshot[] directives;
+    public string thought;
+}
+
+/// <summary>
+/// 单个 MAD 事件及其辩论过程的完整快照（由 MADCoordinator 通过 AgentStateServer.PushMadIncident 推送）。
+/// </summary>
+[Serializable]
+public class MadIncidentSnapshot
 {
     public string incidentId;
     public string incidentType;
-    public string severity;
-    public string status;
+    public bool   isCritical;
     public string reporterId;
     public string groupId;
-    public string affectedAgentId;
-    public string affectedTaskId;
     public string description;
-    public float  reportedAt;
+    public string context;
+    public string status;          // "Debating" | "Resolved"
+    public float  startedAt;
     public float  resolvedAt;
-    public string finalResolutionSummary;
-    public DebateEntrySnapshot[] entries;
+    public MadMemberOpinionSnapshot[] opinions;  // 两轮意见合并，按时序排列
+    public MadDecisionSnapshot        decision;  // null 直到 Resolved
 }
 
 // ── 运动事件 ─────────────────────────────────────────────────────────────────
@@ -384,4 +403,5 @@ public class PersistentMemoryPayload
     public int                         insightCount;  // Insight 总数
     public MemorySnapshot[]            policies;      // 全部 Policy 记忆（按 strengthScore 降序）
     public ReflectionInsightSnapshot[] insights;      // 全部有效 Insight（按 insightDepth+createdAt 降序）
+    public string                      saveFilePath;  // 持久化文件路径（供前端展示）
 }

@@ -320,7 +320,7 @@ public class IntelligentAgent : MonoBehaviour
                 description  = $"Agent {Properties.AgentID} 电量耗尽，无法继续执行任务",
                 context      = $"受影响Agent: {Properties.AgentID}\n" +
                                $"当前电量: {CurrentState.BatteryLevel:F0}%\n" +
-                               $"当前任务: {CurrentState.CurrentTaskId ?? "无"}",
+                               $"当前任务: {PlanningModule?.GetCurrentStep()?.stepId ?? "无"}",
             });
         }
     }

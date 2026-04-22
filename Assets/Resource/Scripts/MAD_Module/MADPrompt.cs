@@ -112,8 +112,6 @@ public static class MADPrompt
             "    \"suggestion\": \"可跨任务复用的多智能体协调原则（描述结构性条件而非当前细节；无新规律则填\\\"\\\"）\"\n" +
             "  },\n" +
             "  \"summary\": \"一句话决策理由\",\n" +
-            "  \"requiresReplan\": false,\n" +
-            "  \"replanHint\": \"\",\n" +
             "  \"directives\": [/* 见下方格式说明 */]\n" +
             "}\n" +
             "\n" +
@@ -122,30 +120,56 @@ public static class MADPrompt
             "\n" +
             "targetModule=\"planning\" 时，payload 可选格式：\n" +
             "\n" +
-            "① 强制指派槽位（slot 冲突仲裁）：\n" +
-            "  payload: {\"operation\":\"force_slot\",\"slot\":{\"slotId\":\"s1\",\"role\":\"侦察\",\"desc\":\"负责北区巡逻\",\"doneCond\":\"巡逻完毕\",\"constraintIds\":[]}}\n" +
-            "\n" +
-            "② 插入步骤——接管某成员的剩余任务（immediate=true 立即接管，append=false 排队到最后）：\n" +
-            "  payload: {\"operation\":\"insert_steps\",\"fromAgentId\":\"AgentA\",\"insertMode\":\"immediate\"}\n" +
+            "① 插入步骤——接管某成员的剩余任务（immediate 立即接管，append 排队到最后）：\n" +
+            "  payload: {\n" +
+            "    \"operation\": \"insert_steps\",\n" +
+            "    \"fromAgentId\": \"AgentA\",\n" +
+            "    \"insertMode\": \"immediate\"\n" +
+            "  }\n" +
             "\n" +
             "② 插入步骤——直接指定新步骤内容：\n" +
-            "  payload: {\"operation\":\"insert_steps\",\"steps\":[{\"stepId\":\"s_mad_1\",\"text\":\"前往充电站\",\"targetName\":\"充电站\",\"doneCond\":\"充电完成\",\"constraintIds\":[]}],\"insertMode\":\"append\"}\n" +
+            "  payload: {\n" +
+            "    \"operation\": \"insert_steps\",\n" +
+            "    \"steps\": [\n" +
+            "      {\n" +
+            "        \"stepId\": \"s_mad_1\",\n" +
+            "        \"text\": \"前往充电站\",\n" +
+            "        \"targetName\": \"充电站\",\n" +
+            "        \"doneCond\": \"充电完成\",\n" +
+            "        \"constraintIds\": []\n" +
+            "      }\n" +
+            "    ],\n" +
+            "    \"insertMode\": \"append\"\n" +
+            "  }\n" +
             "\n" +
-            "③ 软重规划（保留任务框架，下轮自动重新拆解步骤）：\n" +
-            "  payload: {\"operation\":\"request_replan\",\"replanHint\":\"优先完成紧急配送，跳过低优先级步骤\"}\n" +
-            "\n" +
-            "④ 重启完整规划（放弃当前任务，从 LLM#1 重新开始）：\n" +
-            "  payload: {\"operation\":\"new_mission\",\"missionDescription\":\"重新规划：优先保障电量充足的成员完成核心任务\",\"agentCount\":3}\n" +
+            "③ 重启完整规划（放弃当前任务，从 LLM#1 重新开始）：\n" +
+            "  payload: {\n" +
+            "    \"operation\": \"new_mission\",\n" +
+            "    \"missionDescription\": \"重新规划：优先保障电量充足的成员完成核心任务\",\n" +
+            "    \"agentCount\": 3\n" +
+            "  }\n" +
             "\n" +
             "targetModule=\"adm\" 时，payload 可选格式：\n" +
             "\n" +
-            "⑤ 插入原子动作（immediate=true 立即执行，append 排到当前批次末尾）：\n" +
-            "  payload: {\"operation\":\"insert_actions\",\"actions\":[{\"actionId\":\"mad_act_1\",\"type\":\"Navigate\",\"targetName\":\"充电站\",\"duration\":0,\"actionParams\":\"\",\"spatialHint\":\"\"}],\"insertMode\":\"immediate\"}\n" +
+            "④ 插入原子动作（immediate 立即执行，append 排到当前批次末尾）：\n" +
+            "  payload: {\n" +
+            "    \"operation\": \"insert_actions\",\n" +
+            "    \"actions\": [\n" +
+            "      {\n" +
+            "        \"actionId\": \"mad_act_1\",\n" +
+            "        \"type\": \"Navigate\",\n" +
+            "        \"targetName\": \"充电站\",\n" +
+            "        \"duration\": 0,\n" +
+            "        \"actionParams\": \"\",\n" +
+            "        \"spatialHint\": \"\"\n" +
+            "      }\n" +
+            "    ],\n" +
+            "    \"insertMode\": \"immediate\"\n" +
+            "  }\n" +
             "\n" +
             "1. thought 必填，按上方结构输出真实推理内容。\n" +
-            "2. requiresReplan=true 表示所有成员需重新规划，replanHint 填期望方向；directives 可填 []。\n" +
-            "3. requiresReplan=false 时，directives 填需要操作的成员，targetModule 和 payload 必填。\n" +
-            "4. payload 必须是合法的 JSON 字符串（双引号转义）。\n" +
-            "5. 每种 operation 只需选择最符合当前情境的一种，不要组合多种 operation 到同一条 directive。";
+            "2. directives 填需要操作的成员，targetModule 和 payload 必填。\n" +
+            "3. payload 必须是合法的 JSON 字符串（双引号转义）。\n" +
+            "4. 每种 operation 只需选择最符合当前情境的一种，不要组合多种 operation 到同一条 directive。";
     }
 }

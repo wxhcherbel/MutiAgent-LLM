@@ -44,17 +44,8 @@ public static class IncidentTypes
     /// <summary>Agent 电量耗尽或硬件故障，无法继续执行任务。</summary>
     public const string AgentUnavailable = "AgentUnavailable";
 
-    /// <summary>Agent 仍可运行但需要其他成员协助（如低电量）。</summary>
-    public const string AgentImpaired = "AgentImpaired";
-
-    /// <summary>多个 Agent 选择了相同任务槽，需重新分配。</summary>
-    public const string SlotConflict = "SlotConflict";
-
     /// <summary>等待 C3 互斥锁超时，疑似死锁。</summary>
     public const string C3MutexTimeout = "C3MutexTimeout";
-
-    /// <summary>任务计划的前提假设失效，需要重新规划。</summary>
-    public const string PlanInvalid = "PlanInvalid";
 }
 
 // ── Leader → Member 查询（替代旧 DebateRoleAssignment）────────────────────────
@@ -120,13 +111,7 @@ public class IncidentDecision
     /// <summary>一句话决策摘要，用于日志和白板。</summary>
     public string summary;
 
-    /// <summary>true = 任务结构需要调整，触发 RequestReplan(replanHint)。</summary>
-    public bool requiresReplan;
-
-    /// <summary>requiresReplan=true 时填入，告知 PlanningModule 期望的重规划方向。</summary>
-    public string replanHint;
-
-    /// <summary>requiresReplan=false 时填入，每个受影响 Agent 的具体行动指令。</summary>
+    /// <summary>每个受影响 Agent 的具体行动指令。</summary>
     public AgentDirective[] directives;
 
     /// <summary>LLM 推理过程（JSON 字符串）。LLM 实际输出 JSON 对象，由 ThoughtJsonConverter 序列化为字符串。</summary>
@@ -157,7 +142,7 @@ public class AgentDirective
     /// <summary>
     /// JSON 字符串，含 operation 字段及该操作所需参数，由仲裁 LLM 填写。
     /// operation 可选值：
-    ///   planning: "force_slot"（强制指派槽位）| "insert_steps"（插入步骤）| "new_mission"（重启 LLM#1）| "request_replan"（软重规划）
+    ///   planning: "insert_steps"（插入步骤）| "new_mission"（重启 LLM#1）
     ///   adm:      "insert_actions"（插入原子动作）
     /// </summary>
     public string payload;

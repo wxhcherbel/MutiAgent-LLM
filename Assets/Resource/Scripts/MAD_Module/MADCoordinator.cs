@@ -80,6 +80,9 @@ public class MADCoordinator
 
     private static int _counter = 0;
 
+    // ─── 辩论开始时间记录（供 Web 快照使用）─────────────────────────────────
+    private readonly Dictionary<string, float> _startedAt = new Dictionary<string, float>();
+
     // ─────────────────────────────────────────────────────────────────────────
     // 构造
     // ─────────────────────────────────────────────────────────────────────────
@@ -129,10 +132,12 @@ public class MADCoordinator
         // 赋予全局唯一 incidentId（格式 inc_001）
         report.incidentId = $"inc_{++_counter:D3}";
         _opinions[report.incidentId] = new List<MemberOpinion>();
+        _startedAt[report.incidentId] = Time.time;
 
         Debug.Log($"[MADCoordinator] {_leaderId} 开始辩论 {report.incidentId}: " +
                   $"{report.incidentType} (critical={report.isCritical})");
 
+        AgentStateServer.PushMadIncident(BuildMadSnapshot(report, "Debating", null));
         _owner.StartCoroutine(RunDebate(report));
     }
 
@@ -187,6 +192,7 @@ public class MADCoordinator
 
         string round1Summary = BuildOpinionSummary(report.incidentId, round: 1);
         Debug.Log($"[MADCoordinator] {_leaderId} Round1 摘要:\n{round1Summary}");
+        AgentStateServer.PushMadIncident(BuildMadSnapshot(report, "Debating", null));
 
         // ── Round 2：参考他人意见后修正（真正的"辩论"）──────────────────────────
         var query2 = new IncidentQuery
@@ -206,6 +212,7 @@ public class MADCoordinator
 
         string round2Summary = BuildOpinionSummary(report.incidentId, round: 2);
         Debug.Log($"[MADCoordinator] {_leaderId} Round2 摘要:\n{round2Summary}");
+        AgentStateServer.PushMadIncident(BuildMadSnapshot(report, "Debating", null));
 
         // ── 仲裁：Leader LLM 综合两轮意见，输出可执行决策 ──────────────────────
         string membersStatus = BuildMembersStatus();
@@ -351,11 +358,9 @@ public class MADCoordinator
     private static IncidentDecision FallbackDecision(string incidentId, string reason)
         => new IncidentDecision
         {
-            incidentId     = incidentId,
-            summary        = $"降级决策：{reason}",
-            requiresReplan = false,
-            replanHint     = string.Empty,
-            directives     = Array.Empty<AgentDirective>(),
+            incidentId = incidentId,
+            summary    = $"降级决策：{reason}",
+            directives = Array.Empty<AgentDirective>(),
         };
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -370,54 +375,19 @@ public class MADCoordinator
         if (!string.IsNullOrWhiteSpace(decision.thought))
             Debug.Log($"[MADCoordinator] {_leaderId} [Thought] {decision.thought}");
 
-        // ── 兼容：将 requiresReplan=true 转换为统一的 directive 格式 ─────────────
-        // requiresReplan 是 LLM 输出的高层标志，此处转换为 targetModule="planning" 的
-        // request_replan 指令，之后所有路径统一走 MADDecisionForwarder，无需额外分支。
-        if (decision.requiresReplan && _group?.memberIds != null)
-        {
-            string hint = string.IsNullOrWhiteSpace(decision.replanHint)
-                ? $"MAD决策：{decision.summary}"
-                : decision.replanHint;
+        // ── 广播完整决策给全组：每个成员在 OnIncidentResolved 中自行筛选自身 directive 执行 ──
+        _comm?.SendStructuredMessage("All", MessageType.IncidentResolved, decision);
 
-            string replanPayload = $"{{\"operation\":\"request_replan\",\"replanHint\":{JsonConvert.SerializeObject(hint)}}}";
-
-            var replanDirectives = _group.memberIds
-                .Where(id => !string.IsNullOrWhiteSpace(id))
-                .Select(id => new AgentDirective
-                {
-                    agentId      = id,
-                    instruction  = hint,
-                    targetModule = "planning",
-                    payload      = replanPayload,
-                })
-                .ToArray();
-
-            // 合并到 directives（LLM 此时通常给出空 directives）
-            decision.directives = (decision.directives ?? Array.Empty<AgentDirective>())
-                .Concat(replanDirectives)
-                .ToArray();
-
-            Debug.Log($"[MADCoordinator] {_leaderId} requiresReplan=true → 已为 " +
-                      $"{replanDirectives.Length} 个成员生成 request_replan 指令");
-        }
-
-        // ── 单播各 agent 的 directive ──────────────────────────────────────────
         if (decision.directives != null)
         {
             foreach (var directive in decision.directives)
             {
                 if (string.IsNullOrWhiteSpace(directive.agentId)) continue;
-                // 发送完整决策对象；成员端 MADGateway.OnIncidentResolved 会筛选自身 directive
-                _comm?.SendStructuredMessage(
-                    directive.agentId, MessageType.IncidentResolved, decision);
                 Debug.Log($"[MADCoordinator] {_leaderId} → {directive.agentId} " +
                           $"[{directive.targetModule}/{ExtractOperation(directive.payload)}]: " +
                           $"{directive.instruction}");
             }
         }
-
-        // ── 广播完整决策供全组知晓（白板更新、监控端采集等）──────────────────────
-        _comm?.SendStructuredMessage("All", MessageType.IncidentResolved, decision);
 
         // ── 写入记忆：MAD 仲裁决策属于高价值协调经验，始终存储 ─────────────────
         // thought.suggestion 由 MemoryModule.TryExtractPolicyFromDetail 自动提炼为 Policy 记忆
@@ -444,6 +414,9 @@ public class MADCoordinator
 
             Debug.Log($"[MADCoordinator] {_leaderId} 仲裁决策已写入记忆: {summary}");
         }
+
+        // ── 推送 Resolved 快照到 Web 监控 ────────────────────────────────────────
+        AgentStateServer.PushMadIncident(BuildMadSnapshot(report, "Resolved", decision));
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -463,5 +436,68 @@ public class MADCoordinator
             return obj != null && obj.TryGetValue("operation", out var op) ? op?.ToString() ?? "" : "";
         }
         catch { return string.Empty; }
+    }
+
+    /// <summary>
+    /// 从当前辩论状态构建 Web 监控快照。
+    /// 在辩论开始、每轮意见收集后、以及决策执行后各调用一次。
+    /// </summary>
+    private MadIncidentSnapshot BuildMadSnapshot(
+        IncidentReport report, string status, IncidentDecision decision)
+    {
+        // 意见列表
+        MadMemberOpinionSnapshot[] opinions = Array.Empty<MadMemberOpinionSnapshot>();
+        if (_opinions.TryGetValue(report.incidentId, out var list) && list.Count > 0)
+        {
+            opinions = list.Select(o => new MadMemberOpinionSnapshot
+            {
+                agentId        = o.agentId,
+                round          = o.round,
+                recommendation = o.recommendation,
+                confidence     = o.confidence,
+                thought        = o.thought ?? string.Empty,
+            }).ToArray();
+        }
+
+        // 决策快照（仅 Resolved 时非空）
+        MadDecisionSnapshot decSnap = null;
+        if (decision != null)
+        {
+            MadDirectiveSnapshot[] dirSnaps = Array.Empty<MadDirectiveSnapshot>();
+            if (decision.directives != null)
+            {
+                dirSnaps = decision.directives.Select(d => new MadDirectiveSnapshot
+                {
+                    agentId      = d.agentId,
+                    instruction  = d.instruction,
+                    targetModule = d.targetModule,
+                    payload      = d.payload,
+                }).ToArray();
+            }
+            decSnap = new MadDecisionSnapshot
+            {
+                summary    = decision.summary,
+                directives = dirSnaps,
+                thought    = decision.thought ?? string.Empty,
+            };
+        }
+
+        _startedAt.TryGetValue(report.incidentId, out float startedAt);
+
+        return new MadIncidentSnapshot
+        {
+            incidentId   = report.incidentId,
+            incidentType = report.incidentType,
+            isCritical   = report.isCritical,
+            reporterId   = report.reporterId,
+            groupId      = _groupId,
+            description  = report.description,
+            context      = report.context,
+            status       = status,
+            startedAt    = startedAt,
+            resolvedAt   = status == "Resolved" ? Time.time : 0f,
+            opinions     = opinions,
+            decision     = decSnap,
+        };
     }
 }

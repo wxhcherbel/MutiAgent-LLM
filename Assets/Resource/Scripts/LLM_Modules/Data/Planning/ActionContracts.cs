@@ -28,6 +28,11 @@ public class AtomicAction
 
     /// <summary>动作的空间偏好或路径提示文本。</summary>
     public string spatialHint;
+
+    /// <summary>执行层回填的动作结果摘要（运行时内存，不序列化给LLM）。
+    /// 各执行器在动作完成时自由填写，格式自定义，追加到执行历史供LLM判断。</summary>
+    [JsonIgnore]
+    public string result;
 }
 
 /// <summary>

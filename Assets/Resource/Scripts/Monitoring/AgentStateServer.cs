@@ -43,6 +43,11 @@ public partial class AgentStateServer : MonoBehaviour
     private const int MAX_MOTION_EVENTS = 200;
     private string motionEventsJson = "{}"; // { agentId: MotionEventDto[] }
 
+    // ─── MAD 事件缓冲（静态，供 MADCoordinator 主线程推送）──────────────────
+    private static readonly object                    madLock    = new object();
+    private static readonly List<MadIncidentSnapshot> madBuffer  = new List<MadIncidentSnapshot>();
+    private const int MAX_MAD_INCIDENTS = 50;
+
     // ─── Memory / Reflection 快照 ─────────────────────────────────────────────
     private string memoryJson = "[]";
     private string persistentMemJson = "{}";
@@ -318,6 +323,22 @@ public partial class AgentStateServer : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 供 MADCoordinator 在协程中调用（Unity 主线程）。
+    /// 以 incidentId 为键做 upsert，保持最新状态。
+    /// </summary>
+    public static void PushMadIncident(MadIncidentSnapshot snap)
+    {
+        if (snap == null) return;
+        lock (madLock)
+        {
+            madBuffer.RemoveAll(i => i.incidentId == snap.incidentId);
+            madBuffer.Add(snap);
+            while (madBuffer.Count > MAX_MAD_INCIDENTS)
+                madBuffer.RemoveAt(0);
+        }
+    }
+
     // ─────────────────────────────────────────────────────────
     // 运动事件快照采集（主线程）
     // ─────────────────────────────────────────────────────────
@@ -536,6 +557,7 @@ public partial class AgentStateServer : MonoBehaviour
             insightCount = insightList.Count,
             policies     = policyList.ToArray(),
             insights     = insightList.ToArray(),
+            saveFilePath = MemoryModule.SaveFilePath,
         };
         var json = JsonConvert.SerializeObject(payload);
         lock (snapshotLock) { persistentMemJson = json; }
@@ -547,9 +569,10 @@ public partial class AgentStateServer : MonoBehaviour
 
     private void CaptureIncidents()
     {
-        // MAD 重构后 GroupMonitor 不再暴露 GetIncidentSnapshots()；
-        // 活跃辩论状态由 MADCoordinator 内部管理，监控端留空等待后续可视化扩展。
-        lock (snapshotLock) { incidentsJson = "[]"; }
+        MadIncidentSnapshot[] snapshot;
+        lock (madLock) { snapshot = madBuffer.ToArray(); }
+        var json = JsonConvert.SerializeObject(snapshot);
+        lock (snapshotLock) { incidentsJson = json; }
     }
 
     // ─────────────────────────────────────────────────────────

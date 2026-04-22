@@ -77,10 +77,8 @@ public class MADDecisionForwarder : MonoBehaviour
     /// 解析 payload 中的 operation 字段，调用 PlanningModule 对应的最小接口。
     /// <para>支持的 operation：</para>
     /// <list type="bullet">
-    ///   <item><term>force_slot</term><description>强制指派槽位，跳过选槽协议（用于 MAD 仲裁 slot 冲突）</description></item>
     ///   <item><term>insert_steps</term><description>向当前计划插入步骤，支持立即插入或追加到末尾（用于任务继承）</description></item>
     ///   <item><term>new_mission</term><description>放弃当前任务，以新任务描述重启 LLM#1 完整规划流程</description></item>
-    ///   <item><term>request_replan</term><description>软重规划：重置为 Idle，由 IntelligentAgent 自然触发下一轮规划</description></item>
     /// </list>
     /// </summary>
     private void HandlePlanning(AgentDirective directive)
@@ -97,17 +95,6 @@ public class MADDecisionForwarder : MonoBehaviour
         string op = p.operation?.ToLower();
         switch (op)
         {
-            // ── 强制指派槽位（slot 冲突仲裁）──────────────────────────────────────
-            case "force_slot":
-                if (p.slot == null)
-                {
-                    Debug.LogWarning($"[MADForwarder] force_slot 缺少 slot 数据，跳过");
-                    return;
-                }
-                Debug.Log($"[MADForwarder] {_props?.AgentID} force_slot → {p.slot.slotId}");
-                _planning.ForceAssignSlot(p.slot);
-                break;
-
             // ── 插入步骤（任务继承 / 追加额外步骤）─────────────────────────────────
             case "insert_steps":
                 PlanStep[] steps = ResolveSteps(p);
@@ -133,15 +120,6 @@ public class MADDecisionForwarder : MonoBehaviour
                 Debug.Log($"[MADForwarder] {_props?.AgentID} new_mission → \"{p.missionDescription}\"");
                 _planning.ResetForNewMission();
                 _planning.SubmitMissionRequest(p.missionDescription, agentCount);
-                break;
-
-            // ── 软重规划（保持任务框架，重置步骤等待下一轮规划）──────────────────
-            case "request_replan":
-                string hint = string.IsNullOrWhiteSpace(p.replanHint)
-                    ? directive.instruction
-                    : p.replanHint;
-                Debug.Log($"[MADForwarder] {_props?.AgentID} request_replan: {hint}");
-                _planning.RequestReplan(hint);
                 break;
 
             default:
@@ -250,11 +228,8 @@ public class MADDecisionForwarder : MonoBehaviour
     /// <summary>targetModule="planning" 时的 payload 结构。</summary>
     private class PlanningPayload
     {
-        /// <summary>操作类型：force_slot / insert_steps / new_mission / request_replan</summary>
+        /// <summary>操作类型：insert_steps / new_mission</summary>
         public string     operation;
-
-        /// <summary>force_slot：要强制指派的槽位对象。</summary>
-        public PlanSlot   slot;
 
         /// <summary>insert_steps：要插入的步骤数组；也可从 fromAgentId 自动获取。</summary>
         public PlanStep[] steps;
@@ -270,9 +245,6 @@ public class MADDecisionForwarder : MonoBehaviour
 
         /// <summary>new_mission：参与新任务的 agent 数量。</summary>
         public int        agentCount;
-
-        /// <summary>request_replan：重规划方向提示（可选，为空则使用 directive.instruction）。</summary>
-        public string     replanHint;
     }
 
     /// <summary>targetModule="adm" 时的 payload 结构。</summary>

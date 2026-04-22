@@ -64,12 +64,6 @@ public class PlanningModule : MonoBehaviour
     /// </summary>
     private PersonalitySystem _personalitySystem;
 
-    /// <summary>
-    /// MAD 网关（挂在同一 agent GameObject 上）。
-    /// 在 ResolveAndConfirm() 中检测到槽位冲突时调用 Raise() 发起辩论。
-    /// 为 null 时跳过 MAD 触发，不影响正常分配流程。
-    /// </summary>
-    private MADGateway _madGateway;
 
     private static int msnCounter;
 
@@ -81,9 +75,6 @@ public class PlanningModule : MonoBehaviour
 
         // 获取人格系统（挂在同一 agent GameObject 上）
         _personalitySystem = GetComponent<PersonalitySystem>();
-
-        // 获取 MAD 网关（挂在同一 agent GameObject 上）
-        _madGateway = GetComponent<MADGateway>();
 
         // 向 AgentPlanRegistry 注册，供 MADDecisionForwarder 在任务继承时查询本 agent 的剩余步骤
         if (props != null)
@@ -922,56 +913,7 @@ public class PlanningModule : MonoBehaviour
         List<PlanSlot> remaining = new List<PlanSlot>(slots); // 可用槽池的副本，随分配逐步缩减
         var assignedSlotsByAgent = new Dictionary<string, PlanSlot>(StringComparer.OrdinalIgnoreCase); // 最终分配结果：agentId → 分配到的槽
 
-        // ── Step 2: 冲突检测 + MAD 辩论触发 ──────────────────────────────────
-        // 在实际执行先到先得分配之前，先扫描是否有多个 Agent 同时选了同一个槽（冲突）。
-        // 若有冲突，异步发起 MAD 辩论让全组讨论更优的分配方案；
-        // 但本函数不等待辩论结果——辩论是异步的，当前周期仍继续先到先得分配，
-        // 保证任务执行不被辩论阻塞；辩论结果将在下一次 Replan 时体现。
-        if (_madGateway != null)
-        {
-            // 将所有 agentId→slotId 的选择按 slotId 分组，找出被多个 Agent 同时选中的槽
-            var slotConflicts = selections
-                .GroupBy(kv => kv.Value)   // key=slotId, 组内是所有选了该槽的 agentId
-                .Where(g => g.Count() > 1) // 只保留有 2 个及以上 Agent 选了同一槽的冲突组
-                .ToList();
-
-            if (slotConflicts.Count > 0)
-            {
-                // 为 MAD 辩论构建详细的上下文描述：列出每个冲突 Agent 的当前电量，
-                // 供辩论参与者（LLM）参考，提出更合理的重新分配建议
-                string ctx = string.Join("\n", slotConflicts.SelectMany(g =>
-                    g.Select(kv =>
-                    {
-                        float bat = 0f;
-                        var mod = CommunicationManager.Instance?.GetAgentModule(kv.Key); // 获取对应 Agent 的通信模块
-                        if (mod != null)
-                        {
-                            var ia = mod.GetComponent<IntelligentAgent>();
-                            if (ia != null) bat = ia.CurrentState?.BatteryLevel ?? 0f; // 读取实时电量
-                        }
-                        return $"- {kv.Key} selected {kv.Value} (battery={bat:F0}%)"; // 格式：- AgentA selected slot_1 (battery=72%)
-                    })));
-
-                // 汇总所有发生冲突的槽 ID，作为辩论 topic 的简要标题
-                string conflictedSlots = string.Join(", ",
-                    slotConflicts.Select(g => g.Key).Distinct());
-
-                // 发起 MAD 辩论：槽位冲突需要协商，确定最终分配方案
-                _madGateway.Raise(new IncidentReport
-                {
-                    reporterId   = props?.AgentID ?? string.Empty,
-                    incidentType = IncidentTypes.SlotConflict,
-                    isCritical   = false,
-                    description  = "多个 Agent 选择了相同任务槽，需重新分配",
-                    context      = $"冲突槽: {conflictedSlots}\n{ctx}",
-                });
-
-                Debug.Log($"[PlanningModule] {props?.AgentID} 检测到槽位冲突，已触发 MAD 辩论（仍继续先到先得分配）");
-                // 注意：Raise() 是异步的，辩论在后台进行；本函数继续往下执行先到先得分配，不等待辩论完成
-            }
-        }
-
-        // ── Step 3: 先到先得分配（按 ordered 顺序逐个处理）──────────────────
+        // ── Step 2: 先到先得分配（按 ordered 顺序逐个处理）──────────────────
         foreach (string agentId in ordered)
         {
             if (!selections.TryGetValue(agentId, out string wantedSlotId)) continue; // 该成员未提交选择，跳过
@@ -1468,23 +1410,6 @@ public class PlanningModule : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// 由 DebateResolved 触发:请求重规划当前任务。
-    /// 将当前状态重置为 Idle,让 IntelligentAgent 的下一次 CheckForDecision 重新发起规划。
-    /// reason 写入日志供追溯,不影响执行逻辑。
-    /// </summary>
-    public void RequestReplan(string reason)
-    {
-        Debug.Log($"[PlanningModule] {props?.AgentID} 收到重规划请求: {reason}");
-        if (state == PlanningState.Active || state == PlanningState.Done)
-        {
-            SetState(PlanningState.Idle);
-            busy = false;
-            agentPlan = null;
-            Debug.Log($"[PlanningModule] {props?.AgentID} 规划已重置,等待重新规划");
-        }
-    }
-
     // ─────────────────────────────────────────────────────────
     // MAD 决策接口（由 MADDecisionForwarder 调用的最小接口）
     // ─────────────────────────────────────────────────────────
@@ -1536,36 +1461,6 @@ public class PlanningModule : MonoBehaviour
 
         Debug.Log($"[PlanningModule] {props?.AgentID} 插入 {steps.Length} 个步骤（immediate={immediate}，" +
                   $"位置={insertAt}），总步骤数={agentPlan.steps.Length}");
-    }
-
-    /// <summary>
-    /// 强制指派槽位，跳过选槽协议，直接进入 LLM#4 步骤拆解阶段。
-    /// 由 MADDecisionForwarder 在处理 operation="force_slot" 时调用（用于 MAD 仲裁 slot 冲突）。
-    /// 若 startExecReceived 为 true（已收到 StartExec 信号），立即启动 LLM#4；
-    /// 否则仅记录 confirmedSlot，等待 StartExec 信号到达后触发。
-    /// </summary>
-    /// <param name="slot">MAD 仲裁裁决的目标槽位。</param>
-    public void ForceAssignSlot(PlanSlot slot)
-    {
-        if (slot == null)
-        {
-            Debug.LogWarning($"[PlanningModule] {props?.AgentID} ForceAssignSlot：slot 为 null，跳过");
-            return;
-        }
-
-        confirmedSlot = slot;
-        Debug.Log($"[PlanningModule] {props?.AgentID} MAD 强制指派槽位 {slot.slotId}（{slot.role}）");
-
-        // 若已收到 StartExec 信号，立即启动步骤拆解（同 OnSlotConfirm 的触发逻辑）
-        if (startExecReceived)
-        {
-            Debug.Log($"[PlanningModule] {props?.AgentID} StartExec 已就绪，立即启动 LLM#4");
-            StartCoroutine(RunLLM4());
-        }
-        else
-        {
-            Debug.Log($"[PlanningModule] {props?.AgentID} 等待 StartExec 信号后启动 LLM#4");
-        }
     }
 
     /// <summary>

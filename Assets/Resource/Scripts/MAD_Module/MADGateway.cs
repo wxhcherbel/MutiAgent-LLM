@@ -150,8 +150,8 @@ public class MADGateway : MonoBehaviour
         else
         {
             // 从规划模块获取当前步骤描述（作为"当前任务"注入提示词，反映实时执行状态）
-            string currentTask = _planning?.GetCurrentStep()?.description ?? "无";
-            string role        = _props?.Role ?? "通用";
+            string currentTask = _planning?.GetCurrentStep()?.text ?? "无";
+            string role        = _props?.Role.ToString() ?? "通用";
 
             string prompt = MADPrompt.BuildMemberPrompt(query, _props?.AgentID ?? "unknown", role, currentTask);
 

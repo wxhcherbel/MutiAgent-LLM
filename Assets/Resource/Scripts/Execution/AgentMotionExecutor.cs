@@ -66,6 +66,23 @@ public class AgentMotionExecutor : MonoBehaviour
     private Collider activeAvoidanceCollider;
     private string activeAvoidanceSide = "";
 
+    // 避障射线可视化（三条独立 LineRenderer）
+    private LineRenderer lrFwd;
+    private LineRenderer lrLeft;
+    private LineRenderer lrRight;
+
+    // 上一次 ResolveNavigationTarget 的探测结果（供可视化读取）
+    private struct ProbeFrame
+    {
+        public bool valid;
+        public Vector3 origin;
+        public Vector3 moveDir;
+        public bool hitMid;   public float midDist;
+        public bool hitLeft;  public float leftDist;
+        public bool hitRight; public float rightDist;
+    }
+    private ProbeFrame lastProbe;
+
     private void Awake()
     {
         aerialMotion = GetComponent<AerialMotionController>();
@@ -91,6 +108,11 @@ public class AgentMotionExecutor : MonoBehaviour
 
         defaultTargetHeight = aerialMotion.TargetHeight;
         stuckCheckPos = transform.position;
+
+        // 初始化三条避障探测射线渲染器
+        lrFwd   = CreateProbeRayLR("AvoidanceRay_Fwd");
+        lrLeft  = CreateProbeRayLR("AvoidanceRay_Left");
+        lrRight = CreateProbeRayLR("AvoidanceRay_Right");
         noiseX = UnityEngine.Random.Range(0f, 100f);
         noiseZ = UnityEngine.Random.Range(0f, 100f);
 
@@ -116,28 +138,53 @@ public class AgentMotionExecutor : MonoBehaviour
         UpdateStuckDetection();
         PollADM();
         
-        // 可视化避障射线（仅在编辑器中）
-        if (Application.isEditor && actionRunning)
-        {
-            DrawAvoidanceDebugRays();
-        }
+        DrawAvoidanceRays();
     }
 
-    private void DrawAvoidanceDebugRays()
+    // ── 可视化辅助 ──────────────────────────────────────────────────────────
+
+    private LineRenderer CreateProbeRayLR(string goName)
     {
-        Vector3 origin = GetObstacleProbeOrigin();
-        Vector3 moveDir = transform.forward;
-        
-        // 绘制三向探测射线
-        Debug.DrawRay(origin, moveDir * obstacleForwardCheckDistance, Color.green);
-        Debug.DrawRay(origin, (Quaternion.Euler(0, -25, 0) * moveDir) * obstacleSideCheckDistance, Color.cyan);
-        Debug.DrawRay(origin, (Quaternion.Euler(0, 25, 0) * moveDir) * obstacleSideCheckDistance, Color.cyan);
-        
-        if (hasBypassTarget)
-        {
-            // 绘制最终偏移后的航向
-            Debug.DrawLine(transform.position, aerialMotion.MoveTarget ?? transform.position, Color.yellow);
-        }
+        var go = new GameObject(goName);
+        go.transform.SetParent(transform);
+        var lr = go.AddComponent<LineRenderer>();
+        lr.useWorldSpace = true;
+        lr.material = new Material(Shader.Find("Sprites/Default"));
+        lr.positionCount = 2;
+        lr.enabled = false;
+        return lr;
+    }
+
+    private void SetProbeRay(LineRenderer lr, Vector3 from, Vector3 to, Color col, float startW, float endW)
+    {
+        lr.SetPosition(0, from);
+        lr.SetPosition(1, to);
+        lr.startColor = col;
+        lr.endColor   = new Color(col.r, col.g, col.b, 0.12f);
+        lr.startWidth = startW;
+        lr.endWidth   = endW;
+    }
+
+    private void DrawAvoidanceRays()
+    {
+        bool show = actionRunning && lastProbe.valid;
+        if (lrFwd   != null) lrFwd.enabled   = show;
+        if (lrLeft  != null) lrLeft.enabled  = show;
+        if (lrRight != null) lrRight.enabled = show;
+        if (!show) return;
+
+        var p = lastProbe;
+        Vector3 leftDir  = Quaternion.Euler(0, -25, 0) * p.moveDir;
+        Vector3 rightDir = Quaternion.Euler(0,  25, 0) * p.moveDir;
+
+        // 畅通 = 绿，前方碰撞 = 红，侧边碰撞 = 橙，侧边畅通 = 青
+        Color fwdColor  = p.hitMid   ? new Color(1f, 0.2f, 0.1f, 0.95f)  : new Color(0.15f, 1f, 0.3f, 0.9f);
+        Color sideColor = new Color(0.15f, 0.85f, 1f, 0.8f);
+        Color sideHit   = new Color(1f, 0.55f, 0.05f, 0.9f);
+
+        SetProbeRay(lrFwd,   p.origin, p.origin + p.moveDir * p.midDist,   fwdColor,                  0.12f, 0.03f);
+        SetProbeRay(lrLeft,  p.origin, p.origin + leftDir   * p.leftDist,  p.hitLeft  ? sideHit : sideColor, 0.06f, 0.02f);
+        SetProbeRay(lrRight, p.origin, p.origin + rightDir  * p.rightDist, p.hitRight ? sideHit : sideColor, 0.06f, 0.02f);
     }
 
     private void PollADM()
@@ -560,6 +607,8 @@ public class AgentMotionExecutor : MonoBehaviour
             "patrol_done",
             $"巡逻完成 {resolvedTarget}，覆盖率 {coverage:F0}%，用时 {elapsed:F0}s");
 
+        action.result = $"覆盖率:{Mathf.RoundToInt(coverage)}%";
+
         if (!string.IsNullOrWhiteSpace(resolvedTarget))
         {
             memoryModule?.RecordPatrolEvent(resolvedTarget, DateTime.Now);
@@ -637,6 +686,17 @@ public class AgentMotionExecutor : MonoBehaviour
 
         bool hitLeft = Physics.SphereCast(probeOrigin, obstacleProbeRadius * 0.8f, leftDir, out RaycastHit leftHit, obstacleSideCheckDistance, obstacleLayers);
         bool hitRight = Physics.SphereCast(probeOrigin, obstacleProbeRadius * 0.8f, rightDir, out RaycastHit rightHit, obstacleSideCheckDistance, obstacleLayers);
+
+        // 缓存本次探测结果供可视化使用
+        lastProbe = new ProbeFrame
+        {
+            valid    = true,
+            origin   = probeOrigin,
+            moveDir  = moveDir,
+            hitMid   = hitMid,   midDist   = hitMid   ? midHit.distance   : obstacleForwardCheckDistance,
+            hitLeft  = hitLeft,  leftDist  = hitLeft  ? leftHit.distance  : obstacleSideCheckDistance,
+            hitRight = hitRight, rightDist = hitRight ? rightHit.distance : obstacleSideCheckDistance,
+        };
 
         if (!hitMid && !hitLeft && !hitRight)
         {

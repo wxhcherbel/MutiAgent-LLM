@@ -330,7 +330,7 @@ public class ActionDecisionModule : MonoBehaviour
 
         while (ctx.iterationCount < MaxIterations)
         {
-            // ── 0. 获取 C3-1 互斥锁（串行化：读白板 + LLM + 写占位三阶段） ──
+            // ── 0. 获取 C3-1 互斥锁（乐观并发：仅保护白板读取，LLM 在锁外并行执行） ──
             var mutexCids = GetC3MutexConstraintIds();
             if (mutexCids.Count > 0)
                 yield return StartCoroutine(AcquireC3MutexLocks(mutexCids));
@@ -349,6 +349,9 @@ public class ActionDecisionModule : MonoBehaviour
                 SetStatus(ADMStatus.Interpreting);
                 continue;
             }
+
+            // 读完白板快照后立即释放锁，允许多 Agent 并行进行 LLM 决策
+            ReleaseC3MutexLocks(mutexCids);
 
             // ── 2.5 刷新当前位置名称 ──────────────────────────────────
             ctx.currentLocationName = ResolveCurrentLocationName();
@@ -493,6 +496,10 @@ public class ActionDecisionModule : MonoBehaviour
             ctx.actionQueue = planResult.nextActions;
             ctx.currentActionIdx = 0;
 
+            // 写白板前重新获取锁（乐观并发：LLM 已在锁外并行完成，写占位需原子性）
+            if (mutexCids.Count > 0)
+                yield return StartCoroutine(AcquireC3MutexLocks(mutexCids));
+
             // 写 C3 sign=-1 互斥占位（将 MoveTo 目标写入白板，供其他 Agent 避开）
             WriteC3MutexClaims(planResult.nextActions);
 
@@ -612,8 +619,7 @@ public class ActionDecisionModule : MonoBehaviour
 
             "## 当前状态\n" +
             $"角色：{ctx.role} | 当前位置：{ctx.currentLocationName}\n" +
-            $"导航目标：{(string.IsNullOrWhiteSpace(step.targetName) ? "无" : step.targetName)}{targetSpatialHint}\n" +
-            $"当前位置是否已到达目标：{(string.IsNullOrWhiteSpace(step.targetName) || IsNearTarget(step.targetName, ctx.currentLocationName) ? "是" : "否（仍需移动）")}\n\n" +
+            $"导航目标：{(string.IsNullOrWhiteSpace(step.targetName) ? "无" : step.targetName)}{targetSpatialHint}\n\n" +
 
             "## 周边地图（半径300m）\n" +
             relativeMap + "\n\n" +
@@ -630,7 +636,7 @@ public class ActionDecisionModule : MonoBehaviour
             "  ③ 若以上都无，选方向最接近目标的节点，并在 thought 中说明原因\n" +
             "  每次选择必须有方向依据，不要随机选。\n" +
             "• targetName 禁止编造或使用范围外地名。\n" +
-            "• 当\"已到达目标：是\"时，不要再 MoveTo 同一目标，应立即执行下一步动作（Observe/巡逻/Signal 等）。\n\n" +
+            "• 已在目标附近时，不要再 MoveTo 同一目标，应立即执行下一步动作（Observe/巡逻/Signal 等）。\n\n" +
 
             "## 白板状态（组内协同）\n" +
             (string.IsNullOrWhiteSpace(whiteboardCtx) ? "（无白板数据）" : whiteboardCtx) + "\n\n" +
@@ -652,12 +658,13 @@ public class ActionDecisionModule : MonoBehaviour
             "  targetName=目标名（空=由执行层按空闲度自动选区），duration=覆盖秒数，actionParams=\"observe\"（每格感知）\n\n" +
 
             "## 步骤完成判断（重要）\n" +
-            "在输出前，请依次核对以下三项，全部满足才可 isDone=true：\n" +
-            "① 若步骤有 targetName，当前位置必须已到达该目标（见\"当前位置是否已到达目标\"）。\n" +
-            "② 若步骤有 doneCond（完成条件），执行历史中必须有满足该条件的动作记录。\n" +
-            "③ 若存在 C3 约束（信号等待/互斥），必须已满足信号前置条件（白板中已出现对应 ReadySignal 或 IntentAnnounce）。\n" +
-            "   【C2 约束不在此判断】C2 同步（多机完成同步）由系统在 isDone=true 后自动写入并等待，你只需判断本机的步骤目标是否达成，不要因为等 C2 同步而推迟 isDone=true。\n" +
-            "任意一项不满足，isDone 必须为 false，并继续规划下一步动作。\n\n" +
+            "综合以下证据判断步骤目标是否真正达成（而非只是执行了某个动作）：\n" +
+            "- 已执行历史：各动作的执行结果（覆盖率、是否到达、观察结论等）\n" +
+            "- 当前状态：当前位置与目标名的关系\n" +
+            "- 步骤目标与完成条件\n\n" +
+            "判断标准：目标已实际实现 → isDone=true；目标尚未实现 → isDone=false 并规划下一步。\n" +
+            "若存在 C3 约束（信号等待/互斥），还需白板中已出现对应信号才可 isDone=true。\n" +
+            "【C2 约束不在此判断】isDone=true 后系统自动处理 C2 同步，不要因等待 C2 而推迟 isDone=true。\n\n" +
 
             "## 输出（JSON 对象，非数组）\n" +
             "{\n" +
@@ -1317,6 +1324,8 @@ public class ActionDecisionModule : MonoBehaviour
             string line = $"[迭代{ctx.iterationCount + 1}] {a.type}({target})";
             if (!string.IsNullOrWhiteSpace(a.actionParams))
                 line += $" - {a.actionParams}";
+            if (!string.IsNullOrWhiteSpace(a.result))
+                line += $" [{a.result}]";
             ctx.executedActionsSummary.Add(line);
         }
     }

@@ -208,8 +208,13 @@ public class MemoryModule : MonoBehaviour
     //   · ReflectionInsight 是跨事件的抽象洞察，同样与角色无关，值得持久化。
     //   · 使用单一全局文件（不按 AgentID 分文件），所有 agent 共享同一个规律库。
 
-    private static string SaveFilePath =>
-        Path.Combine(Application.persistentDataPath, "MemoryModule", "shared_policies.json");
+    /// <summary>
+    /// 持久化文件路径：项目根目录下的 SaveData/MemoryModule/shared_policies.json。
+    /// Editor 下 Application.dataPath = &lt;项目&gt;/Assets，故 "../SaveData" 即项目根。
+    /// Build 下位于可执行文件同级目录的 SaveData 文件夹。
+    /// </summary>
+    public static string SaveFilePath =>
+        Path.GetFullPath(Path.Combine(Application.dataPath, "..", "SaveData", "MemoryModule", "shared_policies.json"));
 
     /// <summary>
     /// 将 Policy 记忆和 ReflectionInsight 保存到全局共享文件。
@@ -326,6 +331,25 @@ public class MemoryModule : MonoBehaviour
                 case "中": confidence = 0.70f; break;
                 case "低": return;
             }
+        }
+
+        // 去重：若已有 Policy 记忆与新建议 Jaccard 相似度 >= 0.6，视为重复。
+        // 仅强化已有记录的 strengthScore，不新建，避免规律库膨胀。
+        const float policyDupThreshold = 0.6f;
+        Memory duplicate = null;
+        float bestSim = 0f;
+        foreach (var m in memories)
+        {
+            if (m.kind != AgentMemoryKind.Policy) continue;
+            float sim = JaccardSimilarity(suggestion, m.summary);
+            if (sim >= policyDupThreshold && sim > bestSim) { bestSim = sim; duplicate = m; }
+        }
+        if (duplicate != null)
+        {
+            duplicate.strengthScore = Mathf.Min(1f, duplicate.strengthScore + 0.05f);
+            duplicate.accessCount++;
+            duplicate.lastAccessedAt = DateTime.UtcNow;
+            return;
         }
 
         Remember(
@@ -682,6 +706,29 @@ public class MemoryModule : MonoBehaviour
         insight.sourceMemoryIds = NormalizeList(insight.sourceMemoryIds);
 
         reflectionInsights.RemoveAll(r => r != null && r.id == insight.id);
+
+        // 去重：用 summary + applyWhen 组合文本做 Jaccard，>= 0.5 视为重复。
+        // 重复时延长有效期并更新置信度，不新建，避免反思库膨胀。
+        const float insightDupThreshold = 0.5f;
+        string newText = $"{insight.summary} {insight.applyWhen}";
+        ReflectionInsight dupInsight = null;
+        float bestInsightSim = 0f;
+        foreach (var r in reflectionInsights)
+        {
+            float sim = JaccardSimilarity(newText, $"{r.summary} {r.applyWhen}");
+            if (sim >= insightDupThreshold && sim > bestInsightSim) { bestInsightSim = sim; dupInsight = r; }
+        }
+        if (dupInsight != null)
+        {
+            if (insight.confidence > dupInsight.confidence)
+                dupInsight.confidence = insight.confidence;
+            // 延长有效期到 insight 的过期时间（取较晚者）
+            if (insight.expiresAt != DateTime.MinValue && insight.expiresAt > dupInsight.expiresAt)
+                dupInsight.expiresAt = insight.expiresAt;
+            if (autoSaveOnStore) SaveMemories();
+            return;
+        }
+
         reflectionInsights.Add(insight);
         TrimInsightCapacity();
 
@@ -1224,6 +1271,22 @@ public class MemoryModule : MonoBehaviour
         }
 
         return tokens.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>
+    /// Jaccard 相似度：|A∩B| / |A∪B|，返回 [0,1]。
+    /// 用于去重判断，比 ComputeTextSimilarity 更适合两段任意文本的对比（有归一化）。
+    /// </summary>
+    private static float JaccardSimilarity(string textA, string textB)
+    {
+        if (string.IsNullOrWhiteSpace(textA) || string.IsNullOrWhiteSpace(textB)) return 0f;
+        var setA = new HashSet<string>(ExtractTokens(textA), StringComparer.OrdinalIgnoreCase);
+        var setB = new HashSet<string>(ExtractTokens(textB), StringComparer.OrdinalIgnoreCase);
+        if (setA.Count == 0 || setB.Count == 0) return 0f;
+        int intersection = 0;
+        foreach (var t in setA) if (setB.Contains(t)) intersection++;
+        int union = setA.Count + setB.Count - intersection;
+        return union > 0 ? (float)intersection / union : 0f;
     }
 
     // ─── 巡逻空闲度追踪 ─────────────────────────────────────────────
