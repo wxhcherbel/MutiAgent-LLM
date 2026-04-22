@@ -31,7 +31,9 @@
       "Bash(ls -la *.html)",
       "Bash(rm -f IMADGateway.cs DebateCoordinator.cs DebateParticipant.cs DebatePromptBuilder.cs IncidentEnums.cs ResourceBudget.cs MADMetrics.cs)",
       "Bash(rm -f Data/IncidentContracts.cs)",
-      "Bash(wc -l MAD_Module/*.cs)"
+      "Bash(wc -l MAD_Module/*.cs)",
+      "Bash(xargs ls:*)",
+      "Bash(ls:*)"
     ]
   }
 }
