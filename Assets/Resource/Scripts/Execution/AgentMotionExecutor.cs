@@ -575,6 +575,7 @@ public class AgentMotionExecutor : MonoBehaviour
                     isStuck = false;
                 }
 
+                MarkVisitedCells(visited, patrolCells, visitRadiusM);
                 elapsed += Time.deltaTime;
                 yield return null;
             }
@@ -592,6 +593,7 @@ public class AgentMotionExecutor : MonoBehaviour
             while (dwellElapsed < dwell && elapsed < totalDuration)
             {
                 aerialMotion.MoveTarget = GetNoisyHoldPos(holdPos);
+                MarkVisitedCells(visited, patrolCells, visitRadiusM);
                 dwellElapsed += Time.deltaTime;
                 elapsed += Time.deltaTime;
                 yield return null;
