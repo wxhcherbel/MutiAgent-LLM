@@ -1369,7 +1369,7 @@ public class ActionDecisionModule : MonoBehaviour
         //TODO
     }
 
-    private string ResolveCurrentLocationName()
+    public string ResolveCurrentLocationName()
     {
         if (agentState == null || campusGrid == null) return "未知位置";
         Vector3 pos = agentState.Position;

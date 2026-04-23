@@ -146,6 +146,10 @@ public class IntelligentAgent : MonoBehaviour
         // MAD 决策转发器：接收 MADGateway 转来的 AgentDirective，路由到对应模块执行
         if (GetComponent<MADDecisionForwarder>() == null) gameObject.AddComponent<MADDecisionForwarder>();
 
+        // ── 挂载自主涌现驱动模块（AutonomousDriveModule） ──────────────────────────
+        if (GetComponent<AutonomousDriveModule>() == null) gameObject.AddComponent<AutonomousDriveModule>();
+        // ────────────────────────────────────────────────────────────────────
+
         // 启动决策检查
         lastDecisionTime = Time.time;
         //PrintPerceivedGrid();
