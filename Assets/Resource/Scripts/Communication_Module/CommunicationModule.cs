@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using Newtonsoft.Json;
 
 /// <summary>
 /// 智能体通信端点。
@@ -274,6 +275,34 @@ public class CommunicationModule : MonoBehaviour
                 ForwardPayload<IncidentDecision>(message,
                     admModule != null ? (Action<IncidentDecision>)admModule.OnIncidentResolved : null);
                 break;
+
+            // ─── 自主涌现协作招募协议 ─────────────────────────────────────────────
+            case MessageType.ColabInvite:
+            {
+                // 发起者广播，Content=ColabInvitePayload JSON（含约束和角色分配）
+                AutonomousDriveModule.ColabInvitePayload invitePayload = null;
+                try { invitePayload = JsonConvert.DeserializeObject<AutonomousDriveModule.ColabInvitePayload>(message.Content); }
+                catch (Exception ex) { Debug.LogWarning($"[CommunicationModule] ColabInvite 解析失败: {ex.Message}"); }
+                if (invitePayload != null)
+                    GetComponent<AutonomousDriveModule>()?.OnColabInvite(message.SenderID, invitePayload);
+                break;
+            }
+
+            case MessageType.ColabAccept:
+                // 接受者回传，SenderID=接受者，Content=AcceptContext JSON（电量/位置）
+                GetComponent<AutonomousDriveModule>()?.OnColabAccept(message.SenderID, message.Content);
+                break;
+
+            case MessageType.ColabStart:
+            {
+                // 发起方向选中接受者发送最终角色+约束分配
+                AutonomousDriveModule.ColabStartPayload startPayload = null;
+                try { startPayload = JsonConvert.DeserializeObject<AutonomousDriveModule.ColabStartPayload>(message.Content); }
+                catch (Exception ex) { Debug.LogWarning($"[CommunicationModule] ColabStart 解析失败: {ex.Message}"); }
+                if (startPayload != null)
+                    GetComponent<AutonomousDriveModule>()?.OnColabStart(startPayload);
+                break;
+            }
 
             default:
                 Debug.Log($"[CommunicationModule] {agent?.Properties?.AgentID} 收到未处理消息: {message.Type}");

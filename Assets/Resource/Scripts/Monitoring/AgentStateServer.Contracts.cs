@@ -91,6 +91,9 @@ public class AgentStateSnapshot
 
     /// <summary>是否处于滚动规划模式。</summary>
     public bool isRollingMode;
+
+    /// <summary>是否为破坏型 agent（PersonalitySystem.IsAdversarial）。</summary>
+    public bool isAdversarial;
 }
 
 /// <summary>
@@ -391,6 +394,83 @@ public class AgentMemoryPayload
     public int                         totalMemoryCount; // 实际总条数（含未传输部分）
     public MemorySnapshot[]            memories;         // 最多 30 条（程序性优先）
     public ReflectionInsightSnapshot[] insights;         // 全部有效洞察
+}
+
+// ── 涌现模块快照 ──────────────────────────────────────────────────────────────
+
+/// <summary>
+/// 单个 Agent 的驱动力快照条目。
+/// </summary>
+[Serializable]
+public class DriveEntry
+{
+    public string name;
+    public float  strength;
+}
+
+/// <summary>
+/// 协作招募候选者快照。
+/// </summary>
+[Serializable]
+public class AcceptorEntry
+{
+    public string agentId;
+    public float  battery;
+    public string location;
+}
+
+/// <summary>
+/// 单个 Agent 的涌现模块状态快照（每 0.5s 由 AgentStateServer 采集）。
+/// </summary>
+[Serializable]
+public class EmergenceSnapshot
+{
+    /// <summary>所属 Agent ID。</summary>
+    public string agentId;
+
+    /// <summary>是否正在执行 EvaluateAndTrigger 协程（LLM 决策阶段）。</summary>
+    public bool isEvaluating;
+
+    /// <summary>是否处于邀请收集窗口（等待 ColabAccept 中）。</summary>
+    public bool collectingAcceptors;
+
+    /// <summary>当前候选接受者列表（仅收集窗口内有效）。</summary>
+    public AcceptorEntry[] pendingAcceptors;
+
+    /// <summary>本次计算出的各驱动力强度（按强度降序）。</summary>
+    public DriveEntry[] drives;
+
+    /// <summary>最强驱动力名称。</summary>
+    public string topDrive;
+
+    /// <summary>最强驱动力强度。</summary>
+    public float topDriveStrength;
+
+    /// <summary>最近一次 LLM 生成的任务目标。</summary>
+    public string lastGoal;
+
+    /// <summary>最近一次 LLM 生成的 thought 独白。</summary>
+    public string lastThought;
+
+    /// <summary>最近一次涌现是否请求协作（已废弃，恒为 false；保留字段避免前端解析报错）。</summary>
+    public bool lastNeedsHelp;
+
+    /// <summary>距下次评估的剩余秒数（-1=非 Idle 状态不计时）。</summary>
+    public float secsUntilNextEval;
+
+    // ── 涌现重设计新增字段 ─────────────────────────────────────────────────────
+
+    /// <summary>该 agent 是否为破坏型（PersonalitySystem.IsAdversarial）。破坏型出现红色徽章。</summary>
+    public bool isAdversarial;
+
+    /// <summary>是否正在执行自主涌现独立任务（PlanningModule.IsRunningSolo）。</summary>
+    public bool isRunningSolo;
+
+    /// <summary>
+    /// 是否正在执行感知触发协作评估（EvaluateCollabTrigger 运行中）。
+    /// 由 isEvaluating &amp;&amp; isRunningSolo 联合推断：Solo 执行中被感知触发评估。
+    /// </summary>
+    public bool inCollabSetup;
 }
 
 /// <summary>

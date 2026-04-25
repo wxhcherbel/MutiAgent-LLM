@@ -33,6 +33,10 @@ public class AgentSpawner : MonoBehaviour
     [Header("Spawn Settings")]
     public LayerMask spawnGroundLayer;               // 鼠标拾取/地面采样层（为空时自动回退到全部层）
     public int maxAgents = 100;                      // 最大智能体数量
+
+    [Header("阵营配置")]
+    [Tooltip("本次生成中破坏/对抗型 agent 的数量，其余均为协作型。生成时从后往前分配：后 adversarialCount 个为破坏型。")]
+    public int adversarialCount = 0;                 // 破坏型 agent 数量（0 表示全部协作型）
     [Min(0f)] public float droneSpawnHeight = 2f;    // 无人机在地面基础上的起飞高度
 
     [Header("地图引用")]
@@ -387,6 +391,9 @@ public class AgentSpawner : MonoBehaviour
             return false;
         }
 
+        // 后 adversarialCount 个为破坏型，其余为协作型
+        int clampedAdversarial = Mathf.Clamp(adversarialCount, 0, count);
+
         int spawnedCount = 0;
         for (int i = 0; i < gridPoints.Count; i++)
         {
@@ -399,7 +406,8 @@ public class AgentSpawner : MonoBehaviour
                 worldPos.y += droneSpawnHeight;
             }
 
-            SpawnSingleAgent(prefabToSpawn, agentType, worldPos, commRange, perceptionRange);
+            bool isAdversarial = i >= (count - clampedAdversarial);
+            SpawnSingleAgent(prefabToSpawn, agentType, worldPos, commRange, perceptionRange, isAdversarial);
             spawnedCount++;
         }
 
@@ -731,7 +739,7 @@ public class AgentSpawner : MonoBehaviour
             Vector3 pos = GetRandomSpawnPosition(pendingAgentType);
             if (pos == Vector3.zero) continue;
 
-            SpawnSingleAgent(prefabToSpawn, pendingAgentType, pos, pendingCommRange, pendingPerceptionRange);
+            SpawnSingleAgent(prefabToSpawn, pendingAgentType, pos, pendingCommRange, pendingPerceptionRange, false);
             spawned++;
         }
 
@@ -774,7 +782,7 @@ public class AgentSpawner : MonoBehaviour
     /// <summary>
     /// 实例化单个智能体并完成属性初始化。
     /// </summary>
-    private void SpawnSingleAgent(GameObject prefab, AgentType agentType, Vector3 worldPos, float commRange, float perceptionRange)
+    private void SpawnSingleAgent(GameObject prefab, AgentType agentType, Vector3 worldPos, float commRange, float perceptionRange, bool isAdversarial = false)
     {
         GameObject agentObj = Instantiate(prefab, worldPos, Quaternion.identity);
         agentObj.name = $"{agentType}_{GetNextAgentID()}";
@@ -790,13 +798,13 @@ public class AgentSpawner : MonoBehaviour
         spawnedAgents.Add(agentObj);
         currentAgentCount++;
 
-        InitializeAgent(agentObj, agentType, commRange, perceptionRange);
+        InitializeAgent(agentObj, agentType, commRange, perceptionRange, isAdversarial);
     }
 
     /// <summary>
     /// 初始化智能体属性与必要组件。
     /// </summary>
-    private void InitializeAgent(GameObject agentObj, AgentType type, float commRange, float perceptionRange)
+    private void InitializeAgent(GameObject agentObj, AgentType type, float commRange, float perceptionRange, bool isAdversarial = false)
     {
         // 1) 碰撞体
         if (agentObj.GetComponent<Collider>() == null)
@@ -855,6 +863,11 @@ public class AgentSpawner : MonoBehaviour
         // 7) 运动执行器
         AgentMotionExecutor mlController = agentObj.GetComponent<AgentMotionExecutor>();
         if (mlController == null) mlController = agentObj.AddComponent<AgentMotionExecutor>();
+
+        // 8) 人格系统：写入阵营标记
+        PersonalitySystem personalitySystem = agentObj.GetComponent<PersonalitySystem>();
+        if (personalitySystem == null) personalitySystem = agentObj.AddComponent<PersonalitySystem>();
+        personalitySystem.Profile.isAdversarial = isAdversarial;
 
         // 立即下发边界配置，避免 ML 控制器在首帧将智能体错误夹到固定点
         if (campusGrid == null) EnsureGridReady();

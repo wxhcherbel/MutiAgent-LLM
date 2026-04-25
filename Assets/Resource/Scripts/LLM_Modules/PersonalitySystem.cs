@@ -104,6 +104,13 @@ public class PersonalityProfile
     /// 表示 agent 优先考虑团队协调的程度，用于 LLM#3 选槽偏好的语义描述。
     /// </summary>
     [HideInInspector] public float cooperationBias;
+
+    /// <summary>
+    /// 阵营标记：true = 破坏/对抗型，false = 协作型。
+    /// 由 AgentSpawner 在生成时根据 adversarialCount 赋值，不在 Inspector 手动配置。
+    /// PerceptionModule 用此字段判断感知到的 agent 是友方还是敌方（IsAdversarial 不同即为敌方）。
+    /// </summary>
+    public bool isAdversarial;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -139,6 +146,9 @@ public class PersonalitySystem : MonoBehaviour
     /// 也在 Inspector 中以字符串数组填写，直接出现在 LLM prompt 里。
     /// </summary>
     public PersonalityProfile Profile = new PersonalityProfile();
+
+    /// <summary>当前 agent 是否为破坏/对抗型人格（由 Profile.isAdversarial 决定）。</summary>
+    public bool IsAdversarial => Profile.isAdversarial;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // 生命周期

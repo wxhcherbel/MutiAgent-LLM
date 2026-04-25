@@ -52,4 +52,14 @@ public enum MessageType
 
     /// <summary>Leader → 全组：广播最终决策（IncidentDecision），含逐人指令。</summary>
     IncidentResolved,
+
+    // ── 自主涌现协作招募协议 ──────────────────────────────────────────────
+    /// <summary>涌现发起方广播协作邀请，Content 为任务目标文本，SenderID 为发起者。</summary>
+    ColabInvite,
+
+    /// <summary>接受邀请的 Idle agent 回传，SenderID 为接受者，Content 为发起者 ID。</summary>
+    ColabAccept,
+
+    /// <summary>发起方向接受者发送最终角色+约束分配。</summary>
+    ColabStart,
 }

@@ -82,6 +82,14 @@ public class PerceptionModule : MonoBehaviour
     private IntelligentAgent ownerAgent;
     private ActionDecisionModule actionDecisionModule;
     private AgentType ownerAgentType;
+    private MemoryModule _memoryModule;
+    private PlanningModule _planningModule;
+    private PersonalitySystem _personalitySystem;
+    private AutonomousDriveModule _autonomousDriveModule;
+
+    // 近期已写入记忆的实体 ID → 写入时间，TTL 60s，避免重复记录同一实体
+    private readonly Dictionary<string, float> _recentlyRecordedEntityIds = new Dictionary<string, float>();
+    private const float ObservationRecordTtl = 60f;
 
     private static bool sharedRegistryInitialized;
     private readonly HashSet<int> sensedObjectIdsThisTick = new HashSet<int>();
@@ -188,7 +196,11 @@ public class PerceptionModule : MonoBehaviour
         }
 
         ownerAgentType = ownerAgent.Properties.Type;
-        actionDecisionModule = GetComponent<ActionDecisionModule>();
+        actionDecisionModule     = GetComponent<ActionDecisionModule>();
+        _memoryModule            = GetComponent<MemoryModule>();
+        _planningModule          = GetComponent<PlanningModule>();
+        _personalitySystem       = GetComponent<PersonalitySystem>();
+        _autonomousDriveModule   = GetComponent<AutonomousDriveModule>();
         return true;
     }
 
@@ -362,6 +374,18 @@ public class PerceptionModule : MonoBehaviour
 
         RegisterSharedNode(nodeData);
         detectedObjects.Add(nodeData);
+
+        // 发现资源点时写入感知记忆，并通知 AutonomousDriveModule（感知触发协作评估）
+        if (recordedType == SmallNodeType.ResourcePoint)
+        {
+            TryRecordObservation(nodeData.NodeId, "resource",
+                $"在当前区域发现资源点 {nodeData.NodeId}");
+
+            string locName = actionDecisionModule != null
+                ? actionDecisionModule.ResolveCurrentLocationName() : "未知位置";
+            _autonomousDriveModule?.OnPerceptionEvent(
+                $"感知到资源点 {nodeData.NodeId}", locName, SmallNodeType.ResourcePoint);
+        }
     }
 
     /// <summary>
@@ -385,9 +409,8 @@ public class PerceptionModule : MonoBehaviour
             nearbyAgents.Add(otherAgent.gameObject);
         }
 
-        bool isEnemy = otherAgent.Properties != null &&
-                       ownerAgent?.Properties != null &&
-                       otherAgent.Properties.TeamID != ownerAgent.Properties.TeamID;
+        // 使用人格系统判断敌友：协作型↔破坏型互为敌方
+        bool isEnemy = IsEnemyByPersonality(otherAgent);
         if (!isEnemy || enemyAgents.Contains(otherAgent))
         {
             return;
@@ -398,6 +421,15 @@ public class PerceptionModule : MonoBehaviour
         string description = $"敌方智能体 {otherAgent.Properties.AgentID} @ {otherAgent.transform.position}";
         actionDecisionModule?.OnPerceptionEvent(description, "enemy");
         Debug.Log($"[PerceptionModule] {ownerAgent?.Properties?.AgentID} 发现敌方: {otherAgent.Properties.AgentID}");
+
+        // 写入感知记忆（区域级，去重 TTL 60s）
+        TryRecordObservation(otherAgent.Properties.AgentID, "enemy",
+            $"在当前区域发现敌方智能体 {otherAgent.Properties.AgentID}");
+
+        // 通知 AutonomousDriveModule（感知触发协作评估）
+        string locationName = actionDecisionModule != null
+            ? actionDecisionModule.ResolveCurrentLocationName() : "未知位置";
+        _autonomousDriveModule?.OnPerceptionEvent(description, locationName, SmallNodeType.Agent);
     }
 
     /// <summary>
@@ -458,6 +490,23 @@ public class PerceptionModule : MonoBehaviour
     // ------------------------------------------------------------------
     // 类型识别与对象构造：主流程依赖的辅助函数
     // ------------------------------------------------------------------
+
+    /// <summary>
+    /// 判断另一个 agent 是否为敌方：协作型↔破坏型互为敌方（基于 PersonalitySystem.IsAdversarial）。
+    /// 若任一方没有 PersonalitySystem，退回 TeamID 比较。
+    /// </summary>
+    private bool IsEnemyByPersonality(IntelligentAgent other)
+    {
+        if (other == null || other.Properties == null) return false;
+
+        var otherPs = other.GetComponent<PersonalitySystem>();
+        if (otherPs != null && _personalitySystem != null)
+            return otherPs.IsAdversarial != _personalitySystem.IsAdversarial;
+
+        // 降级：TeamID 比较
+        return ownerAgent?.Properties != null &&
+               other.Properties.TeamID != ownerAgent.Properties.TeamID;
+    }
 
     /// <summary>
     /// 把 RaycastHit 还原成语义根对象。
@@ -834,6 +883,46 @@ public class PerceptionModule : MonoBehaviour
             LastSeenTime = source.LastSeenTime,
             SceneObject = source.SceneObject
         };
+    }
+
+    /// <summary>
+    /// 尝试将感知事件写入记忆（区域级，TTL 去重）。
+    /// 同一 entityId 在 ObservationRecordTtl 秒内只写一次，避免每帧刷爆记忆。
+    /// targetRef 取语义区域名而非坐标，敌人移动后记录仍然有价值。
+    /// </summary>
+    private void TryRecordObservation(string entityId, string observationType, string summary)
+    {
+        if (_memoryModule == null || string.IsNullOrWhiteSpace(entityId)) return;
+
+        // TTL 去重：清理过期条目，检查是否需要写入
+        float now = Time.time;
+        if (_recentlyRecordedEntityIds.TryGetValue(entityId, out float recordedAt))
+        {
+            if (now - recordedAt < ObservationRecordTtl) return;
+        }
+        _recentlyRecordedEntityIds[entityId] = now;
+
+        // 清理整体过期条目（避免字典无限增长）
+        var expired = new System.Collections.Generic.List<string>();
+        foreach (var kv in _recentlyRecordedEntityIds)
+            if (now - kv.Value >= ObservationRecordTtl) expired.Add(kv.Key);
+        foreach (var k in expired) _recentlyRecordedEntityIds.Remove(k);
+
+        string locationName = actionDecisionModule != null
+            ? actionDecisionModule.ResolveCurrentLocationName()
+            : "未知区域";
+
+        string missionId = _planningModule?.GetCurrentMissionId() ?? string.Empty;
+        string slotId    = _planningModule?.GetCurrentSlotId()    ?? string.Empty;
+
+        _memoryModule.RememberObservation(
+            missionId:  missionId,
+            slotId:     slotId,
+            stepLabel:  observationType,
+            summary:    summary,
+            detail:     $"{summary}（区域：{locationName}）",
+            targetRef:  locationName,
+            entityRefs: new[] { entityId });
     }
 }
 

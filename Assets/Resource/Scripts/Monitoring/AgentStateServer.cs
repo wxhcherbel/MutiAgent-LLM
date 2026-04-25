@@ -52,6 +52,9 @@ public partial class AgentStateServer : MonoBehaviour
     private string memoryJson = "[]";
     private string persistentMemJson = "{}";
 
+    // ─── 涌现模块快照 ─────────────────────────────────────────────────────────
+    private string emergenceJson = "[]";
+
     // ─── 命令队列（后台线程入队，主线程消费）────────────────────
     private readonly Queue<PendingCommand> commandQueue = new Queue<PendingCommand>();
     private readonly object commandLock = new object();
@@ -98,6 +101,7 @@ public partial class AgentStateServer : MonoBehaviour
             CaptureMotionEvents();
             CaptureMemorySnapshots();
             CapturePersistentMemory();
+            CaptureEmergence();
             lastSnapshotTime = Time.time;
         }
     }
@@ -126,6 +130,7 @@ public partial class AgentStateServer : MonoBehaviour
             var adm  = a.GetComponent<ActionDecisionModule>();
             var plan = a.GetComponent<PlanningModule>();
             var pm   = a.GetComponent<PerceptionModule>();
+            var ps   = a.GetComponent<PersonalitySystem>();
 
             AtomicAction curAction = adm?.GetCurrentAction();
             PlanStep     curStep   = plan?.GetCurrentStep();
@@ -213,6 +218,7 @@ public partial class AgentStateServer : MonoBehaviour
                 actionQueue         = aqTypes,
                 currentActionIdx    = ctxSnap?.currentActionIdx ?? 0,
                 isRollingMode       = ctxSnap?.isRollingMode ?? false,
+                isAdversarial       = ps?.IsAdversarial ?? false,
             };
             snapshots.Add(snap);
         }
@@ -564,6 +570,74 @@ public partial class AgentStateServer : MonoBehaviour
     }
 
     // ─────────────────────────────────────────────────────────
+    // 涌现模块快照采集（主线程）
+    // ─────────────────────────────────────────────────────────
+
+    private void CaptureEmergence()
+    {
+        var agents    = FindObjectsOfType<IntelligentAgent>();
+        var snapshots = new List<EmergenceSnapshot>(agents.Length);
+
+        foreach (var agent in agents)
+        {
+            if (agent == null || agent.Properties == null) continue;
+            var adm  = agent.GetComponent<AutonomousDriveModule>();
+            if (adm == null) continue;
+            var ePlan = agent.GetComponent<PlanningModule>();
+            var ePs   = agent.GetComponent<PersonalitySystem>();
+
+            // 驱动力列表（降序）
+            var drivesRaw = adm.LastDrives;
+            var driveEntries = drivesRaw
+                .OrderByDescending(kv => kv.Value)
+                .Select(kv => new DriveEntry { name = kv.Key, strength = kv.Value })
+                .ToArray();
+
+            string topDriveName  = driveEntries.Length > 0 ? driveEntries[0].name     : string.Empty;
+            float  topDriveStrength = driveEntries.Length > 0 ? driveEntries[0].strength : 0f;
+
+            // 候选接受者
+            var acceptorList = adm.PendingAcceptors;
+            var acceptorEntries = new AcceptorEntry[acceptorList.Count];
+            for (int i = 0; i < acceptorList.Count; i++)
+            {
+                acceptorEntries[i] = new AcceptorEntry
+                {
+                    agentId  = acceptorList[i].agentId,
+                    battery  = acceptorList[i].battery,
+                    location = acceptorList[i].location
+                };
+            }
+
+            // 距下次评估的剩余秒数
+            float secsLeft = agent.CurrentState?.Status != AgentStatus.Idle
+                ? -1f
+                : Mathf.Max(0f, adm.EvaluationInterval - (Time.time - adm.LastEvaluationTime));
+
+            snapshots.Add(new EmergenceSnapshot
+            {
+                agentId             = agent.Properties.AgentID,
+                isEvaluating        = adm.IsEvaluating,
+                collectingAcceptors = adm.CollectingAcceptors,
+                pendingAcceptors    = acceptorEntries,
+                drives              = driveEntries,
+                topDrive            = topDriveName,
+                topDriveStrength    = topDriveStrength,
+                lastGoal            = adm.LastGoal,
+                lastThought         = adm.LastThought,
+                lastNeedsHelp       = adm.LastNeedsHelp,
+                secsUntilNextEval   = secsLeft,
+                isAdversarial       = ePs?.IsAdversarial ?? false,
+                isRunningSolo       = ePlan?.IsRunningSolo ?? false,
+                inCollabSetup       = adm.IsEvaluating && (ePlan?.IsRunningSolo ?? false),
+            });
+        }
+
+        var json = JsonConvert.SerializeObject(snapshots);
+        lock (snapshotLock) { emergenceJson = json; }
+    }
+
+    // ─────────────────────────────────────────────────────────
     // 紧急事件快照采集（主线程）
     // ─────────────────────────────────────────────────────────
 
@@ -843,6 +917,11 @@ public partial class AgentStateServer : MonoBehaviour
 
                     case "/api/memory/policies":
                         { string json; lock (snapshotLock) { json = persistentMemJson; }
+                          body = Encoding.UTF8.GetBytes(json); mime = "application/json"; }
+                        break;
+
+                    case "/api/emergence":
+                        { string json; lock (snapshotLock) { json = emergenceJson; }
                           body = Encoding.UTF8.GetBytes(json); mime = "application/json"; }
                         break;
 

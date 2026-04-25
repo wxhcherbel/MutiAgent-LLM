@@ -228,6 +228,13 @@
   <a class="toc-sub" href="#s_mad_resource">12.4 资源受限降级策略</a>
   <a class="toc-sub" href="#s_mad_modules">12.5 逐模块接入方案</a>
   <a class="toc-sub" href="#s_mad_roadmap">12.6 实施路线与创新点</a>
+  <a href="#s13">十三、自主涌现系统重设计</a>
+  <a class="toc-sub" href="#s13-arch">13.1 双路径架构</a>
+  <a class="toc-sub" href="#s13-solo">13.2 Solo 涌现路径</a>
+  <a class="toc-sub" href="#s13-collab">13.3 感知触发协作路径</a>
+  <a class="toc-sub" href="#s13-modules">13.4 各模块职责</a>
+  <a class="toc-sub" href="#s13-example">13.5 端到端完整案例</a>
+  <a class="toc-sub" href="#s13-adversarial">13.6 对抗型 Agent</a>
   <a href="#refs">参考文献</a>
 </nav>
 
@@ -4588,6 +4595,528 @@ public class NullMetricsCollector : IMADMetricsCollector
   </section>
 
 </section><!-- end s_mad -->
+
+
+<hr class="divider">
+
+<!-- ════════════════════════════════════════════════════════════════
+     SECTION 13 · 自主涌现系统重设计
+     ════════════════════════════════════════════════════════════════ -->
+<section id="s13" class="section">
+<h2 class="section-title">十三、自主涌现系统重设计</h2>
+
+<div class="abstract-box">
+  本次重设计聚焦三个核心问题：<strong>①</strong> 所有 agent 同时 Idle 时同时触发涌现，没有空闲 agent 可接受邀请；
+  <strong>②</strong> 独立任务走完整 LLM1-4 流水线，LLM2/3 对单人任务无意义；
+  <strong>③</strong> 协作是事前规划出来的，不是执行中自然发生的。
+  解决方案：<strong>两条完全独立的执行路径</strong> + <strong>感知事件触发协作</strong> + <strong>人格驱动的对抗型 agent</strong>。
+</div>
+
+<!-- ── 13.1 双路径架构 ── -->
+<h3 id="s13-arch" class="sub-title">13.1 双路径架构总览</h3>
+
+<div class="card highlight" style="margin-bottom:20px;">
+  <strong>设计原则：两条路径完全独立，不删任何现有代码。</strong><br>
+  外部任务路径（LLM1→4）原封不动；自主涌现路径新增，绕过 LLM1/2/3。
+</div>
+
+<div class="module-diagram">
+<svg width="100%" viewBox="0 0 860 380" xmlns="http://www.w3.org/2000/svg" style="max-width:860px;display:block;margin:auto;font-family:'Segoe UI',sans-serif">
+  <defs>
+    <marker id="a13" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#718096"/></marker>
+    <marker id="a13g" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#276749"/></marker>
+    <marker id="a13o" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#dd6b20"/></marker>
+    <marker id="a13b" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2b6cb0"/></marker>
+    <marker id="a13p" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#805ad5"/></marker>
+  </defs>
+
+  <!-- 标题 -->
+  <text x="190" y="22" text-anchor="middle" font-size="13" font-weight="700" fill="#1a365d">外部任务路径（保持不变）</text>
+  <text x="620" y="22" text-anchor="middle" font-size="13" font-weight="700" fill="#276749">自主涌现路径（新增）</text>
+  <line x1="420" y1="8" x2="420" y2="372" stroke="#e2e8f0" stroke-width="2" stroke-dasharray="6,4"/>
+
+  <!-- 左侧外部路径 -->
+  <rect x="80" y="36" width="220" height="36" rx="7" fill="#2b6cb0"/>
+  <text x="190" y="58" text-anchor="middle" font-size="12" fill="white" font-weight="600">SubmitMissionRequest()</text>
+  <line x1="190" y1="72" x2="190" y2="92" stroke="#718096" stroke-width="1.5" marker-end="url(#a13)"/>
+  <rect x="90" y="92" width="200" height="32" rx="6" fill="#4299e1"/>
+  <text x="190" y="113" text-anchor="middle" font-size="12" fill="white">LLM1 任务解析</text>
+  <line x1="190" y1="124" x2="190" y2="142" stroke="#718096" stroke-width="1.5" marker-end="url(#a13)"/>
+  <rect x="90" y="142" width="200" height="32" rx="6" fill="#4299e1"/>
+  <text x="190" y="163" text-anchor="middle" font-size="12" fill="white">LLM2 分组</text>
+  <line x1="190" y1="174" x2="190" y2="192" stroke="#718096" stroke-width="1.5" marker-end="url(#a13)"/>
+  <rect x="90" y="192" width="200" height="32" rx="6" fill="#4299e1"/>
+  <text x="190" y="213" text-anchor="middle" font-size="12" fill="white">LLM3 Slot 分配</text>
+  <line x1="190" y1="224" x2="190" y2="244" stroke="#718096" stroke-width="1.5" marker-end="url(#a13)"/>
+
+  <!-- 共用 RunStepGeneration -->
+  <rect x="60" y="244" width="260" height="44" rx="8" fill="#1a365d" stroke="#63b3ed" stroke-width="2"/>
+  <text x="190" y="263" text-anchor="middle" font-size="12" fill="white" font-weight="600">RunStepGeneration()</text>
+  <text x="190" y="279" text-anchor="middle" font-size="10" fill="#90cdf4">LLM4 步骤生成 ── 两条路径共用</text>
+  <line x1="190" y1="288" x2="190" y2="310" stroke="#718096" stroke-width="1.5" marker-end="url(#a13)"/>
+  <rect x="90" y="310" width="200" height="30" rx="6" fill="#276749"/>
+  <text x="190" y="329" text-anchor="middle" font-size="12" fill="white" font-weight="600">Active 执行</text>
+
+  <!-- 右侧 Solo 涌现 -->
+  <rect x="450" y="36" width="200" height="44" rx="7" fill="#276749"/>
+  <text x="550" y="55" text-anchor="middle" font-size="12" fill="white" font-weight="600">Timer 30s 触发</text>
+  <text x="550" y="70" text-anchor="middle" font-size="10" fill="#c6f6d5">ComputeDrives() — 各自独立评估</text>
+  <line x1="550" y1="80" x2="550" y2="100" stroke="#276749" stroke-width="1.5" marker-end="url(#a13g)"/>
+
+  <rect x="440" y="100" width="220" height="44" rx="7" fill="#38a169"/>
+  <text x="550" y="120" text-anchor="middle" font-size="12" fill="white" font-weight="600">EmergenceLLM</text>
+  <text x="550" y="136" text-anchor="middle" font-size="10" fill="#c6f6d5">输出 { goal, steps[ ] }</text>
+  <line x1="550" y1="144" x2="550" y2="164" stroke="#276749" stroke-width="1.5" marker-end="url(#a13g)"/>
+
+  <rect x="430" y="164" width="240" height="44" rx="7" fill="#2f855a"/>
+  <text x="550" y="184" text-anchor="middle" font-size="12" fill="white" font-weight="600">InjectSoloMission()</text>
+  <text x="550" y="198" text-anchor="middle" font-size="10" fill="#c6f6d5">跳过 LLM1/2/3 → Active  IsRunningSolo=true</text>
+
+  <!-- 感知触发箭头 -->
+  <rect x="430" y="226" width="240" height="36" rx="6" fill="#faf5ff" stroke="#805ad5" stroke-width="1.5"/>
+  <text x="550" y="245" text-anchor="middle" font-size="11" fill="#553c9a" font-weight="600">PerceptionModule 感知事件</text>
+  <text x="550" y="258" text-anchor="middle" font-size="10" fill="#805ad5">ResourcePoint / 敌方Agent</text>
+  <line x1="550" y1="208" x2="550" y2="226" stroke="#805ad5" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#a13p)"/>
+  <line x1="550" y1="262" x2="550" y2="282" stroke="#805ad5" stroke-width="1.5" marker-end="url(#a13p)"/>
+
+  <!-- 协作路径 -->
+  <rect x="430" y="282" width="240" height="44" rx="7" fill="#dd6b20"/>
+  <text x="550" y="300" text-anchor="middle" font-size="12" fill="white" font-weight="600">CollabSetupLLM</text>
+  <text x="550" y="316" text-anchor="middle" font-size="10" fill="#feebc8">生成 constraints[] + myRole + partnerRole</text>
+  <line x1="550" y1="326" x2="550" y2="346" stroke="#dd6b20" stroke-width="1.5" marker-end="url(#a13o)"/>
+
+  <rect x="430" y="346" width="240" height="32" rx="6" fill="#c05621"/>
+  <text x="550" y="367" text-anchor="middle" font-size="12" fill="white" font-weight="600">InjectEmergentCollabMission() → RunStepGeneration</text>
+
+  <!-- 协作路径连到共用 RunStepGeneration -->
+  <path d="M 430 362 Q 350 362 350 288 L 320 288" stroke="#805ad5" stroke-width="1.5" stroke-dasharray="5,3" fill="none" marker-end="url(#a13p)"/>
+  <text x="365" y="355" font-size="10" fill="#805ad5">复用</text>
+</svg>
+</div>
+
+<div class="card-grid cols-2" style="margin-top:16px;">
+  <div class="card success">
+    <h4 class="sub-sub" style="color:#276749;">外部任务路径（不变）</h4>
+    <div class="step-flow">
+      <span class="step-box gray">SubmitMissionRequest</span>
+      <span class="step-arrow">→</span>
+      <span class="step-box">LLM1</span>
+      <span class="step-arrow">→</span>
+      <span class="step-box">LLM2</span>
+      <span class="step-arrow">→</span>
+      <span class="step-box">LLM3</span>
+      <span class="step-arrow">→</span>
+      <span class="step-box green">RunStepGen</span>
+      <span class="step-arrow">→</span>
+      <span class="step-box green">Active</span>
+    </div>
+  </div>
+  <div class="card" style="border-left:4px solid #38a169;background:#f0fff4;">
+    <h4 class="sub-sub" style="color:#276749;">自主涌现路径（新增）</h4>
+    <p style="font-size:13px;"><strong>Solo：</strong></p>
+    <div class="step-flow">
+      <span class="step-box green">EmergenceLLM</span>
+      <span class="step-arrow">→</span>
+      <span class="step-box green">InjectSolo</span>
+      <span class="step-arrow">→</span>
+      <span class="step-box green">Active</span>
+    </div>
+    <p style="font-size:13px;margin-top:8px;"><strong>协作：</strong></p>
+    <div class="step-flow">
+      <span class="step-box purple">Perception</span>
+      <span class="step-arrow">→</span>
+      <span class="step-box orange">CollabSetup</span>
+      <span class="step-arrow">→</span>
+      <span class="step-box green">InjectCollab</span>
+      <span class="step-arrow">→</span>
+      <span class="step-box green">RunStepGen</span>
+    </div>
+  </div>
+</div>
+
+<hr class="divider" style="margin:30px 0;">
+
+<!-- ── 13.2 Solo 涌现路径 ── -->
+<h3 id="s13-solo" class="sub-title">13.2 Solo 涌现路径</h3>
+
+<p style="margin-bottom:16px;">每个 agent 基于自身内驱力完全独立评估，不等待任何队友。5 个驱动维度：</p>
+
+<div class="card-grid cols-3">
+  <div class="card"><h4 class="sub-sub">Battery</h4><div class="formula-box" style="padding:10px;font-size:13px;">D = 1 − battery%</div><p style="font-size:13px;">电量耗尽时最强，触发充电类任务。</p></div>
+  <div class="card"><h4 class="sub-sub">Threat</h4><div class="formula-box" style="padding:10px;font-size:13px;">D = recency×0.6 + density×0.4</div><p style="font-size:13px;">结合记忆中敌方目击频率和时效，受 neuroticism 调制。</p></div>
+  <div class="card"><h4 class="sub-sub">Exploration</h4><div class="formula-box" style="padding:10px;font-size:13px;">D = 1 − uniqueTargets/10</div><p style="font-size:13px;">已覆盖区域越少越强，受 openness 调制。</p></div>
+  <div class="card"><h4 class="sub-sub">Collaboration</h4><div class="formula-box" style="padding:10px;font-size:13px;">D = timeSinceCollab/300s</div><p style="font-size:13px;">距上次协作越久越强，受 agreeableness 调制。</p></div>
+  <div class="card danger"><h4 class="sub-sub" style="color:#c53030;">Disruption（新增）</h4><div class="formula-box" style="padding:10px;font-size:13px;">D = activeEnemies × 0.5</div><p style="font-size:13px;">仅对抗型激活。感知到越多敌方 active 任务，干扰动机越强。</p></div>
+  <div class="card" style="background:#f8fafc;"><h4 class="sub-sub">触发条件</h4><div class="formula-box" style="padding:10px;font-size:13px;">topDrive > 0.6<br>+ jitter 0-5s</div><p style="font-size:13px;">随机 jitter 降低多 agent 同步触发概率。</p></div>
+</div>
+
+<div class="alert info" style="margin-top:16px;">
+  <strong>关键改变：</strong><code>EmergenceResult</code> 字段从 <code>needsHelp: bool</code> 改为 <code>steps: string[]</code>。
+  Solo 任务直接携带 LLM 生成的步骤注入 PlanningModule，<strong>不再发起任何广播</strong>，彻底消除"所有人同时 Idle 时无人接受邀请"的死锁。
+</div>
+
+<hr class="divider" style="margin:30px 0;">
+
+<!-- ── 13.3 感知触发协作路径 ── -->
+<h3 id="s13-collab" class="sub-title">13.3 感知触发协作路径</h3>
+
+<p style="margin-bottom:16px;">协作不在任务开始前规划，而在 <strong>Solo 执行途中感知到机会或威胁时自然触发</strong>——这才是真正的涌现。</p>
+
+<div class="module-diagram">
+<svg width="100%" viewBox="0 0 840 500" xmlns="http://www.w3.org/2000/svg" style="max-width:840px;display:block;margin:auto;font-family:'Segoe UI',sans-serif">
+  <defs>
+    <marker id="acx" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#718096"/></marker>
+    <marker id="acxo" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#dd6b20"/></marker>
+    <marker id="acxb" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2b6cb0"/></marker>
+    <marker id="acxg" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#276749"/></marker>
+    <marker id="acxp" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#805ad5"/></marker>
+  </defs>
+
+  <!-- 列分隔 -->
+  <text x="190" y="18" text-anchor="middle" font-size="12" font-weight="700" fill="#1a365d">Agent A（发起方，Solo执行中）</text>
+  <line x1="190" y1="24" x2="190" y2="490" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <text x="640" y="18" text-anchor="middle" font-size="12" font-weight="700" fill="#2b6cb0">Agent B（Idle 接受方）</text>
+  <line x1="640" y1="24" x2="640" y2="490" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="4,4"/>
+
+  <!-- 1. 感知到资源点 -->
+  <rect x="50" y="30" width="280" height="44" rx="7" fill="#805ad5"/>
+  <text x="190" y="49" text-anchor="middle" font-size="12" fill="white" font-weight="600">PerceptionModule → ResourcePoint / 敌方</text>
+  <text x="190" y="65" text-anchor="middle" font-size="10" fill="#e9d8fd">IsRunningSolo=true → OnPerceptionEvent()</text>
+
+  <!-- 2. CollabSetup LLM -->
+  <line x1="190" y1="74" x2="190" y2="94" stroke="#805ad5" stroke-width="1.5" marker-end="url(#acx)"/>
+  <rect x="50" y="94" width="280" height="50" rx="7" fill="#dd6b20"/>
+  <text x="190" y="115" text-anchor="middle" font-size="12" fill="white" font-weight="600">CollabSetupLLM</text>
+  <text x="190" y="129" text-anchor="middle" font-size="10" fill="#feebc8">collaborationGoal / constraints[ ] / myRole / partnerRole</text>
+  <text x="190" y="141" text-anchor="middle" font-size="10" fill="#feebc8">约束格式与 LLM1 完全一致（C1/C2/C3）</text>
+
+  <!-- 3. 广播 ColabInvite -->
+  <line x1="190" y1="144" x2="190" y2="164" stroke="#718096" stroke-width="1.5" marker-end="url(#acx)"/>
+  <rect x="50" y="164" width="280" height="38" rx="7" fill="#2b6cb0"/>
+  <text x="190" y="183" text-anchor="middle" font-size="12" fill="white" font-weight="600">广播 ColabInvite</text>
+  <text x="190" y="197" text-anchor="middle" font-size="10" fill="#bee3f8">ColabInvitePayload {msnId, goal, constraints[], partnerRole}</text>
+
+  <!-- 消息线 A→B -->
+  <line x1="330" y1="183" x2="500" y2="183" stroke="#2b6cb0" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#acxb)"/>
+  <text x="415" y="176" text-anchor="middle" font-size="10" fill="#2b6cb0" font-weight="600">ColabInvite →</text>
+
+  <!-- 4. B 人格检查 + LLM 评估 -->
+  <rect x="500" y="164" width="280" height="38" rx="7" fill="#3182ce"/>
+  <text x="640" y="183" text-anchor="middle" font-size="12" fill="white" font-weight="600">OnColabInvite() → 人格兼容检查</text>
+  <text x="640" y="197" text-anchor="middle" font-size="10" fill="#bee3f8">IsAdversarial XOR → 不兼容直接拒绝</text>
+
+  <line x1="640" y1="202" x2="640" y2="222" stroke="#718096" stroke-width="1.5" marker-end="url(#acx)"/>
+  <rect x="500" y="222" width="280" height="50" rx="7" fill="#2b6cb0"/>
+  <text x="640" y="241" text-anchor="middle" font-size="12" fill="white" font-weight="600">ColabInviteEval LLM</text>
+  <text x="640" y="255" text-anchor="middle" font-size="10" fill="#bee3f8">join=true → InjectEmergentCollabMission()</text>
+  <text x="640" y="268" text-anchor="middle" font-size="10" fill="#bee3f8">RunStepGeneration(LLM4) → Active</text>
+
+  <!-- 5. B 发 ColabAccept -->
+  <line x1="640" y1="272" x2="640" y2="294" stroke="#718096" stroke-width="1.5" marker-end="url(#acx)"/>
+  <rect x="500" y="294" width="280" height="36" rx="7" fill="#4299e1"/>
+  <text x="640" y="313" text-anchor="middle" font-size="12" fill="white" font-weight="600">ColabAccept → {battery, location}</text>
+
+  <!-- 消息线 B→A -->
+  <line x1="500" y1="312" x2="330" y2="312" stroke="#4299e1" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#acxb)"/>
+  <text x="415" y="305" text-anchor="middle" font-size="10" fill="#2b6cb0" font-weight="600">← ColabAccept</text>
+
+  <!-- A 等5s -->
+  <line x1="190" y1="202" x2="190" y2="312" stroke="#718096" stroke-width="1.5" stroke-dasharray="3,4"/>
+  <text x="115" y="262" font-size="10" fill="#718096" text-anchor="middle">等 5s</text>
+  <text x="115" y="274" font-size="10" fill="#718096" text-anchor="middle">收集</text>
+
+  <!-- 6. A 选优发 ColabStart -->
+  <line x1="190" y1="312" x2="190" y2="334" stroke="#718096" stroke-width="1.5" marker-end="url(#acx)"/>
+  <rect x="50" y="334" width="280" height="38" rx="7" fill="#1a365d"/>
+  <text x="190" y="353" text-anchor="middle" font-size="12" fill="white" font-weight="600">按电量选优 → 发送 ColabStart</text>
+  <text x="190" y="367" text-anchor="middle" font-size="10" fill="#90cdf4">ColabStartPayload {msnId, goal, assignedRole, constraints[]}</text>
+
+  <!-- 消息线 A→B ColabStart -->
+  <line x1="330" y1="353" x2="500" y2="353" stroke="#dd6b20" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#acxo)"/>
+  <text x="415" y="345" text-anchor="middle" font-size="10" fill="#dd6b20" font-weight="600">ColabStart →</text>
+
+  <rect x="500" y="334" width="280" height="38" rx="7" fill="#c05621"/>
+  <text x="640" y="353" text-anchor="middle" font-size="12" fill="white" font-weight="600">OnColabStart() → InjectEmergentCollab</text>
+  <text x="640" y="367" text-anchor="middle" font-size="10" fill="#feebc8">busy 检查（若已注入则忽略，幂等）</text>
+
+  <!-- 7. A 自己重规划 -->
+  <line x1="190" y1="372" x2="190" y2="400" stroke="#276749" stroke-width="1.5" marker-end="url(#acxg)"/>
+  <rect x="50" y="400" width="280" height="46" rx="7" fill="#276749"/>
+  <text x="190" y="420" text-anchor="middle" font-size="12" fill="white" font-weight="600">InjectEmergentCollabMission(myRole)</text>
+  <text x="190" y="434" text-anchor="middle" font-size="10" fill="#c6f6d5">中断 Solo → RunStepGeneration → Active（协作角色）</text>
+
+  <!-- 双方 Active -->
+  <rect x="60" y="460" width="250" height="28" rx="5" fill="#48bb78"/>
+  <text x="185" y="478" text-anchor="middle" font-size="12" fill="white" font-weight="600">A: Active（主角色，如采集者）</text>
+  <rect x="510" y="460" width="260" height="28" rx="5" fill="#48bb78"/>
+  <text x="640" y="478" text-anchor="middle" font-size="12" fill="white" font-weight="600">B: Active（伙伴角色，如警戒者）</text>
+</svg>
+</div>
+
+<div class="alert warn">
+  <strong>人格兼容性检查：</strong>在 <code>OnColabInvite()</code> 入口，
+  <code>initiatorPs.IsAdversarial != _personalitySystem.IsAdversarial</code> 为 true 时直接 return，
+  不消耗任何 LLM token。协作型与破坏型天然隔离，互不干扰对方的涌现协作链路。
+</div>
+
+<hr class="divider" style="margin:30px 0;">
+
+<!-- ── 13.4 各模块职责 ── -->
+<h3 id="s13-modules" class="sub-title">13.4 各模块在涌现流程中的职责</h3>
+
+<div class="module-diagram">
+<svg width="100%" viewBox="0 0 820 420" xmlns="http://www.w3.org/2000/svg" style="max-width:820px;display:block;margin:auto;font-family:'Segoe UI',sans-serif">
+  <defs>
+    <marker id="am2" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto"><polygon points="0 0,7 2.5,0 5" fill="#718096"/></marker>
+    <marker id="am2o" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto"><polygon points="0 0,7 2.5,0 5" fill="#dd6b20"/></marker>
+    <marker id="am2g" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto"><polygon points="0 0,7 2.5,0 5" fill="#276749"/></marker>
+    <marker id="am2b" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto"><polygon points="0 0,7 2.5,0 5" fill="#2b6cb0"/></marker>
+    <marker id="am2p" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto"><polygon points="0 0,7 2.5,0 5" fill="#805ad5"/></marker>
+  </defs>
+
+  <!-- 中心 ADM -->
+  <ellipse cx="410" cy="210" rx="105" ry="55" fill="#1a365d" stroke="#63b3ed" stroke-width="2"/>
+  <text x="410" y="202" text-anchor="middle" font-size="13" fill="white" font-weight="700">Autonomous</text>
+  <text x="410" y="218" text-anchor="middle" font-size="13" fill="white" font-weight="700">DriveModule</text>
+  <text x="410" y="232" text-anchor="middle" font-size="10" fill="#90cdf4">涌现核心控制器</text>
+
+  <!-- 上：PerceptionModule -->
+  <rect x="270" y="16" width="280" height="56" rx="8" fill="#805ad5"/>
+  <text x="410" y="38" text-anchor="middle" font-size="12" fill="white" font-weight="600">PerceptionModule</text>
+  <text x="410" y="52" text-anchor="middle" font-size="10" fill="#e9d8fd">ScanAsDrone → HandleRaycastHit</text>
+  <text x="410" y="65" text-anchor="middle" font-size="10" fill="#e9d8fd">IsEnemyByPersonality() → OnPerceptionEvent()</text>
+  <line x1="410" y1="72" x2="410" y2="155" stroke="#805ad5" stroke-width="1.5" marker-end="url(#am2p)"/>
+
+  <!-- 左上：PersonalitySystem -->
+  <rect x="10" y="24" width="220" height="64" rx="8" fill="#744210" stroke="#f6ad55" stroke-width="1.5"/>
+  <text x="120" y="47" text-anchor="middle" font-size="12" fill="white" font-weight="600">PersonalitySystem</text>
+  <text x="120" y="61" text-anchor="middle" font-size="10" fill="#feebc8">Big-5 + isAdversarial: bool</text>
+  <text x="120" y="74" text-anchor="middle" font-size="10" fill="#feebc8">IsAdversarial → 通信隔离 + Disruption驱动</text>
+  <line x1="230" y1="76" x2="308" y2="175" stroke="#f6ad55" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#am2o)"/>
+
+  <!-- 左下：MemoryModule -->
+  <rect x="10" y="286" width="220" height="64" rx="8" fill="#2d3748"/>
+  <text x="120" y="309" text-anchor="middle" font-size="12" fill="white" font-weight="600">MemoryModule</text>
+  <text x="120" y="323" text-anchor="middle" font-size="10" fill="#a0aec0">ComputeDrives() 检索历史记录</text>
+  <text x="120" y="336" text-anchor="middle" font-size="10" fill="#a0aec0">敌方目击 / 覆盖区域 / 协作时间戳</text>
+  <line x1="230" y1="318" x2="308" y2="248" stroke="#718096" stroke-width="1.5" marker-end="url(#am2)"/>
+
+  <!-- 右上：PlanningModule -->
+  <rect x="590" y="16" width="220" height="80" rx="8" fill="#2b6cb0"/>
+  <text x="700" y="40" text-anchor="middle" font-size="12" fill="white" font-weight="600">PlanningModule</text>
+  <text x="700" y="54" text-anchor="middle" font-size="10" fill="#bee3f8">InjectSoloMission() — 直接 Active</text>
+  <text x="700" y="67" text-anchor="middle" font-size="10" fill="#bee3f8">InjectEmergentCollabMission()</text>
+  <text x="700" y="80" text-anchor="middle" font-size="10" fill="#bee3f8">RunStepGeneration() — 共用</text>
+  <text x="700" y="91" text-anchor="middle" font-size="10" fill="#90cdf4">IsRunningSolo: bool</text>
+  <line x1="590" y1="76" x2="513" y2="170" stroke="#4299e1" stroke-width="1.5" marker-end="url(#am2b)"/>
+
+  <!-- 右下：CommunicationModule -->
+  <rect x="590" y="296" width="220" height="70" rx="8" fill="#276749"/>
+  <text x="700" y="320" text-anchor="middle" font-size="12" fill="white" font-weight="600">CommunicationModule</text>
+  <text x="700" y="334" text-anchor="middle" font-size="10" fill="#c6f6d5">ColabInvite → OnColabInvite(payload)</text>
+  <text x="700" y="347" text-anchor="middle" font-size="10" fill="#c6f6d5">ColabStart → OnColabStart(payload)</text>
+  <text x="700" y="360" text-anchor="middle" font-size="10" fill="#c6f6d5">Newtonsoft.Json 反序列化含约束 Payload</text>
+  <line x1="590" y1="331" x2="513" y2="252" stroke="#48bb78" stroke-width="1.5" marker-end="url(#am2g)"/>
+
+  <!-- 下：AgentSpawner -->
+  <rect x="258" y="342" width="304" height="62" rx="8" fill="#553c9a"/>
+  <text x="410" y="366" text-anchor="middle" font-size="12" fill="white" font-weight="600">AgentSpawner</text>
+  <text x="410" y="380" text-anchor="middle" font-size="10" fill="#e9d8fd">cooperativeCount / adversarialCount</text>
+  <text x="410" y="393" text-anchor="middle" font-size="10" fill="#e9d8fd">生成时逐 agent 赋值 isAdversarial</text>
+  <line x1="410" y1="342" x2="410" y2="265" stroke="#805ad5" stroke-width="1.5" marker-end="url(#am2p)"/>
+</svg>
+</div>
+
+<table style="margin-top:16px;">
+  <tr><th>模块</th><th>在涌现流程中的职责</th><th>关键新增/改动</th></tr>
+  <tr><td><strong>AutonomousDriveModule</strong></td><td>涌现核心控制器：5维驱动力计算、Solo LLM 调用与注入、感知触发协作 LLM、邀请广播/收集/选优、发起方重规划</td><td>去掉 <code>IsAnyTeammateOccupied()</code>；<code>EmergenceResult.steps[]</code>；新增 <code>OnPerceptionEvent</code>、<code>EvaluateCollabTrigger</code>、<code>OnColabStart</code>、<code>BuildCollabSetupPrompt</code>、<code>ComputeDisruptionDrive</code></td></tr>
+  <tr><td><strong>PerceptionModule</strong></td><td>射线感知后识别资源点和敌方 agent，通知 ADM 触发协作评估</td><td><code>IsEnemyByPersonality()</code> 替换 TeamID 比较；ResourcePoint/敌方感知后调用 <code>OnPerceptionEvent()</code></td></tr>
+  <tr><td><strong>PersonalitySystem</strong></td><td>提供 <code>IsAdversarial</code> 判断，用于通信隔离和 Disruption 驱动计算</td><td><code>PersonalityProfile.isAdversarial</code> 字段；<code>IsAdversarial</code> 只读属性</td></tr>
+  <tr><td><strong>PlanningModule</strong></td><td>提供两个注入接口；<code>RunStepGeneration()</code> 被外部路径和涌现路径共用</td><td><code>InjectSoloMission</code>、<code>InjectEmergentCollabMission</code>、<code>IsRunningSolo</code>；<code>RunLLM4()</code> 委托为一行</td></tr>
+  <tr><td><strong>CommunicationModule</strong></td><td>路由携带完整约束 Payload 的 ColabInvite/ColabStart 消息</td><td>新增 <code>using Newtonsoft.Json</code>；<code>ColabInvite</code> 改为 Payload 反序列化；新增 <code>ColabStart</code> case</td></tr>
+  <tr><td><strong>AgentSpawner</strong></td><td>Inspector 配置协作/对抗数量，生成时赋值 <code>isAdversarial</code></td><td><code>adversarialCount</code> 字段；后 N 个 agent 为对抗型</td></tr>
+</table>
+
+<hr class="divider" style="margin:30px 0;">
+
+<!-- ── 13.5 端到端完整案例 ── -->
+<h3 id="s13-example" class="sub-title">13.5 端到端完整案例：从 Idle 到协作执行</h3>
+
+<div class="card highlight" style="margin-bottom:20px;">
+  <strong>场景：</strong>3 协作型 agent（A1, A2, A3）+ 1 破坏型 agent（X）同时启动，均 Idle。<br>
+  配置：<code>evaluationInterval=30s</code>，<code>driveThreshold=0.6</code>，<code>maxTeamSize=2</code>。
+</div>
+
+<div class="timeline">
+
+  <div class="timeline-item p1">
+    <h4>T=0s — 全部 Idle，开始计时</h4>
+    <p>四个 agent 的 <code>Update()</code> 均进入 Idle 分支，记录 <code>_lastEvaluationTime</code>。X 的 Disruption 驱动 = 0（感知范围内无 Active 的协作型 agent）。</p>
+  </div>
+
+  <div class="timeline-item p2">
+    <h4>T=30s — 四者同时进入 EvaluateAndTrigger()</h4>
+    <p>各自独立计算驱动力（不互相等待）：</p>
+    <table style="font-size:13px;margin-top:8px;">
+      <tr><th>Agent</th><th>最强驱动</th><th>Jitter</th><th>触发时间</th></tr>
+      <tr><td>A2</td><td>Threat=0.71（记忆有敌方目击）</td><td>0.9s</td><td>T≈30.9s</td></tr>
+      <tr><td>X</td><td>Exploration=0.73</td><td>3.5s</td><td>T≈33.5s</td></tr>
+      <tr><td>A1</td><td>Exploration=0.82</td><td>2.3s</td><td>T≈32.3s</td></tr>
+      <tr><td>A3</td><td>Battery=0.65（电量36%）</td><td>4.1s</td><td>T≈34.1s</td></tr>
+    </table>
+  </div>
+
+  <div class="timeline-item p3">
+    <h4>T≈30.9s — A2 率先调用 EmergenceLLM（Solo 路径）</h4>
+    <p>EmergenceLLM 输入：Threat 驱动、北区威胁记忆。输出：</p>
+    <pre style="font-size:12px;margin:6px 0;">{
+  "thought": "记忆中北区有威胁记录，优先侦察确认",
+  "goal": "前往北区执行威胁侦察",
+  "steps": ["飞往北区", "启动扫描模式观察周边", "记录可疑目标并返回基地"]
+}</pre>
+    <p>→ <code>InjectSoloMission("前往北区...", steps)</code> → A2 状态：Active，<strong>IsRunningSolo=true</strong></p>
+    <p>A1/A3/X 随后各自独立生成不同目标，互不干扰，互不等待。</p>
+  </div>
+
+  <div class="timeline-item p4">
+    <h4>T≈52s — A2 执行中感知到 ResourcePoint_N3</h4>
+    <p>
+      <code>ScanAsDrone()</code> 射线命中资源点，进入 <code>HandleRaycastHit()</code>：<br>
+      → <code>RegisterSharedNode()</code><br>
+      → <code>TryRecordObservation()</code>（写入记忆）<br>
+      → <code>_autonomousDriveModule.OnPerceptionEvent("感知到资源点 ResourcePoint_N3", "北区", ResourcePoint)</code>
+    </p>
+    <p><code>OnPerceptionEvent</code>：<code>IsRunningSolo=true ✓</code>，<code>_isEvaluating=false ✓</code> → 启动 <code>EvaluateCollabTrigger()</code></p>
+  </div>
+
+  <div class="timeline-item p1">
+    <h4>T≈52s — CollabSetupLLM 生成协作方案（含约束）</h4>
+    <pre style="font-size:12px;margin:6px 0;">{
+  "collaborationGoal": "协同采集 ResourcePoint_N3 并提供警戒保护",
+  "constraints": [
+    {"constraintId":"c1_n3","cType":"C1","channel":"direct","groupScope":0,
+     "subject":"采集者","targetObject":"ResourcePoint_N3","exclusive":true},
+    {"constraintId":"c2_ready","cType":"C2","channel":"whiteboard","groupScope":0,
+     "condition":"双方均抵达北区","syncWith":[]}
+  ],
+  "myRole": "主采集者，直接前往 ResourcePoint_N3 采集",
+  "partnerRole": "警戒者，在 ResourcePoint_N3 附近 20m 巡逻警戒",
+  "inviteMessage": "北区发现资源点，需协同作业"
+}</pre>
+    <p>msnId=<code>emg_A2_52</code>，广播 ColabInvite（Content = 上述 JSON 序列化）。</p>
+  </div>
+
+  <div class="timeline-item p2">
+    <h4>T≈52s — 各 agent 收到 ColabInvite</h4>
+    <div class="card-grid cols-2" style="margin-top:6px;">
+      <div class="card danger" style="padding:14px;">
+        <strong>X（破坏型）：</strong><br>
+        <code>initiatorPs.IsAdversarial(false) ≠ self.IsAdversarial(true)</code><br>
+        → 直接 <code>return</code>，<strong>零 LLM 消耗</strong>
+      </div>
+      <div class="card" style="padding:14px;background:#fffaf0;border-left:3px solid #ed8936;">
+        <strong>A1（Active 中）：</strong><br>
+        <code>CurrentState.Status != Idle</code> → return<br><br>
+        <strong>A3（Active 中，低电）：</strong><br>
+        <code>CurrentState.Status != Idle</code> → return
+      </div>
+    </div>
+    <div class="alert warn" style="margin-top:8px;">
+      无 Idle 协作型 agent 响应。5s 后 <code>_pendingAcceptors</code> 为空，A2 跳过 ColabStart，
+      直接以 myRole 注入协作任务继续执行。<strong>不阻塞，不死等</strong>。
+    </div>
+  </div>
+
+  <div class="timeline-item p3">
+    <h4>T≈63s — A1 完成 Solo 任务 → Idle，感知到 X</h4>
+    <p>
+      A1 Solo 完毕，Status=Idle，新一轮计时开始。<br>
+      A1 的 <code>PerceptionModule</code> 射线命中 X（X 正在 Active 执行干扰任务）：<br>
+      → <code>IsEnemyByPersonality(X)=true</code> → <code>enemyAgents.Add(X)</code><br>
+      → <code>OnPerceptionEvent("敌方 X @ ...", "东区", Agent)</code>
+    </p>
+    <p>
+      A1 Solo 计时未满但感知触发优先：<code>IsRunningSolo</code>... 此时 A1 是 Idle，不是 Solo。<br>
+      <span style="color:#744210;">→ 实际：A1 在下次 Solo 涌现触发后的执行阶段，感知到 X 才触发协作。</span><br>
+      A1 Solo 目标：<em>"东区威胁处置"</em>。执行途中感知到 A3（此时 A3 已 Idle）→ 发起 ColabInvite → A3 接受 → <strong>A1+A3 形成反威胁协作</strong>。
+    </p>
+  </div>
+
+  <div class="timeline-item p4">
+    <h4>最终涌现态（T≈100s）</h4>
+    <div class="card-grid cols-2">
+      <div class="card success">
+        <h4 class="sub-sub">协作型阵营</h4>
+        <ul class="check-list">
+          <li class="yes">A2：采集 ResourcePoint_N3（C1 约束确保独占）</li>
+          <li class="yes">A1+A3：反威胁协作巡逻（C2 约束同步到达）</li>
+        </ul>
+      </div>
+      <div class="card danger">
+        <h4 class="sub-sub">对抗型阵营</h4>
+        <ul class="check-list">
+          <li class="no">X：Solo 干扰任务（Disruption 驱动激活）</li>
+          <li class="no">X 无法加入任何协作型协作链路</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<hr class="divider" style="margin:30px 0;">
+
+<!-- ── 13.6 对抗型 Agent ── -->
+<h3 id="s13-adversarial" class="sub-title">13.6 对抗型 Agent 设计</h3>
+
+<div class="card-grid cols-2">
+  <div class="card" style="border-left:4px solid #38a169;background:#f0fff4;">
+    <h4 class="sub-sub" style="color:#276749;">协作型</h4>
+    <table style="margin:0;font-size:13px;">
+      <tr><td><code>isAdversarial</code></td><td>false</td></tr>
+      <tr><td>coreValues</td><td>"维护区域安全，协助队友"</td></tr>
+      <tr><td>涌现目标</td><td>侦察、采集、巡逻</td></tr>
+      <tr><td>Disruption 驱动</td><td>永远 = 0</td></tr>
+      <tr><td>邀请响应</td><td>接受协作型，拒绝破坏型</td></tr>
+    </table>
+  </div>
+  <div class="card" style="border-left:4px solid #e53e3e;background:#fff5f5;">
+    <h4 class="sub-sub" style="color:#c53030;">破坏型</h4>
+    <table style="margin:0;font-size:13px;">
+      <tr><td><code>isAdversarial</code></td><td>true</td></tr>
+      <tr><td>coreValues</td><td>"干扰敌方任务执行"</td></tr>
+      <tr><td>涌现目标</td><td>干扰、拦截、破坏资源点</td></tr>
+      <tr><td>Disruption 驱动</td><td>activeEnemies × 0.5</td></tr>
+      <tr><td>邀请响应</td><td>接受破坏型，拒绝协作型</td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="card" style="border-left:4px solid #805ad5;background:#faf5ff;margin-top:16px;">
+  <h4 class="sub-sub" style="color:#553c9a;">Disruption 驱动计算</h4>
+  <div class="formula-box" style="margin:10px 0;">
+    <div class="formula-label">ComputeDisruptionDrive() — 仅对抗型激活</div>
+    <div class="formula-main">D = Clamp01( N<sub>activeEnemies</sub> × 0.5 )</div>
+    <div class="formula-sub">N<sub>activeEnemies</sub> = perceptionModule.enemyAgents.Count(e → Status == ExecutingTask)</div>
+  </div>
+  <p style="font-size:13px;">感知到 2 个协作型 agent 正在执行任务 → D=1.0 超过阈值 → EmergenceLLM prompt 中注入：<br>
+  <em style="color:#553c9a;">「⚠️ 当前核心驱动为「干扰」，你的目标应为阻碍敌方 agent 正在执行的任务」</em><br>
+  LLM 自然生成干扰/拦截/破坏等步骤，无需硬编码任务类型。</p>
+</div>
+
+<h4 class="sub-sub" style="margin-top:24px;">改动文件汇总</h4>
+<table>
+  <tr><th>文件</th><th>状态</th><th>核心改动摘要</th></tr>
+  <tr><td><code>CommunicationEnums.cs</code></td><td><span class="badge-tag green">✅</span></td><td>新增 <code>ColabStart</code> 消息类型</td></tr>
+  <tr><td><code>PersonalitySystem.cs</code></td><td><span class="badge-tag green">✅</span></td><td><code>isAdversarial: bool</code> 字段；<code>IsAdversarial</code> 只读属性</td></tr>
+  <tr><td><code>AgentSpawner.cs</code></td><td><span class="badge-tag green">✅</span></td><td><code>adversarialCount</code> Inspector 配置；按序赋值 <code>isAdversarial</code></td></tr>
+  <tr><td><code>PlanningModule.cs</code></td><td><span class="badge-tag green">✅</span></td><td><code>RunStepGeneration()</code> 提取共用；<code>InjectSoloMission</code>/<code>InjectEmergentCollabMission</code>/<code>IsRunningSolo</code> 新增；<code>RunLLM4()</code> 委托为一行</td></tr>
+  <tr><td><code>AutonomousDriveModule.cs</code></td><td><span class="badge-tag green">✅</span></td><td>全面重构：去掉队友检查、Solo steps[]、感知触发协作、Disruption 驱动、人格兼容检查；新增 5 个公开接口方法</td></tr>
+  <tr><td><code>CommunicationModule.cs</code></td><td><span class="badge-tag green">✅</span></td><td>Newtonsoft.Json；<code>ColabInvite</code> 改为 Payload 反序列化；新增 <code>ColabStart</code> 路由</td></tr>
+  <tr><td><code>PerceptionModule.cs</code></td><td><span class="badge-tag green">✅</span></td><td><code>IsEnemyByPersonality()</code>；ResourcePoint/敌方感知后调用 <code>OnPerceptionEvent()</code></td></tr>
+</table>
+
+</section><!-- end s13 -->
 
 </div><!-- end main-content -->
 

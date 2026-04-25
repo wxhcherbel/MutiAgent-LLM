@@ -22,6 +22,8 @@ public class PlanningModule : MonoBehaviour
     // ─── 状态机 ──────────────────────────────────────────────
     public PlanningState state = PlanningState.Idle;
     private bool busy;
+    /// <summary>当前是否有任务请求正在处理中（供 AutonomousDriveModule 检查）。</summary>
+    public bool IsBusy => busy;
 
     // ─── 本轮任务数据 ─────────────────────────────────────────
     private ParsedMission parsed;
@@ -109,8 +111,11 @@ public class PlanningModule : MonoBehaviour
     // 用户入口
     // ─────────────────────────────────────────────────────────
 
-    /// <summary>用户触发任务请求,启动 LLM#1。</summary>
-    public void SubmitMissionRequest(string missionDescription, int agentCount)
+    /// <summary>
+    /// 用户触发任务请求,启动 LLM#1。
+    /// invitedAgentIds 非空时只让指定 agent 参与；为 null 时取全量 agent（默认行为）。
+    /// </summary>
+    public void SubmitMissionRequest(string missionDescription, int agentCount, string[] invitedAgentIds = null)
     {
         if (busy)
         {
@@ -118,7 +123,7 @@ public class PlanningModule : MonoBehaviour
             return;
         }
         busy = true;
-        StartCoroutine(RunLLM1(missionDescription, agentCount));
+        StartCoroutine(RunLLM1(missionDescription, agentCount, invitedAgentIds));
     }
 
     // ─────────────────────────────────────────────────────────
@@ -126,7 +131,7 @@ public class PlanningModule : MonoBehaviour
     // ─────────────────────────────────────────────────────────
 
     /// <summary>LLM#1:解析自然语言任务为 ParsedMission。</summary>
-    private IEnumerator RunLLM1(string desc, int cnt)
+    private IEnumerator RunLLM1(string desc, int cnt, string[] invitedAgentIds = null)
     {
         SetState(PlanningState.Parsing);
 
@@ -240,9 +245,17 @@ public class PlanningModule : MonoBehaviour
             constraintCount: p.constraints?.Length ?? 0,
             thought: p.thought);
 
-        string[] agentIds = CommunicationManager.Instance != null
-            ? CommunicationManager.Instance.GetAllAgentIds()
-            : new[] { props.AgentID };
+        string[] agentIds;
+        if (invitedAgentIds != null && invitedAgentIds.Length > 0)
+        {
+            agentIds = invitedAgentIds;
+        }
+        else
+        {
+            agentIds = CommunicationManager.Instance != null
+                ? CommunicationManager.Instance.GetAllAgentIds()
+                : new[] { props.AgentID };
+        }
 
         AssignGroups(p, agentIds);
     }
@@ -526,14 +539,95 @@ public class PlanningModule : MonoBehaviour
     }
 
     /// <summary>LLM#4(全员):将确认的计划槽拆解为有序步骤。</summary>
-    private IEnumerator RunLLM4()
+    // ─────────────────────────────────────────────────────────
+    // 公开注入接口（自主涌现路径）
+    // ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 自主涌现独立任务直接注入，跳过所有 LLM。
+    /// steps 为 AutonomousDriveModule 涌现 LLM 直接生成的自然语言步骤数组。
+    /// </summary>
+    public void InjectSoloMission(string goal, string[] steps)
+    {
+        if (busy) { Debug.LogWarning($"[{props?.AgentID}][PlanningModule] busy，InjectSoloMission 忽略"); return; }
+        if (steps == null || steps.Length == 0) { Debug.LogWarning($"[{props?.AgentID}][PlanningModule] InjectSoloMission steps 为空"); return; }
+
+        busy = true;
+        string msnId = GenMsnId();
+
+        agentPlan = new AgentPlan
+        {
+            msnId  = msnId,
+            slotId = "solo",
+            role   = "Solo",
+            desc   = goal,
+            steps  = steps.Select((s, i) => new PlanStep
+            {
+                stepId        = $"step_{i + 1}",
+                text          = s,
+                targetName    = ExtractSimpleTargetName(s),
+                doneCond      = string.Empty,
+                constraintIds = new string[0]
+            }).ToArray(),
+            curIdx = 0
+        };
+
+        parsed = new ParsedMission { msnId = msnId, relType = "Solo" };
+        confirmedSlot = new PlanSlot { slotId = "solo", role = "Solo", desc = goal, constraintIds = new string[0] };
+
+        Debug.Log($"<color=#00FF88>[{props?.AgentID}][PlanningModule] InjectSoloMission: {goal} ({agentPlan.steps.Length} 步)</color>");
+        SetState(PlanningState.Active);
+    }
+
+    /// <summary>当前是否正在执行自主涌现的独立任务（供感知事件判断是否触发协作）。</summary>
+    public bool IsRunningSolo => state == PlanningState.Active && parsed?.relType == "Solo";
+
+    /// <summary>
+    /// 涌现协作任务注入：跳过 LLM1/2/3，使用已生成的 constraints 和 role，
+    /// 直接运行步骤生成 LLM（等价于原 LLM4）后进入 Active。
+    /// </summary>
+    public void InjectEmergentCollabMission(string msnId, string goal, StructuredConstraint[] constraints, string myRole)
+    {
+        if (busy) { Debug.LogWarning($"[{props?.AgentID}][PlanningModule] busy，InjectEmergentCollabMission 忽略"); return; }
+        busy = true;
+
+        // 填充约束字典（与 OnGroupBootstrap 相同逻辑）
+        _constraintDict.Clear();
+        if (constraints != null)
+            foreach (var c in constraints)
+                if (c != null) _constraintDict[c.constraintId] = c;
+
+        parsed = new ParsedMission
+        {
+            msnId     = msnId,
+            relType   = "Cooperation",
+            groupMsns = new[] { goal }
+        };
+
+        confirmedSlot = new PlanSlot
+        {
+            slotId        = "s_emergent",
+            role          = "Custom",
+            desc          = myRole,
+            doneCond      = string.Empty,
+            constraintIds = constraints?.Select(c => c.constraintId).ToArray() ?? new string[0]
+        };
+
+        Debug.Log($"<color=#00FF88>[{props?.AgentID}][PlanningModule] InjectEmergentCollabMission: {goal} | 角色: {myRole}</color>");
+        StartCoroutine(RunStepGeneration());
+    }
+
+    /// <summary>
+    /// 通用步骤生成协程，供外部任务路径（RunLLM4）和涌现协作路径（InjectEmergentCollabMission）共用。
+    /// 调用前必须已设置好 confirmedSlot、parsed、_constraintDict。
+    /// </summary>
+    private IEnumerator RunStepGeneration()
     {
         SetState(PlanningState.StepGen);
 
         Vector3 pos   = dynState != null ? dynState.Position : transform.position;
         float battery = dynState != null ? dynState.BatteryLevel : 100f;
 
-        // 收集槽位关联的约束对象,供 LLM#4 知晓可引用的约束 ID
         var slotConstraints = new List<StructuredConstraint>();
         if (confirmedSlot.constraintIds != null)
         {
@@ -545,8 +639,192 @@ public class PlanningModule : MonoBehaviour
         }
         string constraintsJson = JsonConvert.SerializeObject(slotConstraints);
 
-        // 从 MemoryModule 检索与当前槽位/角色相关的历史经验和反思规则，注入到规划提示词
-        // 帮助 LLM#4 在步骤拆分时参考"过去类似角色在此目标上踩过的坑和成功策略"
+        string planningMemoryContext = string.Empty;
+        if (memory != null)
+        {
+            planningMemoryContext = memory.BuildPlanningContext(new PlanningMemoryContextRequest
+            {
+                missionText = parsed?.groupMsns != null && parsed.groupMsns.Length > 0 ? parsed.groupMsns[0] : string.Empty,
+                missionId   = parsed?.msnId ?? string.Empty,
+                roleName    = confirmedSlot.role,
+                slotId      = confirmedSlot.slotId,
+                slotLabel   = confirmedSlot.role,
+                slotTarget  = confirmedSlot.doneCond,
+                maxMemories = 4,
+                maxInsights = 2
+            });
+        }
+
+        string prompt =
+        "你是无人机任务规划中枢。请在不改变计划原意的前提下,将整体任务拆分为具体的【执行步骤】,并精准挂载【约束条件】。\n\n" +
+        "## 历史经验与反思规则（来自记忆模块）\n" +
+        (string.IsNullOrWhiteSpace(planningMemoryContext) ? "（无历史经验，首次执行此类任务）" : planningMemoryContext) + "\n\n" +
+        "## 输入上下文\n" +
+        $"计划(desc): {confirmedSlot.desc}\n" +
+        $"当前AgentID: {props?.AgentID} | 角色: {confirmedSlot.role}\n" +
+        $"完成条件: {confirmedSlot.doneCond}\n" +
+        $"无人机状态: [位置: {pos}, 电量: {battery:F0}%]\n" +
+        $"待分配约束列表: {constraintsJson}\n\n" +
+
+        "## 任务一:步骤拆分与提取标准（正向定义）\n" +
+        "1. 什么是【完整的一步】:\n" +
+        "   - 一个步骤必须包含核心动作以及它的全部上下文描述（如路线、起点、执行方式）。动作及其上下文修饰语是一个不可分割的语义整体。\n" +
+        "   - 移动类任务:每一处不同目的地的移动单独为一步。若到达目的地后还需执行动作，且该动作依赖多机同步（存在C2约束），则C2约束挂载在移动步骤，到达后的动作必须拆为独立的下一步——C2协同构成同步边界，边界两侧的动作不可合并。例：'飞往能源站，到达后等全体汇合一起开启护盾'→ step_1:飞往能源站（挂C2）；step_2:开启护盾（无C2）。\n" +
+        "   - 原地任务:无人机停留在同一空间位置执行的所有连续动作，且不存在C2同步边界时，打包合并为一步。\n" +
+        "2. 字段填充规范:\n" +
+        "   - stepId: 格式为 \"step_1\", \"step_2\"...\n" +
+        "   - text: 完整保留操作及其所有的前置/后置描述（例:\"从北门进入厂区东边并开启扫描\"）。\n" +
+        "   - targetName: 提取最核心的【主体建筑/区域实体名】（如:控制中心、厂区）。当遇到包含方位或附属结构的复合描述（如\"厂区东边\"、\"大楼入口\"）时,必须向上追溯,仅提取其依附的【绝对主实体名】（即提取为\"厂区\"、\"大楼\"）。若无明确主体实体一律填 \"\"。\n" +
+        "   - doneCond: 描述该步完成时的预期状态。无则填 \"\"。\n" +
+        "   - constraintIds: 填入分配到该步骤的约束ID数组,没有则填 []。\n\n" +
+
+        "## 任务二:约束条件分配标准\n" +
+        "分析约束的核心业务目的,将其匹配给最契合的那一个步骤:\n" +
+        "1. C2类 (同步完成):分配给需要\"集体到位\"或\"共同集结\"的到达步骤,而不是到达后的步骤。\n" +
+        "2. C3类 (条件依赖 sign=+1) — 根据自身槽位判断角色：\n" +
+        "   - 若约束的 watchAgent 字段 == 当前槽位ID（" + confirmedSlot.slotId +
+        "）：本机是信号发出方，将该约束挂到发出就绪信号的步骤。\n" +
+        "   - 若约束的 watchAgent 字段 != 当前槽位ID（或为空）：本机是等待方，将该约束挂到需要等待信号后才能开始的前置步骤。\n" +
+        "3. C3类 (资源互斥 sign=-1):分配给多机共享同一路径或目标、容易产生空间冲突的【移动步骤】。\n" +
+        "⚠️ 强制要求:【待分配约束列表】中的每一个 constraintId 都必须出现在某个步骤的 constraintIds 中，不得遗漏任何一个。\n\n" +
+
+        "## 输出要求\n" +
+        "仅输出合法的 JSON 对象。thought 字段输出 JSON 对象，字段：split_reasoning（步骤拆分依据与地标提取，1-3句）、constraint_checks（数组，对每个输入 constraintId 逐条核查，每项含 constraintId/assigned_step/reason）、confidence（高/中/低）、confidence_reason（原因）、suggestion（可跨任务复用的抽象步骤拆分/地标提取原则，描述结构性条件而非当前任务细节；无新规律则填\"\"）。\n" +
+        "原始计划为：'等待安全信号后，从营地出发前往哨站附近拍照，然后穿过狭窄通道飞往能源站北侧，到达后等待全体小队汇合一起开启护盾'。\n" +
+        "{\n" +
+        "  \"thought\": {\"split_reasoning\":\"原始计划含2个不同目的地，拆解为2步；step_1提取绝对地标'哨站'；step_2复合描述'能源站北侧'向上追溯提取主实体'能源站'\",\"constraint_checks\":[{\"constraintId\":\"c3_wait_signal\",\"assigned_step\":\"step_1\",\"reason\":\"C3+1等待前置信号，绑定需等待信号的前置步骤\"},{\"constraintId\":\"c3_channel_mutex\",\"assigned_step\":\"step_2\",\"reason\":\"C3-1互斥约束绑定狭窄通道移动步骤\"},{\"constraintId\":\"c2_sync_shield\",\"assigned_step\":\"step_2\",\"reason\":\"C2同步约束绑定需集体到位的到达步骤\"}],\"confidence\":\"高\",\"confidence_reason\":\"目的地和约束匹配关系清晰\",\"suggestion\":\"当步骤描述含方位修饰词时应向上追溯到主实体名以避免导航失配\"},\n" +
+        "  \"steps\": [\n" +
+        "    {\n" +
+        "      \"stepId\": \"step_1\",\n" +
+        "      \"text\": \"等待安全信号后，从营地出发前往哨站附近拍照\",\n" +
+        "      \"targetName\": \"哨站\",\n" +
+        "      \"doneCond\": \"拍照完成\",\n" +
+        "      \"constraintIds\": [\"c3_wait_signal\"]\n" +
+        "    },\n" +
+        "    {\n" +
+        "      \"stepId\": \"step_2\",\n" +
+        "      \"text\": \"然后穿过狭窄通道飞往能源站北侧\",\n" +
+        "      \"targetName\": \"能源站\",\n" +
+        "      \"doneCond\": \"\",\n" +
+        "      \"constraintIds\": [\"c3_channel_mutex\", \"c2_sync_shield\"]\n" +
+        "    },\n" +
+        "    {\n" +
+        "      \"stepId\": \"step_3\",\n" +
+        "      \"text\": \"到达后等待全体小队汇合一起开启护盾\",\n" +
+        "      \"targetName\": \"\",\n" +
+        "      \"doneCond\": \"护盾开启\",\n" +
+        "      \"constraintIds\": [ ]\n" +
+        "    },\n" +
+        "  ]\n" +
+        "}";
+
+        string llmResult = null;
+        yield return StartCoroutine(llm.SendRequest(
+            new LLMRequestOptions { prompt = prompt, maxTokens = 800, enableJsonMode = true, callTag = "LLM#4_StepGen", agentId = props?.AgentID },
+            r => llmResult = r));
+
+        if (string.IsNullOrWhiteSpace(llmResult))
+        {
+            Debug.LogError($"[{props?.AgentID}][PlanningModule] RunStepGeneration LLM 返回空");
+            busy = false;
+            SetState(PlanningState.Failed);
+            yield break;
+        }
+        Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] RunStepGeneration 原始回复: {llmResult}");
+        PlanStep[] steps = null;
+        string stepThought = string.Empty;
+        try
+        {
+            string parsedJson = ExtractJson(llmResult);
+            if (!string.IsNullOrWhiteSpace(parsedJson) && parsedJson.TrimStart().StartsWith("{"))
+            {
+                LLM4StepGenResult result = JsonConvert.DeserializeObject<LLM4StepGenResult>(parsedJson);
+                stepThought = result?.thought ?? string.Empty;
+                steps = result?.steps;
+            }
+            else
+            {
+                steps = JsonConvert.DeserializeObject<PlanStep[]>(parsedJson);
+            }
+
+            if (!string.IsNullOrWhiteSpace(stepThought))
+                Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] StepGen Thought: {stepThought}");
+
+            if (steps == null)
+                throw new Exception("RunStepGeneration steps 解析结果为 null");
+
+            Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] StepGen 生成步骤: {string.Join(", ", steps.Select(s => s.stepId + ":" + s.text))}");
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"{props?.AgentID ?? "Unknown"}: [PlanningModule] RunStepGeneration JSON解析失败: {e.Message}");
+            busy = false;
+            SetState(PlanningState.Failed);
+            yield break;
+        }
+
+        agentPlan = new AgentPlan
+        {
+            msnId   = parsed.msnId,
+            slotId  = confirmedSlot.slotId,
+            role    = confirmedSlot.role,
+            desc    = confirmedSlot.desc,
+            thought = stepThought,
+            steps   = steps,
+            curIdx  = 0
+        };
+
+        if (memory != null && steps.Length > 0)
+        {
+            string stepsSummary = string.Join(" → ", steps.Select(s => s.text));
+            memory.RememberPlanSnapshot(
+                missionId:   parsed.msnId,
+                slotId:      confirmedSlot.slotId,
+                stepLabel:   confirmedSlot.role,
+                planSummary: $"[{confirmedSlot.role}] 计划步骤: {stepsSummary}",
+                targetRef:   confirmedSlot.doneCond,
+                thought:     stepThought,
+                tags:        new[] { confirmedSlot.role, parsed.msnId });
+        }
+
+        Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] {props.AgentID} 计划就绪,共 {steps.Length} 步");
+        SetState(PlanningState.Active);
+        if (parsed != null && parsed.timeLimit > 0f)
+            StartCoroutine(TimeLimitCoroutine(parsed.timeLimit));
+    }
+
+    /// <summary>从步骤文本中简单提取目标名（用于 Solo 注入步骤）。</summary>
+    private static string ExtractSimpleTargetName(string stepText)
+    {
+        if (string.IsNullOrWhiteSpace(stepText)) return string.Empty;
+        // 简单启发：取"前往/飞往/移动到"后面第一个名词短语（最多4个汉字）
+        var match = System.Text.RegularExpressions.Regex.Match(stepText, @"(?:前往|飞往|移动到|到达|去往)([^\s，,。.]{1,8})");
+        return match.Success ? match.Groups[1].Value : string.Empty;
+    }
+
+    private IEnumerator RunLLM4()
+    {
+        yield return StartCoroutine(RunStepGeneration());
+    }
+
+    // ── 以下为已废弃的原始 RunLLM4 实现（已提取到 RunStepGeneration，保留注释供参考）──
+    // ReSharper disable once UnusedMember.Local
+    private IEnumerator RunLLM4_Legacy_Unused()
+    {
+        Vector3 pos   = dynState != null ? dynState.Position : transform.position;
+        float battery = dynState != null ? dynState.BatteryLevel : 100f;
+
+        var slotConstraints = new List<StructuredConstraint>();
+        if (confirmedSlot.constraintIds != null)
+        {
+            foreach (var cid in confirmedSlot.constraintIds)
+            {
+                var c = GetConstraint(cid);
+                if (c != null) slotConstraints.Add(c);
+            }
+        }
+        string constraintsJson = JsonConvert.SerializeObject(slotConstraints);
+
         string planningMemoryContext = string.Empty;
         if (memory != null)
         {
