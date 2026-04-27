@@ -108,6 +108,12 @@ public class MemoryModule : MonoBehaviour
         SaveMemories();
     }
 
+    private void OnDisable()
+    {
+        // OnDisable 比 OnApplicationQuit 更可靠（Editor 停止播放时必定触发）
+        SaveMemories();
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // 接口函数：记忆写入
     // ═══════════════════════════════════════════════════════════════════════════
@@ -194,6 +200,16 @@ public class MemoryModule : MonoBehaviour
         // Awake 时 AgentID 尚未注入，在此补充执行一次加载
         if (autoLoadOnAwake)
             LoadMemories();
+
+        // 定期保存作为安全网（OnApplicationQuit 在 Editor 中不可靠）
+        if (autoSaveOnStore && !IsInvoking(nameof(PeriodicSave)))
+            InvokeRepeating(nameof(PeriodicSave), 60f, 60f);
+    }
+
+    private void PeriodicSave()
+    {
+        if (memories.Any(m => m.kind == AgentMemoryKind.Policy))
+            SaveMemories();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -313,6 +329,8 @@ public class MemoryModule : MonoBehaviour
     private void TryExtractPolicyFromDetail(Memory source)
     {
         if (string.IsNullOrWhiteSpace(source.detail)) return;
+
+        Debug.Log($"[MemoryModule] ({_agentId}) TryExtractPolicy: detail片段={source.detail.Substring(0, Mathf.Min(100, source.detail.Length))}, regex匹配={PolicyRegex.IsMatch(source.detail)}");
 
         Match policyMatch = PolicyRegex.Match(source.detail);
         if (!policyMatch.Success) return;

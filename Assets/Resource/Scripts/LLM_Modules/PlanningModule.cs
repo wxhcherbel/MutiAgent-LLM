@@ -1321,12 +1321,25 @@ public class PlanningModule : MonoBehaviour
         Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] {props?.AgentID} → {s}");
     }
 
+    /// <summary>Active 状态安全超时（秒）。正常情况下 ADM 会通过 MarkCurrentStepFailed 释放，此为兜底。</summary>
+    private const float ActiveTimeoutSec = 120f;
+
     private void CheckTimeout()
     {
         if (state == PlanningState.Idle   ||
-            state == PlanningState.Active ||
             state == PlanningState.Done   ||
             state == PlanningState.Failed) return;
+
+        // Active 状态：使用较长超时作为安全网（ADM 失败但未通知的兜底）
+        if (state == PlanningState.Active)
+        {
+            if (Time.time - waitStart > ActiveTimeoutSec)
+            {
+                Debug.LogWarning($"{props?.AgentID ?? "Unknown"}: [PlanningModule] Active 状态超时 {ActiveTimeoutSec}s，强制释放 busy 锁");
+                SetState(PlanningState.Failed);
+            }
+            return;
+        }
 
         if (Time.time - waitStart > WaitSec)
         {
@@ -1339,6 +1352,16 @@ public class PlanningModule : MonoBehaviour
     // ─────────────────────────────────────────────────────────
     // ActionDecisionModule 对外接口
     // ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// ADM 滚动规划失败时调用，将当前步骤标记为 Failed 并释放 busy 锁，
+    /// 使 AutonomousDriveModule 可以重新触发涌现。
+    /// </summary>
+    public void MarkCurrentStepFailed(string reason)
+    {
+        Debug.LogWarning($"{props?.AgentID ?? "Unknown"}: [PlanningModule] ADM 报告步骤失败: {reason}");
+        SetState(PlanningState.Failed);
+    }
 
     /// <summary>state==Active 且 agentPlan 非空时返回 true。</summary>
     public bool HasActiveMission()

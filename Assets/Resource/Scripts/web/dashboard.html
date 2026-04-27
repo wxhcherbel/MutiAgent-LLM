@@ -1361,6 +1361,21 @@ function drawFrame() {
         ctx.fillText('r=' + percRange.toFixed(0) + 'm', cx + percR + 4 / zoomLevel, cy);
       }
 
+      // Detected objects (small dots on map)
+      const detObjs = ag.detectedObjects || [];
+      if (detObjs.length > 0) {
+        for (const obj of detObjs) {
+          if (!obj.position) continue;
+          const [ox, oy] = worldToCanvas(obj.position[0], obj.position[2]);
+          const ns = (typeof nodeStyle === 'function') ? nodeStyle(obj.nodeType) : { color: '#8b949e' };
+          const dotR = Math.max(2, 3 / zoomLevel);
+          ctx.beginPath();
+          ctx.arc(ox, oy, dotR, 0, Math.PI * 2);
+          ctx.fillStyle = ns.color + 'cc';
+          ctx.fill();
+        }
+      }
+
       // Planned targets with dashed lines + diamond markers
       const targets = ag.plannedTargets || [];
       for (const tname of targets) {
@@ -1693,6 +1708,7 @@ function updateAgentCard(card, ag) {
       <div class="row"><span class="lbl">电量</span><span class="val" style="color:${bc}">${(batt*100).toFixed(1)}%</span></div>
       <div class="row"><span class="lbl">附近</span><span class="val">${escHtml((ag.nearbyAgentIds||[]).join(', ') || '—')}</span></div>
       <div class="row"><span class="lbl">敌方</span><span class="val" style="color:var(--red)">${escHtml((ag.enemyAgentIds||[]).join(', ') || '—')}</span></div>
+      ${buildPerceptionBlock(ag)}
       ${teammates.length > 0 ? `<div class="row" style="flex-wrap:wrap;gap:2px"><span class="lbl">队友</span>${teammateChips}</div>` : ''}
       ${buildCtxBlock(ag)}
     </div>`;
@@ -1744,6 +1760,43 @@ function buildConstraintsHtml(constraints) {
     </div>`;
   }).join('');
   return `<div style="margin-top:4px"><div style="color:var(--muted);font-size:9px;margin-bottom:2px">步骤约束 (${constraints.length})</div>${rows}</div>`;
+}
+
+// 节点类型对应的图标和颜色
+const NODE_TYPE_STYLE = {
+  Tree:              { icon: '🌳', color: '#3fb950' },
+  Pedestrian:        { icon: '🚶', color: '#d29922' },
+  Vehicle:           { icon: '🚗', color: '#58a6ff' },
+  ResourcePoint:     { icon: '📦', color: '#f0883e' },
+  TemporaryObstacle: { icon: '🚧', color: '#8b949e' },
+  Agent:             { icon: '🤖', color: '#bc8cff' },
+};
+function nodeStyle(t) { return NODE_TYPE_STYLE[t] || { icon: '❓', color: '#8b949e' }; }
+
+function buildPerceptionBlock(ag) {
+  const objs = ag.detectedObjects;
+  if (!objs || objs.length === 0)
+    return '<div class="row"><span class="lbl">感知</span><span class="val" style="color:#8b949e">无检测物体</span></div>';
+
+  // 按类型分组统计
+  const groups = {};
+  objs.forEach(o => {
+    const t = o.nodeType || 'Unknown';
+    if (!groups[t]) groups[t] = [];
+    groups[t].push(o);
+  });
+
+  let html = '<div class="row" style="flex-direction:column;align-items:flex-start;gap:2px">' +
+    '<span class="lbl">感知物体 (' + objs.length + ')</span>';
+  for (const [type, items] of Object.entries(groups)) {
+    const s = nodeStyle(type);
+    const closest = items.reduce((a, b) => a.distance < b.distance ? a : b);
+    html += `<div style="font-size:11px;padding-left:8px">` +
+      `<span style="color:${s.color}">${s.icon} ${escHtml(type)}</span> ×${items.length}` +
+      ` <span style="color:#8b949e;font-size:10px">最近 ${closest.distance.toFixed(1)}m</span></div>`;
+  }
+  html += '</div>';
+  return html;
 }
 
 function buildCtxBlock(ag) {

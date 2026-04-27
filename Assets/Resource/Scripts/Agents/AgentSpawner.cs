@@ -36,7 +36,7 @@ public class AgentSpawner : MonoBehaviour
 
     [Header("阵营配置")]
     [Tooltip("本次生成中破坏/对抗型 agent 的数量，其余均为协作型。生成时从后往前分配：后 adversarialCount 个为破坏型。")]
-    public int adversarialCount = 0;                 // 破坏型 agent 数量（0 表示全部协作型）
+    public int adversarialCount = 2;                 // 破坏型 agent 数量（0 表示全部协作型）
     [Min(0f)] public float droneSpawnHeight = 2f;    // 无人机在地面基础上的起飞高度
 
     [Header("地图引用")]
@@ -852,9 +852,11 @@ public class AgentSpawner : MonoBehaviour
         CommunicationModule commModule = agentObj.GetComponent<CommunicationModule>();
         if (commModule == null) commModule = agentObj.AddComponent<CommunicationModule>();
 
-        // 5) 感知模块
+        // 5) 感知模块 + 可视化
         PerceptionModule perceptionModule = agentObj.GetComponent<PerceptionModule>();
         if (perceptionModule == null) perceptionModule = agentObj.AddComponent<PerceptionModule>();
+        if (agentObj.GetComponent<PerceptionVisualizer>() == null)
+            agentObj.AddComponent<PerceptionVisualizer>();
 
         // 6) LLM 控制模块
         AgentLLMControl llmControl = agentObj.GetComponent<AgentLLMControl>();
@@ -863,6 +865,12 @@ public class AgentSpawner : MonoBehaviour
         // 7) 运动执行器
         AgentMotionExecutor mlController = agentObj.GetComponent<AgentMotionExecutor>();
         if (mlController == null) mlController = agentObj.AddComponent<AgentMotionExecutor>();
+
+        // 7.5) 可视化增强：让大地图中的 agent 更容易被定位和观察。
+        if (agentObj.GetComponent<AgentVisualMarker>() == null)
+        {
+            agentObj.AddComponent<AgentVisualMarker>();
+        }
 
         // 8) 人格系统：写入阵营标记
         PersonalitySystem personalitySystem = agentObj.GetComponent<PersonalitySystem>();

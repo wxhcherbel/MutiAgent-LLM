@@ -4,7 +4,6 @@
 public enum AtomicActionType
 {
     MoveTo,
-    Observe,
     Wait,
     Track,
     Signal,
@@ -12,7 +11,7 @@ public enum AtomicActionType
     Put,
     Land,
     Takeoff,
-    /// <summary>targetName=区域名（空=执行层自动选区），duration=覆盖时长(秒)，actionParams="observe"可选感知</summary>
+    /// <summary>targetName=区域名（空=执行层自动选区），duration=覆盖时长(秒)</summary>
     Patrol,
 }
 

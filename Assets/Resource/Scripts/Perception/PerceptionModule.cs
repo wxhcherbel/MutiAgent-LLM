@@ -41,7 +41,7 @@ public class PerceptionModule : MonoBehaviour
 
     [Header("无人机配置")]
     [Tooltip("无人机水平和俯仰扫描角步长，值越小采样越密。")]
-    public float droneScanAngleStep = 15f;
+    public float droneScanAngleStep = 10f;
 
     [Header("地面车辆配置")]
     [Tooltip("地面车辆水平视场角，默认 270 度。")]
@@ -93,6 +93,29 @@ public class PerceptionModule : MonoBehaviour
 
     private static bool sharedRegistryInitialized;
     private readonly HashSet<int> sensedObjectIdsThisTick = new HashSet<int>();
+
+    // 可视化器（可选，挂载 PerceptionVisualizer 组件后自动启用）
+    private IPerceptionVisualizer _visualizer;
+    private PerceptionVisualizationFrame _vizFrame;
+
+    /// <summary>
+    /// 单根感知射线的导航快照。
+    /// 只保留对局部避障有价值的方向，用于执行器复用感知扇扫结果。
+    /// </summary>
+    [System.Serializable]
+    public struct NavigationRaySnapshot
+    {
+        public Vector3 origin;
+        public Vector3 direction;
+        public float distance;
+        public bool hit;
+        public float timestamp;
+    }
+
+    /// <summary>
+    /// 最近一轮感知中可供局部导航复用的射线快照。
+    /// </summary>
+    public List<NavigationRaySnapshot> LatestNavigationRays { get; private set; } = new List<NavigationRaySnapshot>();
 
     /// <summary>最近一次完成整轮感知的时间戳（只读）。</summary>
     public float LastPerceptionTime => lastPerceptionTime;
@@ -201,6 +224,7 @@ public class PerceptionModule : MonoBehaviour
         _planningModule          = GetComponent<PlanningModule>();
         _personalitySystem       = GetComponent<PersonalitySystem>();
         _autonomousDriveModule   = GetComponent<AutonomousDriveModule>();
+        _visualizer              = GetComponent<IPerceptionVisualizer>();
         return true;
     }
 
@@ -252,8 +276,28 @@ public class PerceptionModule : MonoBehaviour
         }
 
         ClearPerceptionResults();
+
+        // 初始化可视化帧（如果有可视化器）
+        if (_visualizer != null)
+        {
+            _vizFrame = new PerceptionVisualizationFrame
+            {
+                agentPosition        = transform.position,
+                agentForward         = transform.forward,
+                perceptionRange      = ownerAgent.Properties.PerceptionRange,
+                agentType            = ownerAgentType,
+                groundHorizontalAngle = groundHorizontalAngle
+            };
+        }
+
         ScanByAgentType();
         SyncDetectedResultsToAgentState();
+
+        // 提交可视化帧
+        if (_visualizer != null && _vizFrame != null)
+        {
+            _visualizer.RenderFrame(_vizFrame);
+        }
     }
 
     /// <summary>
@@ -265,6 +309,7 @@ public class PerceptionModule : MonoBehaviour
         nearbyAgents.Clear();
         enemyAgents.Clear();
         sensedObjectIdsThisTick.Clear();
+        LatestNavigationRays.Clear();
     }
 
     /// <summary>
@@ -296,14 +341,34 @@ public class PerceptionModule : MonoBehaviour
         float maxRange = ownerAgent.Properties.PerceptionRange;
         float angleStep = Mathf.Max(1f, droneScanAngleStep);
 
+        // 主扫描：水平 360° × 俯仰 -60°~+60°
         for (float yaw = 0f; yaw < 360f; yaw += angleStep)
         {
-            for (float pitch = -45f; pitch <= 45f; pitch += angleStep)
+            for (float pitch = -60f; pitch <= 60f; pitch += angleStep)
             {
                 Quaternion rotation = Quaternion.Euler(pitch, yaw, 0f);
                 Vector3 direction = rotation * Vector3.forward;
 
-                if (Physics.Raycast(origin, direction, out RaycastHit hit, maxRange, detectionLayers))
+                bool hasHit = Physics.Raycast(origin, direction, out RaycastHit hit, maxRange, detectionLayers);
+                RecordNavigationRay(origin, direction, hasHit ? hit.distance : maxRange, hasHit);
+                if (hasHit)
+                {
+                    HandleRaycastHit(hit);
+                }
+            }
+        }
+
+        // 高俯仰补充扫描：±75° 层，用更粗的水平步长（减少射线总数）
+        float coarseStep = angleStep * 2f;
+        for (float yaw = 0f; yaw < 360f; yaw += coarseStep)
+        {
+            for (float pitch = -75f; pitch <= 75f; pitch += 150f) // -75° 和 +75°
+            {
+                Quaternion rotation = Quaternion.Euler(pitch, yaw, 0f);
+                Vector3 direction = rotation * Vector3.forward;
+                bool hasHit = Physics.Raycast(origin, direction, out RaycastHit hit, maxRange, detectionLayers);
+                RecordNavigationRay(origin, direction, hasHit ? hit.distance : maxRange, hasHit);
+                if (hasHit)
                 {
                     HandleRaycastHit(hit);
                 }
@@ -324,12 +389,19 @@ public class PerceptionModule : MonoBehaviour
         float angleStep = Mathf.Max(1f, droneScanAngleStep);
         float halfAngle = groundHorizontalAngle / 2f;
 
-        for (float yaw = -halfAngle; yaw <= halfAngle; yaw += angleStep)
+        // 多层俯仰扫描：0°（水平）、±10°、±20°，覆盖不同高度的目标
+        float[] pitchLayers = { 0f, -10f, 10f, -20f, 20f };
+        foreach (float pitch in pitchLayers)
         {
-            Vector3 dir = Quaternion.Euler(0f, yaw, 0f) * transform.forward;
-            if (Physics.Raycast(origin, dir, out RaycastHit hit, maxRange, detectionLayers))
+            for (float yaw = -halfAngle; yaw <= halfAngle; yaw += angleStep)
             {
-                HandleRaycastHit(hit);
+                Vector3 dir = Quaternion.Euler(pitch, yaw, 0f) * transform.forward;
+                bool hasHit = Physics.Raycast(origin, dir, out RaycastHit hit, maxRange, detectionLayers);
+                RecordNavigationRay(origin, dir, hasHit ? hit.distance : maxRange, hasHit);
+                if (hasHit)
+                {
+                    HandleRaycastHit(hit);
+                }
             }
         }
     }
@@ -375,12 +447,39 @@ public class PerceptionModule : MonoBehaviour
         RegisterSharedNode(nodeData);
         detectedObjects.Add(nodeData);
 
-        // 发现资源点时写入感知记忆，并通知 AutonomousDriveModule（感知触发协作评估）
+        // 记录可视化命中点
+        _vizFrame?.detectionPoints.Add(new DetectionPointSnapshot
+        {
+            position  = worldPosition,
+            type      = recordedType,
+            timestamp = Time.time,
+        });
+
+        // 对所有检测到的节点类型写入感知记忆（60s TTL 去重）
+        string typeLabel = recordedType switch
+        {
+            SmallNodeType.ResourcePoint     => "resource",
+            SmallNodeType.Tree              => "tree",
+            SmallNodeType.Pedestrian        => "pedestrian",
+            SmallNodeType.Vehicle           => "vehicle",
+            SmallNodeType.TemporaryObstacle => "obstacle",
+            _                               => recordedType.ToString().ToLower(),
+        };
+        string typeName = recordedType switch
+        {
+            SmallNodeType.ResourcePoint     => "资源点",
+            SmallNodeType.Tree              => "树木",
+            SmallNodeType.Pedestrian        => "行人",
+            SmallNodeType.Vehicle           => "车辆",
+            SmallNodeType.TemporaryObstacle => "临时障碍物",
+            _                               => recordedType.ToString(),
+        };
+        TryRecordObservation(nodeData.NodeId, typeLabel,
+            $"在当前区域发现{typeName} {nodeData.NodeId}");
+
+        // 资源点额外通知 AutonomousDriveModule（感知触发协作评估）
         if (recordedType == SmallNodeType.ResourcePoint)
         {
-            TryRecordObservation(nodeData.NodeId, "resource",
-                $"在当前区域发现资源点 {nodeData.NodeId}");
-
             string locName = actionDecisionModule != null
                 ? actionDecisionModule.ResolveCurrentLocationName() : "未知位置";
             _autonomousDriveModule?.OnPerceptionEvent(
@@ -411,12 +510,27 @@ public class PerceptionModule : MonoBehaviour
 
         // 使用人格系统判断敌友：协作型↔破坏型互为敌方
         bool isEnemy = IsEnemyByPersonality(otherAgent);
-        if (!isEnemy || enemyAgents.Contains(otherAgent))
+        if (!isEnemy)
+        {
+            // 友方智能体也记录感知记忆
+            TryRecordObservation(otherAgent.Properties.AgentID, "friendly_agent",
+                $"在当前区域发现友方智能体 {otherAgent.Properties.AgentID}");
+            return;
+        }
+        if (enemyAgents.Contains(otherAgent))
         {
             return;
         }
 
         enemyAgents.Add(otherAgent);
+
+        // 记录可视化敌方检测
+        _vizFrame?.enemyDetections.Add(new EnemyDetectionSnapshot
+        {
+            agentId   = otherAgent.Properties.AgentID,
+            position  = otherAgent.transform.position,
+            timestamp = Time.time,
+        });
 
         string description = $"敌方智能体 {otherAgent.Properties.AgentID} @ {otherAgent.transform.position}";
         actionDecisionModule?.OnPerceptionEvent(description, "enemy");
@@ -752,20 +866,88 @@ public class PerceptionModule : MonoBehaviour
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// 补充无人机上下方向探测，减少纯水平扫描带来的盲区。
+    /// 补充无人机上下方向探测。
+    /// 底部：以正下方为轴心的锥形扫描（偏离角 10°/20°/30°，每层 12 根），完整覆盖俯视区域。
+    /// 顶部：正上方单根射线（无人机上方通常无需密集扫描）。
     /// 调用方：ScanAsDrone
     /// </summary>
     private void ScanVerticalAxis(Vector3 origin, float maxRange)
     {
-        if (Physics.Raycast(origin, Vector3.down, out RaycastHit downHit, maxRange, detectionLayers))
+        // 正下方
+        bool hasDownHit = Physics.Raycast(origin, Vector3.down, out RaycastHit downHit, maxRange, detectionLayers);
+        RecordNavigationRay(origin, Vector3.down, hasDownHit ? downHit.distance : maxRange, hasDownHit);
+        if (hasDownHit)
         {
             HandleRaycastHit(downHit);
         }
 
-        if (Physics.Raycast(origin, Vector3.up, out RaycastHit upHit, maxRange, detectionLayers))
+        // 底部锥形扫描：以 Vector3.down 为中心，向外偏 tilt 度，绕垂直轴旋转一圈
+        float[] tiltAngles = { 10f, 20f, 30f };
+        float nadirYawStep = 30f; // 每层 12 根射线
+        foreach (float tilt in tiltAngles)
+        {
+            for (float yaw = 0f; yaw < 360f; yaw += nadirYawStep)
+            {
+                // 先从 down 向 forward 方向偏 tilt 度，再绕 Y 轴旋转 yaw 度
+                Vector3 dir = Quaternion.Euler(0f, yaw, 0f) * Quaternion.Euler(-(90f - tilt), 0f, 0f) * Vector3.forward;
+                bool hasHit = Physics.Raycast(origin, dir, out RaycastHit hit, maxRange, detectionLayers);
+                RecordNavigationRay(origin, dir, hasHit ? hit.distance : maxRange, hasHit);
+                if (hasHit)
+                {
+                    HandleRaycastHit(hit);
+                }
+            }
+        }
+
+        // 正上方
+        bool hasUpHit = Physics.Raycast(origin, Vector3.up, out RaycastHit upHit, maxRange, detectionLayers);
+        RecordNavigationRay(origin, Vector3.up, hasUpHit ? upHit.distance : maxRange, hasUpHit);
+        if (hasUpHit)
         {
             HandleRaycastHit(upHit);
         }
+    }
+
+    /// <summary>
+    /// 记录可供局部导航复用的感知射线。
+    /// 这里会过滤掉过于垂直或明显朝后的方向，避免 3D 全扇扫给执行器带来噪声。
+    /// </summary>
+    private void RecordNavigationRay(Vector3 origin, Vector3 direction, float distance, bool hit)
+    {
+        if (!ShouldRecordNavigationRay(direction))
+        {
+            return;
+        }
+
+        LatestNavigationRays.Add(new NavigationRaySnapshot
+        {
+            origin = origin,
+            direction = direction.normalized,
+            distance = distance,
+            hit = hit,
+            timestamp = Time.time,
+        });
+    }
+
+    /// <summary>
+    /// 只保留对“平面局部导航”有意义的射线。
+    /// </summary>
+    private bool ShouldRecordNavigationRay(Vector3 direction)
+    {
+        Vector3 planarDir = Vector3.ProjectOnPlane(direction, Vector3.up);
+        if (planarDir.sqrMagnitude < 0.001f)
+        {
+            return false;
+        }
+
+        Vector3 normalizedPlanar = planarDir.normalized;
+        float backwardDot = Vector3.Dot(normalizedPlanar, transform.forward);
+        if (backwardDot < -0.35f)
+        {
+            return false;
+        }
+
+        return Mathf.Abs(direction.y) <= 0.45f;
     }
 
     // ------------------------------------------------------------------

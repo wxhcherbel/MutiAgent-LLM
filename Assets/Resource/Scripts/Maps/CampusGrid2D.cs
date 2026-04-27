@@ -30,6 +30,10 @@ public class CampusGrid2D : MonoBehaviour
     public bool parkingBlocked = false;
     public bool otherBlocked = false;
 
+    [Header("建筑安全边距")]
+    [Tooltip("路径规划和靠近目标时与 Building 保持的最小距离，避免智能体被引导到贴墙位置。")]
+    [Min(0f)] public float buildingPathClearance = 2.4f;
+
     [Header("可视化")]
     public bool showGrid = true;
     public bool showAllCells = false;
@@ -72,6 +76,7 @@ public class CampusGrid2D : MonoBehaviour
     private Dictionary<string, FeatureSpatialIndex> featureSpatialIndexByUid;
     private Dictionary<string, List<string>> featureUidsByName;
     private Dictionary<string, List<string>> featureUidsByCollectionKey;
+    private bool[,] pathClearanceBlockedGrid;
 
     private float[,]      _astarGScore;
     private bool[,]       _astarClosed;
@@ -550,7 +555,7 @@ public class CampusGrid2D : MonoBehaviour
                 {
                     if (dx == 0 && dz == 0) continue;
                     Vector2Int candidate = new Vector2Int(occupied.x + dx, occupied.y + dz);
-                    if (!IsInBounds(candidate.x, candidate.y) || !IsWalkable(candidate.x, candidate.y)) continue;
+                    if (!IsPathWalkable(candidate.x, candidate.y, null)) continue;
 
                     long key = (((long)candidate.x) << 32) ^ (uint)candidate.y;
                     if (!visited.Add(key)) continue;
@@ -927,15 +932,20 @@ public class CampusGrid2D : MonoBehaviour
         }
 
         FinalizeFeatureSpatialIndexes();
+        BuildPathClearanceGrid();
 
         if (logBuildSummary)
         {
             int blockedCount = 0;
+            int clearanceCount = 0;
             for (int x = 0; x < gridWidth; x++)
                 for (int z = 0; z < gridLength; z++)
+                {
                     if (blockedGrid[x, z]) blockedCount++;
+                    if (pathClearanceBlockedGrid != null && pathClearanceBlockedGrid[x, z]) clearanceCount++;
+                }
 
-            Debug.Log($"[CampusGrid2D] : {gridWidth}x{gridLength}, cell={cellSize}m, blocked={blockedCount}/{gridWidth * gridLength}");
+            Debug.Log($"[CampusGrid2D] : {gridWidth}x{gridLength}, cell={cellSize}m, blocked={blockedCount}/{gridWidth * gridLength}, buildingClearance={clearanceCount}, clearanceDist={buildingPathClearance:F1}m");
         }
     }
 
@@ -2268,9 +2278,63 @@ public class CampusGrid2D : MonoBehaviour
         return (((long)x) << 32) ^ (uint)z;
     }
 
+    /// <summary>
+    /// 构建建筑外围的路径安全边距缓存。
+    /// 说明：这些格子并未真正被建筑占据，但对于局部避障来说过于贴墙，继续规划进去很容易出现“没碰撞却卡住”。
+    /// </summary>
+    private void BuildPathClearanceGrid()
+    {
+        pathClearanceBlockedGrid = new bool[gridWidth, gridLength];
+        if (blockedGrid == null || cellTypeGrid == null) return;
+        if (!buildingBlocked || buildingPathClearance <= 0.01f) return;
+
+        int searchRadius = Mathf.Max(1, Mathf.CeilToInt(buildingPathClearance / Mathf.Max(0.1f, cellSize)));
+        for (int x = 0; x < gridWidth; x++)
+        {
+            for (int z = 0; z < gridLength; z++)
+            {
+                if (blockedGrid[x, z]) continue;
+                pathClearanceBlockedGrid[x, z] = IsWithinBuildingClearance(x, z, searchRadius);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 判断候选格中心是否落在建筑的安全缓冲区内。
+    /// 说明：用“格中心到建筑格矩形的最短距离”而不是简单看相邻关系，这样斜角贴墙也能被识别出来。
+    /// </summary>
+    private bool IsWithinBuildingClearance(int x, int z, int searchRadius)
+    {
+        Vector2 center = GetCellCenterXY(x, z);
+        float clearanceSq = buildingPathClearance * buildingPathClearance;
+
+        for (int dx = -searchRadius; dx <= searchRadius; dx++)
+        {
+            for (int dz = -searchRadius; dz <= searchRadius; dz++)
+            {
+                int nx = x + dx;
+                int nz = z + dz;
+                if (!IsInBounds(nx, nz)) continue;
+                if (cellTypeGrid[nx, nz] != CampusGridCellType.Building) continue;
+
+                Rect buildingRect = GetCellRectXY(nx, nz);
+                float closestX = Mathf.Clamp(center.x, buildingRect.xMin, buildingRect.xMax);
+                float closestZ = Mathf.Clamp(center.y, buildingRect.yMin, buildingRect.yMax);
+                float distSq = (center - new Vector2(closestX, closestZ)).sqrMagnitude;
+                if (distSq < clearanceSq)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     private bool IsPathWalkable(int x, int z, HashSet<long> transientBlockedKeys)
     {
         if (!IsWalkable(x, z)) return false;
+        if (pathClearanceBlockedGrid != null && IsInBounds(x, z) && pathClearanceBlockedGrid[x, z]) return false;
         return transientBlockedKeys == null || !transientBlockedKeys.Contains(PackCellKey(x, z));
     }
 
@@ -2298,7 +2362,7 @@ public class CampusGrid2D : MonoBehaviour
 
         while (true)
         {
-            if (!IsWalkable(x0, z0)) return false;
+            if (!IsPathWalkable(x0, z0, null)) return false;
             if (x0 == x1 && z0 == z1) return true;
 
             int e2 = err * 2;
@@ -2320,7 +2384,7 @@ public class CampusGrid2D : MonoBehaviour
                 movedZ = true;
             }
 
-            if (!IsInBounds(nextX, nextZ) || !IsWalkable(nextX, nextZ)) return false;
+            if (!IsInBounds(nextX, nextZ) || !IsPathWalkable(nextX, nextZ, null)) return false;
             if (movedX && movedZ && !CanTraverseDiagonal(new Vector2Int(x0, z0), new Vector2Int(nextX, nextZ))) return false;
 
             x0 = nextX;

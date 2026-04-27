@@ -344,7 +344,11 @@ public class ActionDecisionModule : MonoBehaviour
                 ctx.currentActionIdx = 0;
                 SetStatus(ADMStatus.Running);
                 yield return new WaitUntil(() => status == ADMStatus.BatchDone || status == ADMStatus.Failed);
-                if (status == ADMStatus.Failed) yield break;
+                if (status == ADMStatus.Failed)
+                {
+                    planningModule?.MarkCurrentStepFailed("Wait 动作执行失败");
+                    yield break;
+                }
                 // Wait 完成后重新进入本轮循环检查（不增加迭代计数）
                 SetStatus(ADMStatus.Interpreting);
                 continue;
@@ -401,6 +405,7 @@ public class ActionDecisionModule : MonoBehaviour
                 ReleaseC3MutexLocks(mutexCids);
                 SetStatus(ADMStatus.Failed);
                 if (agentState != null) agentState.Status = AgentStatus.Idle;
+                planningModule?.MarkCurrentStepFailed("LLM 返回空");
                 yield break;
             }
             Debug.Log($"[ADM] {agentProperties?.AgentID} 滚动规划第{ctx.iterationCount + 1}轮 LLM 回复: {llmResult}");
@@ -417,6 +422,7 @@ public class ActionDecisionModule : MonoBehaviour
                 ReleaseC3MutexLocks(mutexCids);
                 SetStatus(ADMStatus.Failed);
                 if (agentState != null) agentState.Status = AgentStatus.Idle;
+                planningModule?.MarkCurrentStepFailed($"JSON 解析失败: {e.Message}");
                 yield break;
             }
 
@@ -430,6 +436,7 @@ public class ActionDecisionModule : MonoBehaviour
                 ReleaseC3MutexLocks(mutexCids);
                 SetStatus(ADMStatus.Failed);
                 if (agentState != null) agentState.Status = AgentStatus.Idle;
+                planningModule?.MarkCurrentStepFailed("滚动规划解析结果为 null");
                 yield break;
             }
 
@@ -487,6 +494,7 @@ public class ActionDecisionModule : MonoBehaviour
                 Debug.LogError($"[ADM] {agentProperties?.AgentID} LLM 连续 {MaxEmptyActionRetries} 次返回空动作，步骤设为 Failed");
                 SetStatus(ADMStatus.Failed);
                 if (agentState != null) agentState.Status = AgentStatus.Idle;
+                planningModule?.MarkCurrentStepFailed($"LLM 连续 {MaxEmptyActionRetries} 次返回空动作");
                 yield break;
             }
             // 成功生成动作，重置重试计数
@@ -512,7 +520,11 @@ public class ActionDecisionModule : MonoBehaviour
             SetStatus(ADMStatus.Running);
             yield return new WaitUntil(() => status == ADMStatus.BatchDone || status == ADMStatus.Failed);
 
-            if (status == ADMStatus.Failed) yield break;
+            if (status == ADMStatus.Failed)
+            {
+                planningModule?.MarkCurrentStepFailed("动作批次执行失败");
+                yield break;
+            }
 
             // ── 11. 更新执行历史，进入下一迭代 ──────────────────────
             UpdateHistory(planResult.nextActions);
@@ -530,6 +542,7 @@ public class ActionDecisionModule : MonoBehaviour
         Debug.LogError($"[ADM] {agentProperties?.AgentID} 滚动规划超出最大迭代次数 {MaxIterations}，步骤设为 Failed（目标可能不可达）");
         SetStatus(ADMStatus.Failed);
         if (agentState != null) agentState.Status = AgentStatus.Idle;
+        planningModule?.MarkCurrentStepFailed($"滚动规划超出最大迭代次数 {MaxIterations}");
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -592,7 +605,7 @@ public class ActionDecisionModule : MonoBehaviour
         //   GetDecisionStyleHint 根据大五维度生成风格描述（如"谨慎行事，优先规避风险"）。
         //   非空时作为独立段落插入 prompt，位于"步骤目标"之后、"历史经验"之前，
         //   让 LLM 在阅读步骤目标后立即感知自身风格，再结合历史经验做出决策。
-        //   期望效果：高神经质 agent 在面对不确定情况时倾向先 Observe 而不是直接 MoveTo。
+        //   期望效果：高神经质 agent 在面对不确定情况时倾向先 Wait/Patrol 而不是直接 MoveTo。
         string styleHint = _personalitySystem?.GetDecisionStyleHint() ?? string.Empty;
         string styleSection = string.IsNullOrWhiteSpace(styleHint)
             ? string.Empty
@@ -636,7 +649,7 @@ public class ActionDecisionModule : MonoBehaviour
             "  ③ 若以上都无，选方向最接近目标的节点，并在 thought 中说明原因\n" +
             "  每次选择必须有方向依据，不要随机选。\n" +
             "• targetName 禁止编造或使用范围外地名。\n" +
-            "• 已在目标附近时，不要再 MoveTo 同一目标，应立即执行下一步动作（Observe/巡逻/Signal 等）。\n\n" +
+            "• 已在目标附近时，不要再 MoveTo 同一目标，应立即执行下一步动作（巡逻/Signal/Wait 等）。\n\n" +
 
             "## 白板状态（组内协同）\n" +
             (string.IsNullOrWhiteSpace(whiteboardCtx) ? "（无白板数据）" : whiteboardCtx) + "\n\n" +
@@ -647,7 +660,6 @@ public class ActionDecisionModule : MonoBehaviour
             "## 可用动作\n" +
             "• MoveTo：前往地图内静态地点，targetName=地点名，spatialHint=路径偏好，actionParams=飞行参数\n" +
             "• Wait：原地悬停等待，duration=等待秒数，actionParams=等待条件说明\n" +
-            "• Observe：定点激活传感器感知环境，duration=观测时长（秒），actionParams=观察说明\n" +
             "• Track：跟踪动态移动实体，targetAgentId=目标智能体ID，duration=跟踪时长，actionParams=相对方向（前/后/左/右）\n" +
             "• Signal：向队友广播结构化信息，targetAgentId=接收方ID（\"all\"=全体），actionParams=消息内容\n" +
             "• Get：在当前位置获取物资或触发交互，targetName=目标名称，duration=交互等待时长（秒）\n" +
@@ -655,7 +667,7 @@ public class ActionDecisionModule : MonoBehaviour
             "• Land：降落至地面，targetName=降落区域（可选）\n" +
             "• Takeoff：从地面起飞至悬停高度\n" +
             "• Patrol：对区域做 Frontier-based 系统覆盖（始终前往最近未访问格，非随机游走）。\n" +
-            "  targetName=目标名（空=由执行层按空闲度自动选区），duration=覆盖秒数，actionParams=\"observe\"（每格感知）\n\n" +
+            "  targetName=目标名（空=由执行层按空闲度自动选区），duration=覆盖秒数\n\n" +
 
             "## 步骤完成判断（重要）\n" +
             "综合以下证据判断步骤目标是否真正达成（而非只是执行了某个动作）：\n" +

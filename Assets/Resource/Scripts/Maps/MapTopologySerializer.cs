@@ -9,14 +9,32 @@ public static class MapTopologySerializer
 {
     private static readonly string[] CompassLabels = { "北", "东北", "东", "东南", "南", "西南", "西", "西北" };
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 兼容接口：保留原签名，内部改为调用 GetStrategicMap（不再含拥挤标注）
+    // ═══════════════════════════════════════════════════════════════════════════
+
     /// <summary>
     /// 生成以智能体为中心的局部地图文本，可选标注趋向目标的中间航点。
+    /// 兼容接口：内部调用 GetStrategicMap()，不再包含 SmallNodeRegistry 拥挤标注。
     /// </summary>
-    /// <param name="grid">地图数据。</param>
-    /// <param name="agentWorldPos">智能体当前世界坐标。</param>
-    /// <param name="targetWorldPos">步骤空间目标的世界坐标（可为 null）。</param>
-    /// <param name="radius">局部地图半径（米），默认 300。</param>
     public static string GetAgentRelativeMap(
+        CampusGrid2D grid,
+        Vector3 agentWorldPos,
+        Vector3? targetWorldPos = null,
+        float radius = 300f)
+    {
+        return GetStrategicMap(grid, agentWorldPos, targetWorldPos, radius);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 战略地图：仅建筑/地标拓扑，不依赖 SmallNodeRegistry
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// 生成纯战略地图（建筑、地标的方向/距离/类型），不含小节点拥挤标注。
+    /// 用于 LLM 宏观决策时了解周边地理拓扑。
+    /// </summary>
+    public static string GetStrategicMap(
         CampusGrid2D grid,
         Vector3 agentWorldPos,
         Vector3? targetWorldPos = null,
@@ -83,80 +101,7 @@ public static class MapTopologySerializer
             sb.AppendLine("────────────────────────────────────────────");
         }
 
-        // ── 5. 统计每个要素 footprint 内的小节点（拥挤标注）────────
-        // 同时收集所有节点，用于后续 Other 区域归并
-        const float NEARBY_BUFFER      = 5f;   // footprint 半径额外 buffer（m）
-        const float OTHER_MERGE_RADIUS = 50f;  // Other 节点寻找最近要素的最大距离（m）
-        const int   PEDESTRIAN_THRESH  = 3;    // 行人密集阈值
-        const int   VEHICLE_THRESH     = 2;    // 车辆密集阈值
-        const int   TREE_THRESH        = 5;    // 树木密集阈值
-        const int   RESOURCE_THRESH    = 1;    // 资源点出现阈值
-        const int   OBSTACLE_THRESH    = 1;    // 临时障碍出现阈值
-
-        // 收集局部地图范围内全部小节点（含静态与动态）
-        var allNearbyNodes = SmallNodeRegistry.QueryNodes(agentWorldPos, radius,
-            includeStatic: true, includeDynamic: true);
-
-        // 记录已被某个要素 footprint 覆盖的节点 ID
-        var coveredNodeIds = new HashSet<string>();
-
-        // 每个要素的拥挤标注（uid → tag）
-        var congestionTags = new Dictionary<string, string>();
-        foreach (var (p, _) in nearby)
-        {
-            float queryR = Mathf.Max(p.footprintRadius, 10f) + NEARBY_BUFFER;
-            int pedestrians = 0, vehicles = 0, trees = 0, resources = 0, obstacles = 0;
-            foreach (var n in allNearbyNodes)
-            {
-                float d2 = (n.WorldPosition.x - p.centroidWorld.x) * (n.WorldPosition.x - p.centroidWorld.x)
-                         + (n.WorldPosition.z - p.centroidWorld.z) * (n.WorldPosition.z - p.centroidWorld.z);
-                if (d2 <= queryR * queryR)
-                {
-                    coveredNodeIds.Add(n.NodeId);
-                    if      (n.NodeType == SmallNodeType.Pedestrian)        pedestrians++;
-                    else if (n.NodeType == SmallNodeType.Vehicle)           vehicles++;
-                    else if (n.NodeType == SmallNodeType.Tree)              trees++;
-                    else if (n.NodeType == SmallNodeType.ResourcePoint)     resources++;
-                    else if (n.NodeType == SmallNodeType.TemporaryObstacle) obstacles++;
-                }
-            }
-
-            string tag = "";
-            if (pedestrians >= PEDESTRIAN_THRESH && vehicles >= VEHICLE_THRESH) tag += "（人车密集）";
-            else if (pedestrians >= PEDESTRIAN_THRESH)                           tag += "（行人多）";
-            else if (vehicles >= VEHICLE_THRESH)                                 tag += "（车辆多）";
-            if (trees     >= TREE_THRESH)     tag += "（树木密集）";
-            if (resources >= RESOURCE_THRESH) tag += "（有资源点）";
-            if (obstacles >= OBSTACLE_THRESH) tag += "（有临时障碍）";
-            if (tag.Length > 0) congestionTags[p.uid] = tag;
-        }
-
-        // Other 区域节点最近邻归并：找到未覆盖节点，归入最近要素的外围计数
-        var outerCounts = new Dictionary<string, (int peds, int vehs, int trees, int resources, int obstacles)>();
-        foreach (var n in allNearbyNodes)
-        {
-            if (coveredNodeIds.Contains(n.NodeId)) continue;
-            if (n.NodeType == SmallNodeType.Unknown || n.NodeType == SmallNodeType.Agent || n.NodeType == SmallNodeType.Custom) continue;
-
-            float bestDist2 = OTHER_MERGE_RADIUS * OTHER_MERGE_RADIUS;
-            string bestUid  = null;
-            foreach (var (p, _) in nearby)
-            {
-                float d2 = (n.WorldPosition.x - p.centroidWorld.x) * (n.WorldPosition.x - p.centroidWorld.x)
-                         + (n.WorldPosition.z - p.centroidWorld.z) * (n.WorldPosition.z - p.centroidWorld.z);
-                if (d2 < bestDist2) { bestDist2 = d2; bestUid = p.uid; }
-            }
-            if (bestUid == null) continue;
-
-            outerCounts.TryGetValue(bestUid, out var cur);
-            if      (n.NodeType == SmallNodeType.Pedestrian)        outerCounts[bestUid] = (cur.peds + 1, cur.vehs, cur.trees, cur.resources, cur.obstacles);
-            else if (n.NodeType == SmallNodeType.Vehicle)           outerCounts[bestUid] = (cur.peds, cur.vehs + 1, cur.trees, cur.resources, cur.obstacles);
-            else if (n.NodeType == SmallNodeType.Tree)              outerCounts[bestUid] = (cur.peds, cur.vehs, cur.trees + 1, cur.resources, cur.obstacles);
-            else if (n.NodeType == SmallNodeType.ResourcePoint)     outerCounts[bestUid] = (cur.peds, cur.vehs, cur.trees, cur.resources + 1, cur.obstacles);
-            else if (n.NodeType == SmallNodeType.TemporaryObstacle) outerCounts[bestUid] = (cur.peds, cur.vehs, cur.trees, cur.resources, cur.obstacles + 1);
-        }
-
-        // ── 6. 要素行 ─────────────────────────────────────────────────
+        // ── 5. 要素行 ─────────────────────────────────────────────────
         foreach (var (p, dist) in nearby)
         {
             float dx = p.centroidWorld.x - agentWorldPos.x;
@@ -177,24 +122,10 @@ public static class MapTopologySerializer
                 }
             }
 
-            // 拼接拥挤标注（footprint 内 + 外围归并）
-            string congestion = congestionTags.TryGetValue(p.uid, out var ct) ? ct : "";
-            if (outerCounts.TryGetValue(p.uid, out var oc))
-            {
-                var outerParts = new List<string>();
-                if (oc.peds      > 0) outerParts.Add($"行人{oc.peds}");
-                if (oc.vehs      > 0) outerParts.Add($"车辆{oc.vehs}");
-                if (oc.trees     > 0) outerParts.Add($"树木{oc.trees}");
-                if (oc.resources > 0) outerParts.Add($"资源点{oc.resources}");
-                if (oc.obstacles > 0) outerParts.Add($"障碍{oc.obstacles}");
-                if (outerParts.Count > 0)
-                    congestion += $"（外围+{string.Join("/", outerParts)}）";
-            }
-
             if (hasTarget)
-                sb.AppendLine($"{compass,-6}  {dist,4:0}m   {displayName,-20}  {kind,-10} {toward,-2}  {congestion}".TrimEnd());
+                sb.AppendLine($"{compass,-6}  {dist,4:0}m   {displayName,-20}  {kind,-10} {toward,-2}".TrimEnd());
             else
-                sb.AppendLine($"{compass,-6}  {dist,4:0}m   {displayName,-20}  {kind,-10}  {congestion}".TrimEnd());
+                sb.AppendLine($"{compass,-6}  {dist,4:0}m   {displayName,-20}  {kind,-10}".TrimEnd());
         }
 
         if (nearby.Count == 0)
@@ -203,12 +134,124 @@ public static class MapTopologySerializer
         return sb.ToString().TrimEnd();
     }
 
-    private static string GetCompass(float dx, float dz)
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 感知段：基于 agent 自身传感器的实时感知数据
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// 将 agent 自身 PerceptionModule 的实时检测结果转为 LLM 可读文本。
+    /// 仅包含该 agent 传感器当前帧检测到的小节点和敌方智能体，不使用全局共享注册表。
+    /// </summary>
+    /// <param name="detectedObjects">PerceptionModule.detectedObjects（当前帧检测到的小节点）。</param>
+    /// <param name="enemyAgents">PerceptionModule.enemyAgents（当前帧检测到的敌方智能体）。</param>
+    /// <param name="agentWorldPos">智能体当前世界坐标。</param>
+    public static string BuildPerceptionSection(
+        List<SmallNodeData> detectedObjects,
+        List<IntelligentAgent> enemyAgents,
+        Vector3 agentWorldPos)
+    {
+        var sb = new StringBuilder();
+        bool hasAny = false;
+
+        // ── 1. 小节点感知（按类型+方位聚合） ──────────────────────────
+        if (detectedObjects != null && detectedObjects.Count > 0)
+        {
+            // 按 (NodeType, compass方位) 聚合
+            var groups = new Dictionary<(SmallNodeType type, string compass), (int count, float minDist)>();
+            foreach (var node in detectedObjects)
+            {
+                if (node.NodeType == SmallNodeType.Agent) continue; // 敌方agent单独处理
+                float dx = node.WorldPosition.x - agentWorldPos.x;
+                float dz = node.WorldPosition.z - agentWorldPos.z;
+                float dist = Mathf.Sqrt(dx * dx + dz * dz);
+                string compass = GetCompass(dx, dz);
+                var key = (node.NodeType, compass);
+
+                if (groups.TryGetValue(key, out var existing))
+                    groups[key] = (existing.count + 1, Mathf.Min(existing.minDist, dist));
+                else
+                    groups[key] = (1, dist);
+            }
+
+            // 按距离排序输出
+            var sorted = groups.OrderBy(g => g.Value.minDist);
+            foreach (var kv in sorted)
+            {
+                string typeName = GetSmallNodeTypeName(kv.Key.type);
+                string countStr = kv.Value.count > 1 ? $"({kv.Value.count})" : "";
+                sb.AppendLine($"- {typeName}{countStr} @ {kv.Key.compass}方 {kv.Value.minDist:0}m");
+                hasAny = true;
+            }
+        }
+
+        // ── 2. 敌方智能体感知 ──────────────────────────────────────────
+        if (enemyAgents != null && enemyAgents.Count > 0)
+        {
+            foreach (var enemy in enemyAgents)
+            {
+                if (enemy == null) continue;
+                float dx = enemy.transform.position.x - agentWorldPos.x;
+                float dz = enemy.transform.position.z - agentWorldPos.z;
+                float dist = Mathf.Sqrt(dx * dx + dz * dz);
+                string compass = GetCompass(dx, dz);
+                string status = enemy.CurrentState != null ? enemy.CurrentState.Status.ToString() : "Unknown";
+                sb.AppendLine($"- [敌方] {enemy.Properties.AgentID} @ {compass}方 {dist:0}m（状态：{status}）");
+                hasAny = true;
+            }
+        }
+
+        if (!hasAny)
+            sb.AppendLine("（传感器范围内未检测到目标）");
+
+        return sb.ToString().TrimEnd();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 历史观测记忆段：弥补传感器范围限制
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// 将历史观测记忆格式化为 LLM 可读文本，提供超出传感器范围的历史感知信息。
+    /// </summary>
+    /// <param name="observations">历史观测列表：(距今分钟数, 摘要文本)。</param>
+    public static string BuildMemoryObservationsSection(List<(int minutesAgo, string summary)> observations)
+    {
+        if (observations == null || observations.Count == 0)
+            return "（无近期历史观测记录）";
+
+        var sb = new StringBuilder();
+        foreach (var (minutesAgo, summary) in observations)
+        {
+            sb.AppendLine($"- {minutesAgo}分钟前：{summary}");
+        }
+        return sb.ToString().TrimEnd();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 工具方法
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>根据 XZ 平面偏移量返回八方位罗盘标签。供其他模块复用。</summary>
+    internal static string GetCompass(float dx, float dz)
     {
         // 0° = 北（+Z），顺时针增加
         float angle = Mathf.Atan2(dx, dz) * Mathf.Rad2Deg; // [-180, 180]
         if (angle < 0f) angle += 360f;
         int idx = (int)((angle + 22.5f) / 45f) % 8;
         return CompassLabels[idx];
+    }
+
+    private static string GetSmallNodeTypeName(SmallNodeType type)
+    {
+        switch (type)
+        {
+            case SmallNodeType.Pedestrian:        return "行人";
+            case SmallNodeType.Vehicle:           return "车辆";
+            case SmallNodeType.Tree:              return "树木";
+            case SmallNodeType.ResourcePoint:     return "资源点";
+            case SmallNodeType.TemporaryObstacle: return "临时障碍";
+            case SmallNodeType.Custom:            return "自定义目标";
+            default:                              return "未知目标";
+        }
     }
 }

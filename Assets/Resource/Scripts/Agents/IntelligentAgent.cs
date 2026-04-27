@@ -150,6 +150,12 @@ public class IntelligentAgent : MonoBehaviour
         if (GetComponent<AutonomousDriveModule>() == null) gameObject.AddComponent<AutonomousDriveModule>();
         // ────────────────────────────────────────────────────────────────────
 
+        // 运行时可视化增强：大地图下提供更明显的地面环、光柱、标签和尾迹。
+        if (GetComponent<AgentVisualMarker>() == null)
+        {
+            gameObject.AddComponent<AgentVisualMarker>();
+        }
+
         // 启动决策检查
         lastDecisionTime = Time.time;
         //PrintPerceivedGrid();
@@ -264,7 +270,9 @@ public class IntelligentAgent : MonoBehaviour
         finally
         {
             isMakingDecision = false;
-            // 注意：状态会在 ActionDecisionModule 执行动作后更新
+            // 安全重置：如果 ADM 走了空操作路径（无 ActiveMission），Status 可能卡在 Thinking
+            if (CurrentState.Status == AgentStatus.Thinking)
+                CurrentState.Status = AgentStatus.Idle;
         }
     }
 

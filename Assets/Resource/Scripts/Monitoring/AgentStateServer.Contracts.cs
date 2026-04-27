@@ -94,6 +94,31 @@ public class AgentStateSnapshot
 
     /// <summary>是否为破坏型 agent（PersonalitySystem.IsAdversarial）。</summary>
     public bool isAdversarial;
+
+    /// <summary>本轮感知到的物体列表（SmallNode 快照）。</summary>
+    public DetectedObjectSnapshot[] detectedObjects;
+}
+
+/// <summary>
+/// 感知到的物体快照（供仪表板展示）。
+/// </summary>
+[Serializable]
+public class DetectedObjectSnapshot
+{
+    /// <summary>节点唯一 ID。</summary>
+    public string nodeId;
+
+    /// <summary>节点类型文本（Tree / Pedestrian / Vehicle / ResourcePoint 等）。</summary>
+    public string nodeType;
+
+    /// <summary>世界坐标 [x, y, z]。</summary>
+    public float[] position;
+
+    /// <summary>是否为动态物体。</summary>
+    public bool isDynamic;
+
+    /// <summary>距离该 agent 的距离（米）。</summary>
+    public float distance;
 }
 
 /// <summary>

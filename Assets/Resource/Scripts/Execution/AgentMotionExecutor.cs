@@ -30,12 +30,18 @@ public class AgentMotionExecutor : MonoBehaviour
 
     [Header("局部避障")]
     [SerializeField] private LayerMask obstacleLayers;
+    [SerializeField] private LayerMask agentAvoidanceLayers;
     [SerializeField] private float obstacleForwardCheckDistance = 12f;
     [SerializeField] private float obstacleSideCheckDistance = 7f;
     [SerializeField] private float obstacleProbeRadius = 0.8f;
     [SerializeField] private float avoidanceForceStrength = 6f;
     [SerializeField] private float obstacleResumeDistance = 1.4f;
     [SerializeField] private float obstacleRetryHoldSeconds = 0.8f;
+    [SerializeField] private float crowdAvoidanceRadius = 3.2f;
+    [SerializeField] private float crowdAvoidanceStrength = 4.6f;
+    [SerializeField] private float stuckEscapeDistance = 4.8f;
+    [SerializeField] private float stuckEscapeDuration = 1.2f;
+    [SerializeField] private int maxStaticBypassRetries = 2;
     [SerializeField] private bool logAvoidance = true;
 
     private AerialMotionController aerialMotion;
@@ -44,6 +50,7 @@ public class AgentMotionExecutor : MonoBehaviour
     private AgentProperties props;
     private IntelligentAgent agent;
     private MemoryModule memoryModule;
+    private PerceptionModule perceptionModule;
 
     private AtomicAction currentAction;
     private bool actionRunning;
@@ -65,13 +72,13 @@ public class AgentMotionExecutor : MonoBehaviour
     private float obstacleHoldUntil;
     private Collider activeAvoidanceCollider;
     private string activeAvoidanceSide = "";
+    private Vector3 forcedEscapeTarget;
+    private float forcedEscapeUntil;
+    private int localAvoidanceRetryCount;
 
-    // 避障射线可视化（三条独立 LineRenderer）
-    private LineRenderer lrFwd;
-    private LineRenderer lrLeft;
-    private LineRenderer lrRight;
+    private static readonly float[] FanProbeAngles = { 0f, -15f, 15f, -25f, 25f, -35f, 35f, -50f, 50f, -65f, 65f, -80f, 80f, -100f, 100f, -130f, 130f, 160f, -160f, 180f };
 
-    // 上一次 ResolveNavigationTarget 的探测结果（供可视化读取）
+    // 上一次 ResolveNavigationTarget 的探测结果（供避障逻辑 + 可视化使用）
     private struct ProbeFrame
     {
         public bool valid;
@@ -82,6 +89,73 @@ public class AgentMotionExecutor : MonoBehaviour
         public bool hitRight; public float rightDist;
     }
     private ProbeFrame lastProbe;
+
+    /// <summary>
+    /// 单帧实时避障计算结果。
+    /// 说明：由 SphereCast 直接产出，用于决定是否立即生成局部绕行点。
+    /// </summary>
+    private struct RealtimeAvoidanceResult
+    {
+        public bool hasObstacle;
+        public bool shouldCreateBypass;
+        public float forwardDistance;
+        public float leftDistance;
+        public float rightDistance;
+        public Vector3 avoidanceOffset;
+        public Vector3 bypassDirection;
+        public Collider blockingCollider;
+        public string selectedSide;
+        public bool usedFanSearch;
+    }
+
+    /// <summary>
+    /// 感知库预判避障结果。
+    /// 说明：优先使用共享小节点注册表，提前对前方已知障碍做侧向修正。
+    /// </summary>
+    private struct PerceptionAvoidanceResult
+    {
+        public bool hasObstacle;
+        public bool shouldCreateBypass;
+        public int candidateCount;
+        public float strongestRepulsion;
+        public Vector3 avoidanceOffset;
+        public string selectedSide;
+        public string strongestNodeId;
+    }
+
+    /// <summary>
+    /// 近距离拥挤分离结果。
+    /// 说明：用于解决 agent 与 agent 在狭窄区域对顶、擦碰和并行挤压的问题。
+    /// </summary>
+    private struct CrowdAvoidanceResult
+    {
+        public bool hasNearbyAgents;
+        public bool shouldCreateBypass;
+        public int nearbyCount;
+        public Vector3 avoidanceOffset;
+        public string selectedSide;
+        public string dominantAgentId;
+    }
+
+    /// <summary>
+    /// 避障探测数据快照（供 PerceptionVisualizer 读取，每帧更新）。
+    /// </summary>
+    public struct AvoidanceProbeSnapshot
+    {
+        public bool    valid;
+        public Vector3 origin;
+        public Vector3 forwardDir;
+        public Vector3 leftDir;
+        public Vector3 rightDir;
+        public bool    hitForward;  public float forwardDist;
+        public bool    hitLeft;     public float leftDist;
+        public bool    hitRight;    public float rightDist;
+        public float   maxForwardDist;
+        public float   maxSideDist;
+    }
+
+    /// <summary>当前帧的避障探测快照，PerceptionVisualizer 每帧读取。</summary>
+    public AvoidanceProbeSnapshot CurrentAvoidanceProbe { get; private set; }
 
     private void Awake()
     {
@@ -100,6 +174,7 @@ public class AgentMotionExecutor : MonoBehaviour
         agent = GetComponent<IntelligentAgent>();
         props = agent?.Properties;
         memoryModule = GetComponent<MemoryModule>();
+        perceptionModule = GetComponent<PerceptionModule>();
 
         if (props != null && props.MaxSpeed > 0f)
         {
@@ -109,10 +184,6 @@ public class AgentMotionExecutor : MonoBehaviour
         defaultTargetHeight = aerialMotion.TargetHeight;
         stuckCheckPos = transform.position;
 
-        // 初始化三条避障探测射线渲染器
-        lrFwd   = CreateProbeRayLR("AvoidanceRay_Fwd");
-        lrLeft  = CreateProbeRayLR("AvoidanceRay_Left");
-        lrRight = CreateProbeRayLR("AvoidanceRay_Right");
         noiseX = UnityEngine.Random.Range(0f, 100f);
         noiseZ = UnityEngine.Random.Range(0f, 100f);
 
@@ -131,60 +202,35 @@ public class AgentMotionExecutor : MonoBehaviour
                 obstacleLayers = 1 << 0; // Default layer
             }
         }
+
+        int buildingLayer = LayerMask.NameToLayer("Building");
+        if (buildingLayer >= 0)
+        {
+            obstacleLayers |= 1 << buildingLayer;
+        }
+        else
+        {
+            Debug.LogWarning($"[AME] {name}: 未找到 'Building' 层，大型建筑将无法通过 Building Layer 参与避障。");
+        }
+
+        if (agentAvoidanceLayers.value == 0)
+        {
+            int agentLayer = LayerMask.NameToLayer("Agent");
+            if (agentLayer >= 0)
+            {
+                agentAvoidanceLayers = 1 << agentLayer;
+            }
+        }
     }
 
     private void Update()
     {
         UpdateStuckDetection();
         PollADM();
-        
-        DrawAvoidanceRays();
-    }
 
-    // ── 可视化辅助 ──────────────────────────────────────────────────────────
-
-    private LineRenderer CreateProbeRayLR(string goName)
-    {
-        var go = new GameObject(goName);
-        go.transform.SetParent(transform);
-        var lr = go.AddComponent<LineRenderer>();
-        lr.useWorldSpace = true;
-        lr.material = new Material(Shader.Find("Sprites/Default"));
-        lr.positionCount = 2;
-        lr.enabled = false;
-        return lr;
-    }
-
-    private void SetProbeRay(LineRenderer lr, Vector3 from, Vector3 to, Color col, float startW, float endW)
-    {
-        lr.SetPosition(0, from);
-        lr.SetPosition(1, to);
-        lr.startColor = col;
-        lr.endColor   = new Color(col.r, col.g, col.b, 0.12f);
-        lr.startWidth = startW;
-        lr.endWidth   = endW;
-    }
-
-    private void DrawAvoidanceRays()
-    {
-        bool show = actionRunning && lastProbe.valid;
-        if (lrFwd   != null) lrFwd.enabled   = show;
-        if (lrLeft  != null) lrLeft.enabled  = show;
-        if (lrRight != null) lrRight.enabled = show;
-        if (!show) return;
-
-        var p = lastProbe;
-        Vector3 leftDir  = Quaternion.Euler(0, -25, 0) * p.moveDir;
-        Vector3 rightDir = Quaternion.Euler(0,  25, 0) * p.moveDir;
-
-        // 畅通 = 绿，前方碰撞 = 红，侧边碰撞 = 橙，侧边畅通 = 青
-        Color fwdColor  = p.hitMid   ? new Color(1f, 0.2f, 0.1f, 0.95f)  : new Color(0.15f, 1f, 0.3f, 0.9f);
-        Color sideColor = new Color(0.15f, 0.85f, 1f, 0.8f);
-        Color sideHit   = new Color(1f, 0.55f, 0.05f, 0.9f);
-
-        SetProbeRay(lrFwd,   p.origin, p.origin + p.moveDir * p.midDist,   fwdColor,                  0.12f, 0.03f);
-        SetProbeRay(lrLeft,  p.origin, p.origin + leftDir   * p.leftDist,  p.hitLeft  ? sideHit : sideColor, 0.06f, 0.02f);
-        SetProbeRay(lrRight, p.origin, p.origin + rightDir  * p.rightDist, p.hitRight ? sideHit : sideColor, 0.06f, 0.02f);
+        // 不在运动时清除避障探测快照，避免可视化残留
+        if (!actionRunning)
+            CurrentAvoidanceProbe = default;
     }
 
     private void PollADM()
@@ -249,9 +295,6 @@ public class AgentMotionExecutor : MonoBehaviour
         {
             case AtomicActionType.MoveTo:
                 yield return StartCoroutine(DoMoveTo(action));
-                break;
-            case AtomicActionType.Observe:
-                yield return StartCoroutine(DoObserve(action));
                 break;
             case AtomicActionType.Wait:
                 yield return StartCoroutine(DoWait(action));
@@ -368,12 +411,6 @@ public class AgentMotionExecutor : MonoBehaviour
         ResetAvoidanceState(false, string.Empty);
         Debug.Log($"[AME] MoveTo 完成 -> {action.targetName}");
         AgentStateServer.PushMotionEvent(props?.AgentID ?? name, "arrive", $"到达 {action.targetName}");
-    }
-
-    private IEnumerator DoObserve(AtomicAction action)
-    {
-        GetComponent<PerceptionModule>()?.SenseOnce();
-        yield return StartCoroutine(HoldPosition(action.duration > 0f ? action.duration : 3f));
     }
 
     private IEnumerator DoWait(AtomicAction action)
@@ -510,7 +547,6 @@ public class AgentMotionExecutor : MonoBehaviour
         }
 
         float totalDuration = action.duration > 0f ? action.duration : 60f;
-        bool withObserve = action.actionParams?.Contains("observe", StringComparison.OrdinalIgnoreCase) == true;
 
         string resolvedTarget = action.targetName;
         if (string.IsNullOrWhiteSpace(resolvedTarget) && memoryModule != null)
@@ -541,13 +577,27 @@ public class AgentMotionExecutor : MonoBehaviour
         while (elapsed < totalDuration && visited.Count < patrolCells.Count)
         {
             Vector2Int currentCell = campusGrid.WorldToGrid(transform.position);
+            if (!TryResolveNearestPathCell(currentCell, 4, "patrol_start", out currentCell))
+            {
+                Debug.LogWarning($"[AME] {props?.AgentID ?? name} 巡逻起点过于贴近障碍，无法找到安全格。");
+                break;
+            }
+
             Vector2Int? frontier = FindNearestUnvisitedCell(currentCell, patrolCells, visited);
             if (!frontier.HasValue)
             {
                 break;
             }
 
-            List<Vector2Int> segment = campusGrid.FindPathAStar(currentCell, frontier.Value) ?? new List<Vector2Int> { frontier.Value };
+            Vector2Int frontierCell = frontier.Value;
+            if (!TryResolveNearestPathCell(frontierCell, 4, "patrol_goal", out frontierCell))
+            {
+                Debug.LogWarning($"[AME] {props?.AgentID ?? name} 巡逻目标 {frontier.Value} 周边没有可用安全格。");
+                visited.Add(frontier.Value);
+                continue;
+            }
+
+            List<Vector2Int> segment = campusGrid.FindPathAStar(currentCell, frontierCell) ?? new List<Vector2Int> { frontierCell };
             List<Vector3> segmentPath = BuildWorldPath(segment, aerialMotion.TargetHeight);
             if (segmentPath.Count == 0)
             {
@@ -581,11 +631,6 @@ public class AgentMotionExecutor : MonoBehaviour
             }
 
             MarkVisitedCells(visited, patrolCells, visitRadiusM);
-
-            if (withObserve)
-            {
-                GetComponent<PerceptionModule>()?.SenseOnce();
-            }
 
             float dwell = UnityEngine.Random.Range(0.5f, 1.3f);
             float dwellElapsed = 0f;
@@ -640,6 +685,12 @@ public class AgentMotionExecutor : MonoBehaviour
 
         Vector2Int startCell = campusGrid.WorldToGrid(transform.position);
         Vector2Int goalCell = approachCells[0];
+        if (!TryResolveNearestPathCell(startCell, 4, "path_start", out startCell) ||
+            !TryResolveNearestPathCell(goalCell, 4, "path_goal", out goalCell))
+        {
+            return false;
+        }
+
         List<Vector2Int> gridPath = campusGrid.FindPathAStar(startCell, goalCell) ?? new List<Vector2Int> { goalCell };
         path = BuildWorldPath(gridPath, height);
         return path.Count > 0;
@@ -673,71 +724,590 @@ public class AgentMotionExecutor : MonoBehaviour
         }
 
         Vector3 currentPos = transform.position;
-        Vector3 moveDir = (desiredTarget - currentPos).normalized;
-        if (moveDir.sqrMagnitude < 0.001f) return desiredTarget;
-
-        Vector3 probeOrigin = GetObstacleProbeOrigin();
-        
-        // 核心逻辑升级：三向触须探测 (左前 25度、中、右前 25度)
-        // 探测距离不再受限于目标点距离，确保提前发现
-        bool hitMid = Physics.SphereCast(probeOrigin, obstacleProbeRadius, moveDir, out RaycastHit midHit, obstacleForwardCheckDistance, obstacleLayers);
-        
-        Vector3 right = Vector3.Cross(Vector3.up, moveDir).normalized;
-        Vector3 leftDir = Quaternion.Euler(0, -25, 0) * moveDir;
-        Vector3 rightDir = Quaternion.Euler(0, 25, 0) * moveDir;
-
-        bool hitLeft = Physics.SphereCast(probeOrigin, obstacleProbeRadius * 0.8f, leftDir, out RaycastHit leftHit, obstacleSideCheckDistance, obstacleLayers);
-        bool hitRight = Physics.SphereCast(probeOrigin, obstacleProbeRadius * 0.8f, rightDir, out RaycastHit rightHit, obstacleSideCheckDistance, obstacleLayers);
-
-        // 缓存本次探测结果供可视化使用
-        lastProbe = new ProbeFrame
+        Vector3 moveVec = desiredTarget - currentPos;
+        moveVec.y = 0f;
+        if (moveVec.sqrMagnitude < 0.001f)
         {
-            valid    = true,
-            origin   = probeOrigin,
-            moveDir  = moveDir,
-            hitMid   = hitMid,   midDist   = hitMid   ? midHit.distance   : obstacleForwardCheckDistance,
-            hitLeft  = hitLeft,  leftDist  = hitLeft  ? leftHit.distance  : obstacleSideCheckDistance,
-            hitRight = hitRight, rightDist = hitRight ? rightHit.distance : obstacleSideCheckDistance,
-        };
-
-        if (!hitMid && !hitLeft && !hitRight)
-        {
-            if (hasBypassTarget) ResetAvoidanceState(false, "");
             return desiredTarget;
         }
 
-        // 计算排斥力（偏移量）
-        Vector3 avoidanceOffset = Vector3.zero;
+        Vector3 moveDir = moveVec.normalized;
+        if (forcedEscapeUntil > Time.time)
+        {
+            if (HorizontalDistance(transform.position, forcedEscapeTarget) > obstacleResumeDistance * 0.8f)
+            {
+                return forcedEscapeTarget;
+            }
+
+            forcedEscapeUntil = 0f;
+            forcedEscapeTarget = Vector3.zero;
+        }
+
+        RealtimeAvoidanceResult realtimeResult = TryBuildRealtimeAvoidance(moveDir);
+        PerceptionAvoidanceResult perceptionResult = TryBuildPerceptionAvoidance(currentPos, moveDir);
+        CrowdAvoidanceResult crowdResult = TryBuildCrowdAvoidance(currentPos, moveDir);
+
+        bool hasAvoidanceDemand =
+            realtimeResult.shouldCreateBypass ||
+            perceptionResult.shouldCreateBypass ||
+            crowdResult.shouldCreateBypass;
+        if (hasBypassTarget)
+        {
+            if (hasAvoidanceDemand)
+            {
+                Vector3 refreshedOffset = realtimeResult.avoidanceOffset + perceptionResult.avoidanceOffset + crowdResult.avoidanceOffset;
+                string side = ResolvePreferredSide(realtimeResult.selectedSide, crowdResult.selectedSide, perceptionResult.selectedSide, refreshedOffset, moveDir);
+                Collider blocker = realtimeResult.blockingCollider != null ? realtimeResult.blockingCollider : activeAvoidanceCollider;
+                float forwardHint = ResolveBypassForwardHint(realtimeResult, currentPos, desiredTarget);
+                SetBypassTarget(
+                    currentPos,
+                    desiredTarget,
+                    moveDir,
+                    ResolvePreferredBypassHeading(realtimeResult, moveDir),
+                    refreshedOffset,
+                    side,
+                    blocker,
+                    forwardHint,
+                    BuildAvoidanceReason("refresh", realtimeResult, perceptionResult, crowdResult),
+                    rebuildExisting: true);
+                return bypassTarget;
+            }
+
+            if (ShouldKeepBypassTarget(desiredTarget, out string keepReason))
+            {
+                return bypassTarget;
+            }
+
+            ResetAvoidanceState(true, keepReason);
+        }
+
+        if (!hasAvoidanceDemand)
+        {
+            return desiredTarget;
+        }
+
+        Vector3 combinedOffset = realtimeResult.avoidanceOffset + perceptionResult.avoidanceOffset + crowdResult.avoidanceOffset;
+        string selectedSide = ResolvePreferredSide(realtimeResult.selectedSide, crowdResult.selectedSide, perceptionResult.selectedSide, combinedOffset, moveDir);
+        float bypassForwardHint = ResolveBypassForwardHint(realtimeResult, currentPos, desiredTarget);
+        SetBypassTarget(
+            currentPos,
+            desiredTarget,
+            moveDir,
+            ResolvePreferredBypassHeading(realtimeResult, moveDir),
+            combinedOffset,
+            selectedSide,
+            realtimeResult.blockingCollider,
+            bypassForwardHint,
+            BuildAvoidanceReason("create", realtimeResult, perceptionResult, crowdResult),
+            rebuildExisting: false);
+        return bypassTarget;
+    }
+
+    /// <summary>
+    /// 基于实时 SphereCast 生成当前帧的即时避障结果，并更新可视化快照。
+    /// </summary>
+    private RealtimeAvoidanceResult TryBuildRealtimeAvoidance(Vector3 moveDir)
+    {
+        Vector3 probeOrigin = GetObstacleProbeOrigin();
+        Vector3 right = Vector3.Cross(Vector3.up, moveDir).normalized;
+        Vector3 leftDir = Quaternion.Euler(0f, -25f, 0f) * moveDir;
+        Vector3 rightDir = Quaternion.Euler(0f, 25f, 0f) * moveDir;
+        int layerMask = GetAvoidanceLayerMask(includeAgents: true);
+
+        bool hitMid = TrySphereCastNonSelf(
+            probeOrigin,
+            obstacleProbeRadius,
+            moveDir,
+            out RaycastHit midHit,
+            obstacleForwardCheckDistance,
+            layerMask);
+        bool hitLeft = TrySphereCastNonSelf(
+            probeOrigin,
+            obstacleProbeRadius * 0.8f,
+            leftDir,
+            out RaycastHit leftHit,
+            obstacleSideCheckDistance,
+            layerMask);
+        bool hitRight = TrySphereCastNonSelf(
+            probeOrigin,
+            obstacleProbeRadius * 0.8f,
+            rightDir,
+            out RaycastHit rightHit,
+            obstacleSideCheckDistance,
+            layerMask);
+
+        lastProbe = new ProbeFrame
+        {
+            valid = true,
+            origin = probeOrigin,
+            moveDir = moveDir,
+            hitMid = hitMid,
+            midDist = hitMid ? midHit.distance : obstacleForwardCheckDistance,
+            hitLeft = hitLeft,
+            leftDist = hitLeft ? leftHit.distance : obstacleSideCheckDistance,
+            hitRight = hitRight,
+            rightDist = hitRight ? rightHit.distance : obstacleSideCheckDistance,
+        };
+
+        CurrentAvoidanceProbe = new AvoidanceProbeSnapshot
+        {
+            valid = true,
+            origin = probeOrigin,
+            forwardDir = moveDir,
+            leftDir = leftDir,
+            rightDir = rightDir,
+            hitForward = hitMid,
+            forwardDist = lastProbe.midDist,
+            hitLeft = hitLeft,
+            leftDist = lastProbe.leftDist,
+            hitRight = hitRight,
+            rightDist = lastProbe.rightDist,
+            maxForwardDist = obstacleForwardCheckDistance,
+            maxSideDist = obstacleSideCheckDistance,
+        };
+
+        RealtimeAvoidanceResult result = new RealtimeAvoidanceResult
+        {
+            hasObstacle = hitMid || hitLeft || hitRight,
+            forwardDistance = hitMid ? midHit.distance : obstacleForwardCheckDistance,
+            leftDistance = hitLeft ? leftHit.distance : obstacleSideCheckDistance,
+            rightDistance = hitRight ? rightHit.distance : obstacleSideCheckDistance,
+            avoidanceOffset = Vector3.zero,
+            bypassDirection = moveDir,
+            blockingCollider = hitMid ? midHit.collider : null,
+            selectedSide = string.Empty,
+            usedFanSearch = false,
+        };
+
+        if (!result.hasObstacle)
+        {
+            return result;
+        }
+
+        bool fullyBlocked = hitMid && hitLeft && hitRight;
+        bool narrowBlocked = hitMid && Mathf.Min(result.leftDistance, result.rightDistance) < obstacleProbeRadius * 2.2f;
+        if (result.hasObstacle)
+        {
+            if (TryFindBestBypassDirection(moveDir, layerMask, out Vector3 bestDir, out float bestClearance, out float bestScore, out Collider bestCollider))
+            {
+                float forwardClearance = result.forwardDistance;
+                float forwardScore = EvaluateDirectionScore(moveDir, moveDir, forwardClearance, GetStableSideBiasSign());
+                bool directionChangedEnough = Vector3.Dot(bestDir, moveDir) < 0.9985f;
+                bool clearanceImproved = bestClearance > forwardClearance + obstacleProbeRadius * 0.65f;
+                bool scoreImproved = bestScore > forwardScore + 0.35f;
+                bool forwardLooksBlocked = fullyBlocked || narrowBlocked || result.forwardDistance < obstacleForwardCheckDistance * 0.88f;
+                if (forwardLooksBlocked || (directionChangedEnough && (clearanceImproved || scoreImproved)))
+                {
+                    result.usedFanSearch = true;
+                    result.bypassDirection = bestDir;
+                    result.blockingCollider = bestCollider != null ? bestCollider : result.blockingCollider;
+                    result.selectedSide = Vector3.Dot(bestDir, right) >= 0f ? "right" : "left";
+
+                    Vector3 sidePush = Vector3.ProjectOnPlane(bestDir, moveDir);
+                    if (sidePush.sqrMagnitude < 0.001f)
+                    {
+                        sidePush = result.selectedSide == "left" ? -right : right;
+                    }
+
+                    sidePush.Normalize();
+                    float force = Mathf.Clamp01(bestClearance / Mathf.Max(0.01f, obstacleForwardCheckDistance));
+                    result.avoidanceOffset = sidePush * avoidanceForceStrength + bestDir * Mathf.Lerp(1.2f, 3.4f, force);
+                    result.shouldCreateBypass = true;
+                    return result;
+                }
+            }
+        }
 
         if (hitMid)
         {
-            // 如果中间撞了，根据左右探测结果选择空旷的一侧
             float leftDist = hitLeft ? leftHit.distance : obstacleSideCheckDistance;
             float rightDist = hitRight ? rightHit.distance : obstacleSideCheckDistance;
-            
-            Vector3 pushDir = (leftDist >= rightDist) ? -right : right;
-            // 距离越近，力越大
-            float force = Mathf.Clamp01(1.0f - (midHit.distance / obstacleForwardCheckDistance)) * avoidanceForceStrength;
-            avoidanceOffset += pushDir * force;
-            
-            // 加上一点向后的趋势，防止直接撞墙
-            avoidanceOffset -= moveDir * (force * 0.3f);
+            bool goLeft = leftDist >= rightDist;
+            result.selectedSide = goLeft ? "left" : "right";
+            result.bypassDirection = Quaternion.Euler(0f, goLeft ? -40f : 40f, 0f) * moveDir;
+
+            Vector3 sideDir = goLeft ? -right : right;
+            float force = Mathf.Clamp01(1f - midHit.distance / Mathf.Max(0.01f, obstacleForwardCheckDistance)) * avoidanceForceStrength;
+            result.avoidanceOffset += sideDir * force;
+            result.avoidanceOffset -= moveDir * (force * 0.25f);
+            result.shouldCreateBypass = result.avoidanceOffset.sqrMagnitude > 0.04f;
         }
         else
         {
-            // 侧边触须探测到障碍
-            if (hitLeft) avoidanceOffset += right * Mathf.Clamp01(1.0f - (leftHit.distance / obstacleSideCheckDistance)) * (avoidanceForceStrength * 0.5f);
-            if (hitRight) avoidanceOffset -= right * Mathf.Clamp01(1.0f - (rightHit.distance / obstacleSideCheckDistance)) * (avoidanceForceStrength * 0.5f);
+            if (hitLeft)
+            {
+                float push = Mathf.Clamp01(1f - leftHit.distance / Mathf.Max(0.01f, obstacleSideCheckDistance)) * (avoidanceForceStrength * 0.55f);
+                result.avoidanceOffset += right * push;
+            }
+
+            if (hitRight)
+            {
+                float push = Mathf.Clamp01(1f - rightHit.distance / Mathf.Max(0.01f, obstacleSideCheckDistance)) * (avoidanceForceStrength * 0.55f);
+                result.avoidanceOffset -= right * push;
+            }
+
+            if (result.avoidanceOffset.sqrMagnitude > 0.01f)
+            {
+                result.selectedSide = Vector3.Dot(result.avoidanceOffset, right) >= 0f ? "right" : "left";
+                result.blockingCollider = hitLeft && !hitRight ? leftHit.collider : hitRight && !hitLeft ? rightHit.collider : null;
+                result.bypassDirection = Quaternion.Euler(0f, result.selectedSide == "left" ? -28f : 28f, 0f) * moveDir;
+                result.shouldCreateBypass = result.avoidanceOffset.sqrMagnitude > 0.04f;
+            }
         }
 
-        if (avoidanceOffset.sqrMagnitude > 0.01f)
+        return result;
+    }
+
+    /// <summary>
+    /// 结合共享感知库，对前方已知障碍施加预判侧向偏移。
+    /// </summary>
+    private PerceptionAvoidanceResult TryBuildPerceptionAvoidance(Vector3 currentPos, Vector3 moveDir)
+    {
+        float queryRadius = obstacleForwardCheckDistance * 1.5f;
+        Vector3 right = Vector3.Cross(Vector3.up, moveDir).normalized;
+        List<SmallNodeData> nearbyNodes = SmallNodeRegistry.QueryNodes(currentPos, queryRadius, includeStatic: true, includeDynamic: true);
+
+        PerceptionAvoidanceResult result = new PerceptionAvoidanceResult
         {
-            hasBypassTarget = true;
-            // 返回偏移后的目标点
-            return desiredTarget + avoidanceOffset * 3f;
+            hasObstacle = false,
+            shouldCreateBypass = false,
+            candidateCount = 0,
+            strongestRepulsion = 0f,
+            avoidanceOffset = Vector3.zero,
+            selectedSide = string.Empty,
+            strongestNodeId = string.Empty,
+        };
+
+        foreach (SmallNodeData node in nearbyNodes)
+        {
+            if (!IsPerceptionObstacleType(node.NodeType))
+            {
+                continue;
+            }
+
+            Vector3 toObstacle = node.WorldPosition - currentPos;
+            toObstacle.y = 0f;
+            float dist = toObstacle.magnitude;
+            if (dist < 0.1f || dist > queryRadius)
+            {
+                continue;
+            }
+
+            Vector3 obstacleDir = toObstacle / dist;
+            float forwardDot = Vector3.Dot(obstacleDir, moveDir);
+            if (forwardDot < 0.45f)
+            {
+                continue;
+            }
+
+            Vector3 pushDir = Vector3.ProjectOnPlane(-obstacleDir, moveDir);
+            if (pushDir.sqrMagnitude < 0.001f)
+            {
+                float fallbackSign = Vector3.Dot(obstacleDir, right) >= 0f ? -1f : 1f;
+                pushDir = right * fallbackSign;
+            }
+
+            pushDir.Normalize();
+            float repulsion = Mathf.Clamp01(1f - dist / queryRadius) * avoidanceForceStrength * 0.45f * Mathf.Clamp01(forwardDot);
+            if (repulsion <= 0.01f)
+            {
+                continue;
+            }
+
+            result.hasObstacle = true;
+            result.candidateCount++;
+            result.avoidanceOffset += pushDir * repulsion;
+
+            if (repulsion > result.strongestRepulsion)
+            {
+                result.strongestRepulsion = repulsion;
+                result.strongestNodeId = node.NodeId;
+            }
         }
 
-        return desiredTarget;
+        if (result.avoidanceOffset.sqrMagnitude > 0.01f)
+        {
+            result.selectedSide = Vector3.Dot(result.avoidanceOffset, right) >= 0f ? "right" : "left";
+            result.shouldCreateBypass = result.avoidanceOffset.sqrMagnitude > 0.04f;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 对近距离 agent 做分离，避免在狭窄区域互相顶住。
+    /// </summary>
+    private CrowdAvoidanceResult TryBuildCrowdAvoidance(Vector3 currentPos, Vector3 moveDir)
+    {
+        CrowdAvoidanceResult result = new CrowdAvoidanceResult
+        {
+            hasNearbyAgents = false,
+            shouldCreateBypass = false,
+            nearbyCount = 0,
+            avoidanceOffset = Vector3.zero,
+            selectedSide = string.Empty,
+            dominantAgentId = string.Empty,
+        };
+
+        if (agentAvoidanceLayers.value == 0)
+        {
+            return result;
+        }
+
+        Collider[] nearbyColliders = Physics.OverlapSphere(
+            currentPos,
+            crowdAvoidanceRadius,
+            agentAvoidanceLayers,
+            QueryTriggerInteraction.Ignore);
+        if (nearbyColliders == null || nearbyColliders.Length == 0)
+        {
+            return result;
+        }
+
+        Vector3 right = Vector3.Cross(Vector3.up, moveDir).normalized;
+        float strongestRepulsion = 0f;
+
+        foreach (Collider otherCollider in nearbyColliders)
+        {
+            if (IsSelfCollider(otherCollider))
+            {
+                continue;
+            }
+
+            IntelligentAgent otherAgent = otherCollider.GetComponentInParent<IntelligentAgent>();
+            if (otherAgent == null || otherAgent == agent)
+            {
+                continue;
+            }
+
+            Vector3 toOther = otherCollider.bounds.center - currentPos;
+            toOther.y = 0f;
+            float dist = toOther.magnitude;
+            if (dist < 0.05f || dist > crowdAvoidanceRadius)
+            {
+                continue;
+            }
+
+            Vector3 dirToOther = toOther / dist;
+            float forwardDot = Vector3.Dot(dirToOther, moveDir);
+            if (forwardDot < -0.2f)
+            {
+                continue;
+            }
+
+            Vector3 pushDir = Vector3.ProjectOnPlane(-dirToOther, moveDir);
+            if (pushDir.sqrMagnitude < 0.001f)
+            {
+                float sideSign = ResolveCrowdSideSign(otherAgent, right);
+                pushDir = right * sideSign;
+            }
+
+            pushDir.Normalize();
+            float repulsion =
+                Mathf.Clamp01(1f - dist / Mathf.Max(0.01f, crowdAvoidanceRadius)) *
+                crowdAvoidanceStrength *
+                Mathf.Lerp(0.75f, 1.15f, Mathf.Clamp01(forwardDot + 0.2f));
+            if (repulsion <= 0.01f)
+            {
+                continue;
+            }
+
+            result.hasNearbyAgents = true;
+            result.nearbyCount++;
+            result.avoidanceOffset += pushDir * repulsion;
+
+            if (repulsion > strongestRepulsion)
+            {
+                strongestRepulsion = repulsion;
+                result.selectedSide = Vector3.Dot(pushDir, right) >= 0f ? "right" : "left";
+                result.dominantAgentId = otherAgent.Properties?.AgentID ?? otherAgent.name;
+            }
+        }
+
+        result.shouldCreateBypass = result.avoidanceOffset.sqrMagnitude > 0.04f || result.nearbyCount >= 2;
+        return result;
+    }
+
+    /// <summary>
+    /// 将实时与预判排斥合成为一个稳定的局部绕行点，供后续数帧持续追踪。
+    /// </summary>
+    private void SetBypassTarget(
+        Vector3 currentPos,
+        Vector3 desiredTarget,
+        Vector3 moveDir,
+        Vector3 bypassHeading,
+        Vector3 avoidanceOffset,
+        string selectedSide,
+        Collider blockingCollider,
+        float forwardHint,
+        string reason,
+        bool rebuildExisting)
+    {
+        Vector3 nextBypassTarget = BuildBypassTarget(currentPos, desiredTarget, moveDir, bypassHeading, avoidanceOffset, selectedSide, forwardHint);
+        bool positionChanged = !hasBypassTarget || HorizontalDistance(bypassTarget, nextBypassTarget) > 0.3f;
+        bool sideChanged = !string.Equals(activeAvoidanceSide, selectedSide, StringComparison.Ordinal);
+
+        hasBypassTarget = true;
+        bypassTarget = nextBypassTarget;
+        activeAvoidanceCollider = blockingCollider;
+        activeAvoidanceSide = selectedSide;
+
+        bool shouldLog = !rebuildExisting || positionChanged || sideChanged;
+        if (logAvoidance && shouldLog)
+        {
+            string blockerName = blockingCollider != null ? blockingCollider.name : "registry";
+            Debug.Log(
+                $"[AME] {props?.AgentID ?? name} {(rebuildExisting ? "刷新" : "生成")}局部绕行点 " +
+                $"side={selectedSide}, blocker={blockerName}, bypass={bypassTarget}, reason={reason}");
+        }
+    }
+
+    /// <summary>
+    /// 根据排斥方向构建一个更稳定的局部绕行点，而不是只对原目标做一帧偏移。
+    /// </summary>
+    private Vector3 BuildBypassTarget(
+        Vector3 currentPos,
+        Vector3 desiredTarget,
+        Vector3 moveDir,
+        Vector3 bypassHeading,
+        Vector3 avoidanceOffset,
+        string selectedSide,
+        float forwardHint)
+    {
+        Vector3 planarOffset = avoidanceOffset;
+        planarOffset.y = 0f;
+        Vector3 travelDir = bypassHeading.sqrMagnitude > 0.001f ? bypassHeading.normalized : moveDir;
+
+        Vector3 sideDir = Vector3.ProjectOnPlane(planarOffset, moveDir);
+        if (sideDir.sqrMagnitude < 0.001f)
+        {
+            Vector3 right = Vector3.Cross(Vector3.up, moveDir).normalized;
+            sideDir = selectedSide == "left" ? -right : right;
+        }
+
+        sideDir.Normalize();
+
+        float goalDistance = HorizontalDistance(currentPos, desiredTarget);
+        float forwardStep = Mathf.Clamp(
+            Mathf.Max(forwardHint + obstacleProbeRadius, goalDistance * 0.45f),
+            obstacleProbeRadius * 2f,
+            obstacleForwardCheckDistance * 0.9f);
+        float lateralStep = Mathf.Clamp(
+            Mathf.Max(planarOffset.magnitude * 2.4f, obstacleProbeRadius * 2f),
+            obstacleProbeRadius * 1.6f,
+            obstacleSideCheckDistance + obstacleProbeRadius);
+
+        Vector3 bypass = currentPos + travelDir * forwardStep + sideDir * lateralStep;
+        bypass.y = desiredTarget.y;
+        return bypass;
+    }
+
+    /// <summary>
+    /// 已有绕行目标时，判断是否还要继续坚持绕行，而不是立刻回到主路径。
+    /// </summary>
+    private bool ShouldKeepBypassTarget(Vector3 desiredTarget, out string releaseReason)
+    {
+        float bypassDistance = HorizontalDistance(transform.position, bypassTarget);
+        bool reachedBypass = bypassDistance <= obstacleResumeDistance;
+        bool directPathClear = IsDirectPathClear(desiredTarget);
+        bool obstacleReleased = IsActiveAvoidanceReleased();
+
+        if (!reachedBypass)
+        {
+            releaseReason = string.Empty;
+            return true;
+        }
+
+        if (!directPathClear && !obstacleReleased)
+        {
+            releaseReason = string.Empty;
+            return true;
+        }
+
+        releaseReason = directPathClear
+            ? "恢复主路径：绕行点已到达且直线路径已清空"
+            : "恢复主路径：绕行点已到达且阻挡体已远离";
+        return false;
+    }
+
+    /// <summary>
+    /// 判断当前正在参考的阻挡体是否已经脱离恢复半径。
+    /// </summary>
+    private bool IsActiveAvoidanceReleased()
+    {
+        if (activeAvoidanceCollider == null || !activeAvoidanceCollider.enabled || !activeAvoidanceCollider.gameObject.activeInHierarchy)
+        {
+            return true;
+        }
+
+        Vector3 closest = activeAvoidanceCollider.ClosestPoint(transform.position);
+        return HorizontalDistance(transform.position, closest) > obstacleResumeDistance * 1.5f;
+    }
+
+    /// <summary>
+    /// 从实时探测和感知预判中决定优先往哪一侧绕行。
+    /// </summary>
+    private string ResolvePreferredSide(string realtimeSide, string crowdSide, string perceptionSide, Vector3 avoidanceOffset, Vector3 moveDir)
+    {
+        if (!string.IsNullOrWhiteSpace(realtimeSide))
+        {
+            return realtimeSide;
+        }
+
+        if (!string.IsNullOrWhiteSpace(crowdSide))
+        {
+            return crowdSide;
+        }
+
+        if (!string.IsNullOrWhiteSpace(perceptionSide))
+        {
+            return perceptionSide;
+        }
+
+        Vector3 right = Vector3.Cross(Vector3.up, moveDir).normalized;
+        return Vector3.Dot(avoidanceOffset, right) >= 0f ? "right" : "left";
+    }
+
+    /// <summary>
+    /// 估算绕行点应该向前放多远，避免只在原地横移。
+    /// </summary>
+    private float ResolveBypassForwardHint(RealtimeAvoidanceResult realtimeResult, Vector3 currentPos, Vector3 desiredTarget)
+    {
+        if (realtimeResult.hasObstacle)
+        {
+            return Mathf.Min(realtimeResult.forwardDistance, obstacleForwardCheckDistance * 0.75f);
+        }
+
+        return Mathf.Clamp(HorizontalDistance(currentPos, desiredTarget) * 0.35f, obstacleProbeRadius * 2f, obstacleForwardCheckDistance * 0.7f);
+    }
+
+    /// <summary>
+    /// 生成调试日志摘要，便于观察实时探测与预判排斥是否同时生效。
+    /// </summary>
+    private string BuildAvoidanceReason(
+        string stage,
+        RealtimeAvoidanceResult realtimeResult,
+        PerceptionAvoidanceResult perceptionResult,
+        CrowdAvoidanceResult crowdResult)
+    {
+        string blocker = realtimeResult.blockingCollider != null ? realtimeResult.blockingCollider.name : "none";
+        return
+            $"stage={stage}, mid={realtimeResult.forwardDistance:F2}, left={realtimeResult.leftDistance:F2}, right={realtimeResult.rightDistance:F2}, " +
+            $"realtimeSide={realtimeResult.selectedSide}, fan={realtimeResult.usedFanSearch}, blocker={blocker}, " +
+            $"perceptionCandidates={perceptionResult.candidateCount}, perceptionSide={perceptionResult.selectedSide}, " +
+            $"perceptionForce={perceptionResult.avoidanceOffset.magnitude:F2}, strongestNode={perceptionResult.strongestNodeId}, " +
+            $"crowdCount={crowdResult.nearbyCount}, crowdSide={crowdResult.selectedSide}, crowdLead={crowdResult.dominantAgentId}";
+    }
+
+    /// <summary>
+    /// 过滤允许参与预判避障的小节点类型。
+    /// </summary>
+    private static bool IsPerceptionObstacleType(SmallNodeType nodeType)
+    {
+        return nodeType == SmallNodeType.TemporaryObstacle ||
+               nodeType == SmallNodeType.Tree ||
+               nodeType == SmallNodeType.Vehicle ||
+               nodeType == SmallNodeType.Pedestrian;
     }
 
     private bool TryFindBlockingObstacle(Vector3 desiredTarget, out RaycastHit hit)
@@ -752,16 +1322,16 @@ public class AgentMotionExecutor : MonoBehaviour
             return false;
         }
 
-        return Physics.SphereCast(
-            new Ray(GetObstacleProbeOrigin(), direction.normalized),
+        return TrySphereCastNonSelf(
+            GetObstacleProbeOrigin(),
             obstacleProbeRadius,
+            direction.normalized,
             out hit,
             obstacleForwardCheckDistance,
-            obstacleLayers,
-            QueryTriggerInteraction.Ignore);
+            obstacleLayers.value);
     }
 
-    private bool IsDirectPathClear(Vector3 target)
+    private bool IsDirectPathClear(Vector3 target, bool includeAgents = false)
     {
         Vector3 direction = target - transform.position;
         direction.y = 0f;
@@ -771,13 +1341,13 @@ public class AgentMotionExecutor : MonoBehaviour
             return true;
         }
 
-        return !Physics.SphereCast(
-            new Ray(GetObstacleProbeOrigin(), direction.normalized),
+        return !TrySphereCastNonSelf(
+            GetObstacleProbeOrigin(),
             obstacleProbeRadius,
-            out _,
+            direction.normalized,
+            out RaycastHit _,
             distance,
-            obstacleLayers,
-            QueryTriggerInteraction.Ignore);
+            GetAvoidanceLayerMask(includeAgents));
     }
 
     private Vector3 GetObstacleProbeOrigin()
@@ -793,17 +1363,46 @@ public class AgentMotionExecutor : MonoBehaviour
             return false;
         }
 
-        if (hasBypassTarget || obstacleHoldUntil > Time.time || !IsDirectPathClear(desiredTarget))
+        bool blockedByStatic = !IsDirectPathClear(desiredTarget, includeAgents: false);
+        bool blockedByCrowd = !IsDirectPathClear(desiredTarget, includeAgents: true);
+        if (hasBypassTarget || obstacleHoldUntil > Time.time || blockedByCrowd)
         {
+            localAvoidanceRetryCount++;
             hasBypassTarget = false;
+            bypassTarget = Vector3.zero;
+            activeAvoidanceCollider = null;
+            activeAvoidanceSide = string.Empty;
+
+            if (TryActivateForcedEscapeTarget(desiredTarget))
+            {
+                obstacleHoldUntil = Time.time + obstacleRetryHoldSeconds;
+                if (logAvoidance)
+                {
+                    Debug.LogWarning($"[AME] {props?.AgentID ?? name} 卡住后生成强制脱困点 -> {forcedEscapeTarget}");
+                }
+                return true;
+            }
+
             obstacleHoldUntil = Time.time + obstacleRetryHoldSeconds;
             if (logAvoidance)
             {
-                Debug.LogWarning($"[AME] {props?.AgentID ?? name} 在局部障碍附近卡住，优先继续局部绕障");
+                Debug.LogWarning($"[AME] {props?.AgentID ?? name} 在局部障碍附近卡住，优先继续局部绕障，retry={localAvoidanceRetryCount}");
             }
+
+            if (blockedByStatic && localAvoidanceRetryCount > maxStaticBypassRetries)
+            {
+                if (logAvoidance)
+                {
+                    Debug.LogWarning($"[AME] {props?.AgentID ?? name} 局部绕障重试超过阈值，允许进入 A* 重规划");
+                }
+                localAvoidanceRetryCount = 0;
+                return false;
+            }
+
             return true;
         }
 
+        localAvoidanceRetryCount = 0;
         return false;
     }
 
@@ -812,6 +1411,12 @@ public class AgentMotionExecutor : MonoBehaviour
         replannedPath = new List<Vector3>();
         Vector2Int nowCell = campusGrid.WorldToGrid(transform.position);
         Vector2Int goalCell = campusGrid.WorldToGrid(finalGoal);
+        if (!TryResolveNearestPathCell(nowCell, 4, "replan_start", out nowCell) ||
+            !TryResolveNearestPathCell(goalCell, 4, "replan_goal", out goalCell))
+        {
+            return false;
+        }
+
         List<Vector2Int> newPath = campusGrid.FindPathAStar(nowCell, goalCell);
         if (newPath == null || newPath.Count == 0)
         {
@@ -822,6 +1427,36 @@ public class AgentMotionExecutor : MonoBehaviour
         replannedPath = BuildWorldPath(newPath, height);
         Debug.LogWarning($"[AME] {props?.AgentID ?? name} 局部避障仍无法通过，触发 A* 重规划");
         return replannedPath.Count > 0;
+    }
+
+    /// <summary>
+    /// 将贴近建筑边缘的请求格吸附到最近的安全路径格。
+    /// 说明：局部避障会把贴墙位置视为持续受阻，因此在进入 A* 前先把起终点修正到更稳妥的位置。
+    /// </summary>
+    private bool TryResolveNearestPathCell(Vector2Int requestedCell, int searchRadius, string reason, out Vector2Int resolvedCell)
+    {
+        resolvedCell = requestedCell;
+        if (campusGrid == null)
+        {
+            return false;
+        }
+
+        if (!campusGrid.TryFindNearestWalkable(requestedCell, Mathf.Max(1, searchRadius), out Vector2Int safeCell))
+        {
+            if (logAvoidance)
+            {
+                Debug.LogWarning($"[AME] {props?.AgentID ?? name} 无法为 {reason} 找到安全路径格，requested={requestedCell}");
+            }
+            return false;
+        }
+
+        resolvedCell = safeCell;
+        if (logAvoidance && safeCell != requestedCell)
+        {
+            Debug.Log($"[AME] {props?.AgentID ?? name} {reason} 从 {requestedCell} 修正到安全格 {safeCell}");
+        }
+
+        return true;
     }
 
     private bool ShouldAdvanceWaypoint(Vector3 waypoint, float baseArrivalDistance)
@@ -948,14 +1583,283 @@ public class AgentMotionExecutor : MonoBehaviour
     {
         bool hadAvoidance = hasBypassTarget || obstacleHoldUntil > Time.time || activeAvoidanceCollider != null;
         hasBypassTarget = false;
+        bypassTarget = Vector3.zero;
         obstacleHoldUntil = 0f;
         activeAvoidanceCollider = null;
         activeAvoidanceSide = string.Empty;
+        forcedEscapeTarget = Vector3.zero;
+        forcedEscapeUntil = 0f;
+        localAvoidanceRetryCount = 0;
 
         if (hadAvoidance && logRestore && logAvoidance && !string.IsNullOrWhiteSpace(reason))
         {
             Debug.Log($"[AME] {props?.AgentID ?? name} {reason}");
         }
+    }
+
+    /// <summary>
+    /// 获取本次避障探测要使用的层掩码。
+    /// </summary>
+    private int GetAvoidanceLayerMask(bool includeAgents)
+    {
+        int mask = obstacleLayers.value;
+        if (includeAgents)
+        {
+            mask |= agentAvoidanceLayers.value;
+        }
+        return mask;
+    }
+
+    /// <summary>
+    /// SphereCastAll 过滤自身碰撞体，避免把自己当成障碍。
+    /// </summary>
+    private bool TrySphereCastNonSelf(
+        Vector3 origin,
+        float radius,
+        Vector3 direction,
+        out RaycastHit closestHit,
+        float maxDistance,
+        int layerMask)
+    {
+        closestHit = default;
+        if (layerMask == 0 || direction.sqrMagnitude < 0.001f || maxDistance <= 0.01f)
+        {
+            return false;
+        }
+
+        RaycastHit[] hits = Physics.SphereCastAll(
+            origin,
+            radius,
+            direction.normalized,
+            maxDistance,
+            layerMask,
+            QueryTriggerInteraction.Ignore);
+        if (hits == null || hits.Length == 0)
+        {
+            return false;
+        }
+
+        bool found = false;
+        float closestDistance = float.MaxValue;
+        for (int i = 0; i < hits.Length; i++)
+        {
+            RaycastHit candidate = hits[i];
+            if (candidate.collider == null || IsSelfCollider(candidate.collider))
+            {
+                continue;
+            }
+
+            if (candidate.distance < closestDistance)
+            {
+                closestDistance = candidate.distance;
+                closestHit = candidate;
+                found = true;
+            }
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// 判断碰撞体是否属于当前 agent 自身。
+    /// </summary>
+    private bool IsSelfCollider(Collider candidate)
+    {
+        return candidate != null &&
+               (candidate.transform == transform || candidate.transform.IsChildOf(transform));
+    }
+
+    /// <summary>
+    /// 在更宽的角度扇区里挑选一条最有希望脱困的方向，解决多障碍夹角卡死。
+    /// </summary>
+    private bool TryFindBestBypassDirection(Vector3 moveDir, int layerMask, out Vector3 bestDir, out float bestClearance, out float bestScore, out Collider bestCollider)
+    {
+        bestDir = moveDir;
+        bestClearance = 0f;
+        bestScore = float.MinValue;
+        bestCollider = null;
+
+        Vector3 probeOrigin = GetObstacleProbeOrigin();
+        float sideBias = GetStableSideBiasSign();
+
+        for (int i = 0; i < FanProbeAngles.Length; i++)
+        {
+            float angle = FanProbeAngles[i];
+            Vector3 candidateDir = Quaternion.Euler(0f, angle, 0f) * moveDir;
+            float clearance = MeasureDirectionClearance(probeOrigin, candidateDir, obstacleForwardCheckDistance, layerMask, out RaycastHit hit);
+            float score = EvaluateDirectionScore(candidateDir, moveDir, clearance, sideBias);
+
+            if (clearance >= obstacleProbeRadius * 1.5f && score > bestScore)
+            {
+                bestScore = score;
+                bestClearance = clearance;
+                bestDir = candidateDir.normalized;
+                bestCollider = hit.collider;
+            }
+        }
+
+        return bestClearance > obstacleProbeRadius * 1.5f;
+    }
+
+    /// <summary>
+    /// 用统一评分函数评估候选方向，优先选择更通畅、贴近目标、且与当前绕行侧一致的方向。
+    /// </summary>
+    private float EvaluateDirectionScore(Vector3 candidateDir, Vector3 moveDir, float clearance, float sideBias)
+    {
+        Vector3 right = Vector3.Cross(Vector3.up, moveDir).normalized;
+        float currentHeadingBonus = activeAvoidanceSide == "right" ? 1f : activeAvoidanceSide == "left" ? -1f : 0f;
+        float alignment = Mathf.Clamp(Vector3.Dot(candidateDir, moveDir), -1f, 1f);
+        float sideScore = Mathf.Sign(Vector3.Dot(candidateDir, right)) * sideBias * 0.35f;
+        float persistenceScore = Mathf.Sign(Vector3.Dot(candidateDir, right)) * currentHeadingBonus * 0.45f;
+        float perceptionScore = EvaluatePerceptionRayScore(candidateDir);
+        float clearanceScore = clearance * 1.15f;
+        float alignmentScore = alignment * obstacleForwardCheckDistance * 0.55f;
+        return clearanceScore + alignmentScore + sideScore + persistenceScore + perceptionScore;
+    }
+
+    /// <summary>
+    /// 评估某个方向上的实际可通行距离。
+    /// </summary>
+    private float MeasureDirectionClearance(Vector3 origin, Vector3 direction, float maxDistance, int layerMask, out RaycastHit hit)
+    {
+        if (TrySphereCastNonSelf(origin, obstacleProbeRadius, direction, out hit, maxDistance, layerMask))
+        {
+            return hit.distance;
+        }
+
+        hit = default;
+        return maxDistance;
+    }
+
+    /// <summary>
+    /// 生成一个短时强制脱困点，避免在狭窄区域原地摇摆。
+    /// </summary>
+    private bool TryActivateForcedEscapeTarget(Vector3 desiredTarget)
+    {
+        Vector3 currentPos = transform.position;
+        Vector3 moveDir = desiredTarget - currentPos;
+        moveDir.y = 0f;
+        if (moveDir.sqrMagnitude < 0.001f)
+        {
+            return false;
+        }
+
+        int layerMask = GetAvoidanceLayerMask(includeAgents: true);
+        if (!TryFindBestBypassDirection(moveDir.normalized, layerMask, out Vector3 bestDir, out _, out _, out _))
+        {
+            Vector3 right = Vector3.Cross(Vector3.up, moveDir.normalized).normalized;
+            bestDir = Quaternion.Euler(0f, GetStableSideBiasSign() > 0f ? 110f : -110f, 0f) * moveDir.normalized;
+            bestDir += right * GetStableSideBiasSign() * 0.25f;
+            bestDir.Normalize();
+        }
+
+        forcedEscapeTarget = currentPos + bestDir * stuckEscapeDistance;
+        forcedEscapeTarget.y = aerialMotion != null ? aerialMotion.TargetHeight : transform.position.y;
+        forcedEscapeUntil = Time.time + stuckEscapeDuration;
+        return true;
+    }
+
+    /// <summary>
+    /// 对向会车时给每个 agent 一个稳定的侧向偏好，避免双方同时左右来回抖动。
+    /// </summary>
+    private float ResolveCrowdSideSign(IntelligentAgent otherAgent, Vector3 right)
+    {
+        string selfId = props?.AgentID ?? name;
+        string otherId = otherAgent?.Properties?.AgentID ?? otherAgent?.name ?? string.Empty;
+        int compare = string.CompareOrdinal(selfId, otherId);
+        if (compare == 0)
+        {
+            return GetStableSideBiasSign();
+        }
+
+        return compare < 0 ? 1f : -1f;
+    }
+
+    /// <summary>
+    /// 给当前 agent 一个稳定左右偏好，用于多障碍和会车时破坏对称。
+    /// </summary>
+    private float GetStableSideBiasSign()
+    {
+        if (activeAvoidanceSide == "left")
+        {
+            return -1f;
+        }
+
+        if (activeAvoidanceSide == "right")
+        {
+            return 1f;
+        }
+
+        string selfId = props?.AgentID ?? name;
+        return Mathf.Abs(selfId.GetHashCode()) % 2 == 0 ? 1f : -1f;
+    }
+
+    /// <summary>
+    /// 选择构建绕行点时的前进参考方向。
+    /// </summary>
+    private Vector3 ResolvePreferredBypassHeading(RealtimeAvoidanceResult realtimeResult, Vector3 fallbackMoveDir)
+    {
+        return realtimeResult.bypassDirection.sqrMagnitude > 0.001f
+            ? realtimeResult.bypassDirection.normalized
+            : fallbackMoveDir;
+    }
+
+    /// <summary>
+    /// 利用感知模块最近一轮扇扫射线，对候选方向做额外评分。
+    /// 命中近障碍的方向降分，连续长距离畅通的方向加分。
+    /// </summary>
+    private float EvaluatePerceptionRayScore(Vector3 candidateDir)
+    {
+        if (perceptionModule == null || perceptionModule.LatestNavigationRays == null || perceptionModule.LatestNavigationRays.Count == 0)
+        {
+            return 0f;
+        }
+
+        Vector3 planarCandidate = Vector3.ProjectOnPlane(candidateDir, Vector3.up);
+        if (planarCandidate.sqrMagnitude < 0.001f)
+        {
+            return 0f;
+        }
+
+        planarCandidate.Normalize();
+        float score = 0f;
+        int matchedRays = 0;
+
+        for (int i = 0; i < perceptionModule.LatestNavigationRays.Count; i++)
+        {
+            PerceptionModule.NavigationRaySnapshot ray = perceptionModule.LatestNavigationRays[i];
+            Vector3 planarRay = Vector3.ProjectOnPlane(ray.direction, Vector3.up);
+            if (planarRay.sqrMagnitude < 0.001f)
+            {
+                continue;
+            }
+
+            planarRay.Normalize();
+            float alignment = Vector3.Dot(planarCandidate, planarRay);
+            if (alignment < 0.82f)
+            {
+                continue;
+            }
+
+            matchedRays++;
+            float alignmentWeight = Mathf.InverseLerp(0.82f, 1f, alignment);
+            if (ray.hit)
+            {
+                float penalty = Mathf.Clamp01(1f - ray.distance / Mathf.Max(0.01f, obstacleForwardCheckDistance * 1.25f));
+                score -= penalty * alignmentWeight * 3.2f;
+            }
+            else
+            {
+                score += alignmentWeight * 0.65f;
+            }
+        }
+
+        if (matchedRays == 0)
+        {
+            return 0f;
+        }
+
+        return score;
     }
 
     private void AbortCurrentExecutionState()

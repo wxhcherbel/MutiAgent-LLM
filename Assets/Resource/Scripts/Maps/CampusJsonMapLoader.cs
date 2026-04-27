@@ -115,6 +115,9 @@ public class CampusJsonMapLoader : MonoBehaviour
     private Transform rootParking;
     private Transform rootGreen;
     private Transform rootForest;
+    private int buildingLayer = -1;
+    private int obstacleLayer = -1;
+    private int groundLayer = -1;
 
     // 颜色材质缓存（避免每个对象都 new 材质）
     private readonly Dictionary<Color, Material> tintMatCache = new Dictionary<Color, Material>();
@@ -159,6 +162,7 @@ public class CampusJsonMapLoader : MonoBehaviour
         ApplyHorizontalScaleToFeatures(features, ref allBounds, horizontalMapScale);
 
         EnsureFolders();
+        CacheCommonLayers();
 
         // 地面尺寸
         float gw = groundWidthM;
@@ -372,6 +376,10 @@ public class CampusJsonMapLoader : MonoBehaviour
         if (rootParking == null)    rootParking = Make("Map/Parking");
         if (rootGreen == null)      rootGreen = Make("Map/Green");
         if (rootForest == null)     rootForest = Make("Map/Forest");
+
+        CacheCommonLayers();
+        ApplySemanticLayer(rootGround != null ? rootGround.gameObject : null, groundLayer);
+        ApplySemanticLayer(rootBuilding != null ? rootBuilding.gameObject : null, buildingLayer);
     }
 
     // =========================
@@ -773,6 +781,7 @@ public class CampusJsonMapLoader : MonoBehaviour
         var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
         go.name = "ground";
         go.transform.SetParent(rootGround, false);
+        ApplySemanticLayer(go, groundLayer);
 
         // Unity 地面一般用 XZ 平面，所以：宽->X，长->Z，厚->Y
         go.transform.position = new Vector3(transform.position.x, groundZ - groundThicknessM * 0.5f, transform.position.z);
@@ -1374,6 +1383,10 @@ public class CampusJsonMapLoader : MonoBehaviour
             var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
             go.name = nm;
             go.transform.SetParent(parent, false);
+            if (area.kind == CampusFeatureKind.Building)
+            {
+                ApplySemanticLayer(go, buildingLayer);
+            }
 
             Rect b = area.boundsValid ? area.bounds : new Rect(transform.position.x - 1, transform.position.z - 1, 2, 2);
             Vector3 center = new Vector3(b.center.x, yCenter, b.center.y);
@@ -1486,6 +1499,10 @@ public class CampusJsonMapLoader : MonoBehaviour
             go.transform.position = Vector3.zero;
             go.transform.rotation = Quaternion.identity;
             go.transform.localScale = Vector3.one;
+            if (area.kind == CampusFeatureKind.Building)
+            {
+                ApplySemanticLayer(go, buildingLayer);
+            }
 
             var mf = go.AddComponent<MeshFilter>();
             var mr = go.AddComponent<MeshRenderer>();
@@ -1600,6 +1617,52 @@ public class CampusJsonMapLoader : MonoBehaviour
         }
 
         return go;
+    }
+
+    /// <summary>
+    /// 缓存地图生成常用层。
+    /// Building 不存在时回退到 Obstacle，再回退到 Default。
+    /// </summary>
+    private void CacheCommonLayers()
+    {
+        buildingLayer = ResolveLayerWithFallback("Building", "Obstacle", 0);
+        obstacleLayer = ResolveLayerWithFallback("Obstacle", "Default", 0);
+        groundLayer = ResolveLayerWithFallback("Ground", "Default", 0);
+    }
+
+    /// <summary>
+    /// 给生成对象设置语义层，便于导航、感知和调试。
+    /// </summary>
+    private void ApplySemanticLayer(GameObject target, int layer)
+    {
+        if (target == null || layer < 0)
+        {
+            return;
+        }
+
+        target.layer = layer;
+    }
+
+    /// <summary>
+    /// 优先取 primary 层；找不到时回退到 secondary，再不行使用 fallbackLayer。
+    /// </summary>
+    private int ResolveLayerWithFallback(string primary, string secondary, int fallbackLayer)
+    {
+        int primaryLayer = LayerMask.NameToLayer(primary);
+        if (primaryLayer >= 0)
+        {
+            return primaryLayer;
+        }
+
+        int secondaryLayer = LayerMask.NameToLayer(secondary);
+        if (secondaryLayer >= 0)
+        {
+            Debug.LogWarning($"[CampusImport] 未找到层 '{primary}'，已回退到 '{secondary}'。");
+            return secondaryLayer;
+        }
+
+        Debug.LogWarning($"[CampusImport] 未找到层 '{primary}' / '{secondary}'，已回退到 layer={fallbackLayer}。");
+        return fallbackLayer;
     }
 
     // =========================

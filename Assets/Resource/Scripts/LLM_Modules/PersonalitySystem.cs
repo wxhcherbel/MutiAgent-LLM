@@ -237,7 +237,7 @@ public class PersonalitySystem : MonoBehaviour
     ///   协作偏好>0.6 → "优先与队友协调，主动广播状态"（由衍生字段判断）
     ///
     /// 期望效果：LLM 在生成 nextActions 时会考虑这些风格描述，
-    ///   例如高神经质的 agent 会优先选择 Observe 而不是直接 MoveTo 未知区域。
+    ///   例如高神经质的 agent 会优先选择 Wait/Patrol 而不是直接 MoveTo 未知区域。
     /// </summary>
     /// <returns>
     ///   行动风格描述字符串（多条用换行分隔），或空字符串。

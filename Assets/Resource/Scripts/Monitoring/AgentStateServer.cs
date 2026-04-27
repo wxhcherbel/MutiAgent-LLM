@@ -219,6 +219,7 @@ public partial class AgentStateServer : MonoBehaviour
                 currentActionIdx    = ctxSnap?.currentActionIdx ?? 0,
                 isRollingMode       = ctxSnap?.isRollingMode ?? false,
                 isAdversarial       = ps?.IsAdversarial ?? false,
+                detectedObjects     = BuildDetectedObjectSnapshots(pm, a.transform.position),
             };
             snapshots.Add(snap);
         }
@@ -301,6 +302,33 @@ public partial class AgentStateServer : MonoBehaviour
             messagesJson = msgJson;
             historyJson  = hj;
         }
+    }
+
+    /// <summary>
+    /// 将 PerceptionModule.detectedObjects 转换为仪表板快照数组。
+    /// </summary>
+    private static DetectedObjectSnapshot[] BuildDetectedObjectSnapshots(
+        PerceptionModule pm, Vector3 agentPos)
+    {
+        if (pm == null || pm.detectedObjects == null || pm.detectedObjects.Count == 0)
+            return Array.Empty<DetectedObjectSnapshot>();
+
+        var list = pm.detectedObjects;
+        var result = new DetectedObjectSnapshot[list.Count];
+        for (int i = 0; i < list.Count; i++)
+        {
+            var node = list[i];
+            float dist = Vector3.Distance(node.WorldPosition, agentPos);
+            result[i] = new DetectedObjectSnapshot
+            {
+                nodeId   = node.NodeId,
+                nodeType = node.NodeType.ToString(),
+                position = new float[] { node.WorldPosition.x, node.WorldPosition.y, node.WorldPosition.z },
+                isDynamic = node.IsDynamic,
+                distance  = Mathf.Round(dist * 10f) / 10f
+            };
+        }
+        return result;
     }
 
     // ─────────────────────────────────────────────────────────
