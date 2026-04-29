@@ -13,6 +13,10 @@ public enum AtomicActionType
     Takeoff,
     /// <summary>targetName=区域名（空=执行层自动选区），duration=覆盖时长(秒)</summary>
     Patrol,
+    /// <summary>逼近目标agent至极近距离进行物理干扰，targetAgentId=目标ID，duration=持续时间(秒)</summary>
+    Approach,
+    /// <summary>远离威胁agent，targetAgentId=威胁ID，duration=逃离持续时间(秒)</summary>
+    Flee,
 }
 
 /// <summary>

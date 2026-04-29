@@ -667,7 +667,9 @@ public class ActionDecisionModule : MonoBehaviour
             "• Land：降落至地面，targetName=降落区域（可选）\n" +
             "• Takeoff：从地面起飞至悬停高度\n" +
             "• Patrol：对区域做 Frontier-based 系统覆盖（始终前往最近未访问格，非随机游走）。\n" +
-            "  targetName=目标名（空=由执行层按空闲度自动选区），duration=覆盖秒数\n\n" +
+            "  targetName=目标名（空=由执行层按空闲度自动选区），duration=覆盖秒数\n" +
+            "• Approach：逼近目标agent至极近距离进行物理干扰（破坏性agent专用），targetAgentId=目标agent ID，duration=持续时间(秒)\n" +
+            "• Flee：远离威胁agent（防御/规避用），targetAgentId=威胁agent ID，duration=逃离持续时间(秒)\n\n" +
 
             "## 步骤完成判断（重要）\n" +
             "综合以下证据判断步骤目标是否真正达成（而非只是执行了某个动作）：\n" +

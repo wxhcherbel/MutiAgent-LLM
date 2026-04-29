@@ -292,23 +292,17 @@ public class PerceptionVisualizer : MonoBehaviour, IPerceptionVisualizer
             return;
         }
 
-        // 前方：畅通=绿，碰撞=红
-        Color fwdColor = probe.hitForward ? AvoidHitFwd : AvoidClear;
-        SetLineLR(lrAvoidFwd, probe.origin,
-            probe.origin + probe.forwardDir * probe.forwardDist,
-            fwdColor, avoidanceFwdWidth, avoidanceFwdWidth * 0.25f);
+        // 显示转向速度向量：绿=安全，红=高危，黄=网格约束
+        Color velColor = probe.gridConstrained ? AvoidSideHit
+                       : probe.maxDanger > 0.5f ? AvoidHitFwd
+                       : AvoidClear;
+        Vector3 velEnd = probe.origin + probe.resultVelocity;
+        SetLineLR(lrAvoidFwd, probe.origin, velEnd,
+            velColor, avoidanceFwdWidth, avoidanceFwdWidth * 0.25f);
 
-        // 左侧：畅通=青，碰撞=橙
-        Color leftColor = probe.hitLeft ? AvoidSideHit : AvoidSideClear;
-        SetLineLR(lrAvoidLeft, probe.origin,
-            probe.origin + probe.leftDir * probe.leftDist,
-            leftColor, avoidanceSideWidth, avoidanceSideWidth * 0.33f);
-
-        // 右侧：畅通=青，碰撞=橙
-        Color rightColor = probe.hitRight ? AvoidSideHit : AvoidSideClear;
-        SetLineLR(lrAvoidRight, probe.origin,
-            probe.origin + probe.rightDir * probe.rightDist,
-            rightColor, avoidanceSideWidth, avoidanceSideWidth * 0.33f);
+        // 左右射线在新系统中不再使用，隐藏
+        if (lrAvoidLeft  != null) lrAvoidLeft.enabled  = false;
+        if (lrAvoidRight != null) lrAvoidRight.enabled = false;
     }
 
     // ─── 辅助 ────────────────────────────────────────────────────────────

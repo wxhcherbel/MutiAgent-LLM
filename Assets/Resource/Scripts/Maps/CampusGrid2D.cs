@@ -218,6 +218,51 @@ public class CampusGrid2D : MonoBehaviour
         return IsInBounds(x, z) && !blockedGrid[x, z];
     }
 
+    /// <summary>
+    /// 返回世界坐标点到最近 Building blocked cell 边缘的距离（米）。
+    /// 若搜索范围内无 Building，返回 float.MaxValue。
+    /// </summary>
+    public float GetBuildingDistance(Vector3 worldPos, int searchRadius = 4)
+    {
+        if (blockedGrid == null || cellTypeGrid == null) return float.MaxValue;
+
+        Vector2Int center = WorldToGrid(worldPos);
+        if (!IsInBounds(center.x, center.y)) return 0f;
+
+        float posX = worldPos.x;
+        float posZ = worldPos.z;
+        float minDistSq = float.MaxValue;
+
+        int xMin = Mathf.Max(0, center.x - searchRadius);
+        int xMax = Mathf.Min(gridWidth - 1, center.x + searchRadius);
+        int zMin = Mathf.Max(0, center.y - searchRadius);
+        int zMax = Mathf.Min(gridLength - 1, center.y + searchRadius);
+
+        for (int nx = xMin; nx <= xMax; nx++)
+        {
+            for (int nz = zMin; nz <= zMax; nz++)
+            {
+                if (!blockedGrid[nx, nz]) continue;
+                if (cellTypeGrid[nx, nz] != CampusGridCellType.Building) continue;
+
+                // cell rect 边缘上离查询点最近的点
+                float cellXMin = mapBoundsXY.xMin + nx * cellSize;
+                float cellXMax = cellXMin + cellSize;
+                float cellZMin = mapBoundsXY.yMin + nz * cellSize;
+                float cellZMax = cellZMin + cellSize;
+
+                float cx = Mathf.Clamp(posX, cellXMin, cellXMax);
+                float cz = Mathf.Clamp(posZ, cellZMin, cellZMax);
+                float dx = posX - cx;
+                float dz = posZ - cz;
+                float dSq = dx * dx + dz * dz;
+                if (dSq < minDistSq) minDistSq = dSq;
+            }
+        }
+
+        return minDistSq < float.MaxValue ? Mathf.Sqrt(minDistSq) : float.MaxValue;
+    }
+
     public CampusGridCellType GetCellType(int x, int z)
     {
         if (!IsInBounds(x, z)) return CampusGridCellType.Other;

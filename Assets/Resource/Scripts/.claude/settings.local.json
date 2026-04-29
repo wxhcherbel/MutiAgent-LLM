@@ -33,7 +33,8 @@
       "Bash(rm -f Data/IncidentContracts.cs)",
       "Bash(wc -l MAD_Module/*.cs)",
       "Bash(xargs ls:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(python convert_geojson.py)"
     ]
   }
 }

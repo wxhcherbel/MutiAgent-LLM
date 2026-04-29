@@ -82,7 +82,8 @@ public class PerceptionModule : MonoBehaviour
     private IntelligentAgent ownerAgent;
     private ActionDecisionModule actionDecisionModule;
     private AgentType ownerAgentType;
-    private MemoryModule _memoryModule;
+    private MemoryModule _memoryModuleCached;
+    private MemoryModule _memoryModule => _memoryModuleCached != null ? _memoryModuleCached : (_memoryModuleCached = GetComponent<MemoryModule>());
     private PlanningModule _planningModule;
     private PersonalitySystem _personalitySystem;
     private AutonomousDriveModule _autonomousDriveModule;
@@ -220,7 +221,6 @@ public class PerceptionModule : MonoBehaviour
 
         ownerAgentType = ownerAgent.Properties.Type;
         actionDecisionModule     = GetComponent<ActionDecisionModule>();
-        _memoryModule            = GetComponent<MemoryModule>();
         _planningModule          = GetComponent<PlanningModule>();
         _personalitySystem       = GetComponent<PersonalitySystem>();
         _autonomousDriveModule   = GetComponent<AutonomousDriveModule>();
@@ -441,6 +441,7 @@ public class PerceptionModule : MonoBehaviour
         SmallNodeData nodeData = CreateSmallNodeData(hitObject, recordedType, worldPosition);
         if (nodeData == null)
         {
+            Debug.LogWarning($"[PerceptionModule] CreateSmallNodeData 返回 null，物体: {hitObject.name} (type={detectedType})");
             return;
         }
 
@@ -474,8 +475,11 @@ public class PerceptionModule : MonoBehaviour
             SmallNodeType.TemporaryObstacle => "临时障碍物",
             _                               => recordedType.ToString(),
         };
-        TryRecordObservation(nodeData.NodeId, typeLabel,
-            $"在当前区域发现{typeName} {nodeData.NodeId}");
+        string nodeLocName = actionDecisionModule != null
+            ? actionDecisionModule.ResolveCurrentLocationName() : "某区域";
+        // 用"类型@区域"做 dedup key，避免记录具体节点 ID 和坐标
+        TryRecordObservation($"{typeLabel}@{nodeLocName}", typeLabel,
+            $"{nodeLocName}附近有{typeName}");
 
         // 资源点额外通知 AutonomousDriveModule（感知触发协作评估）
         if (recordedType == SmallNodeType.ResourcePoint)
@@ -513,8 +517,10 @@ public class PerceptionModule : MonoBehaviour
         if (!isEnemy)
         {
             // 友方智能体也记录感知记忆
-            TryRecordObservation(otherAgent.Properties.AgentID, "friendly_agent",
-                $"在当前区域发现友方智能体 {otherAgent.Properties.AgentID}");
+            string friendlyLocName = actionDecisionModule != null
+                ? actionDecisionModule.ResolveCurrentLocationName() : "某区域";
+            TryRecordObservation($"friendly@{otherAgent.Properties.AgentID}", "friendly_agent",
+                $"{friendlyLocName}附近有友方智能体 {otherAgent.Properties.AgentID}");
             return;
         }
         if (enemyAgents.Contains(otherAgent))
@@ -537,8 +543,10 @@ public class PerceptionModule : MonoBehaviour
         Debug.Log($"[PerceptionModule] {ownerAgent?.Properties?.AgentID} 发现敌方: {otherAgent.Properties.AgentID}");
 
         // 写入感知记忆（区域级，去重 TTL 60s）
-        TryRecordObservation(otherAgent.Properties.AgentID, "enemy",
-            $"在当前区域发现敌方智能体 {otherAgent.Properties.AgentID}");
+        string enemyLocName = actionDecisionModule != null
+            ? actionDecisionModule.ResolveCurrentLocationName() : "某区域";
+        TryRecordObservation($"enemy@{otherAgent.Properties.AgentID}", "enemy",
+            $"{enemyLocName}附近有敌方智能体 {otherAgent.Properties.AgentID}");
 
         // 通知 AutonomousDriveModule（感知触发协作评估）
         string locationName = actionDecisionModule != null
@@ -1074,7 +1082,16 @@ public class PerceptionModule : MonoBehaviour
     /// </summary>
     private void TryRecordObservation(string entityId, string observationType, string summary)
     {
-        if (_memoryModule == null || string.IsNullOrWhiteSpace(entityId)) return;
+        if (_memoryModule == null)
+        {
+            Debug.LogWarning($"[PerceptionModule] TryRecordObservation 跳过：_memoryModule 为 null (entityId={entityId})");
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(entityId))
+        {
+            Debug.LogWarning($"[PerceptionModule] TryRecordObservation 跳过：entityId 为空 (type={observationType})");
+            return;
+        }
 
         // TTL 去重：清理过期条目，检查是否需要写入
         float now = Time.time;
@@ -1090,10 +1107,6 @@ public class PerceptionModule : MonoBehaviour
             if (now - kv.Value >= ObservationRecordTtl) expired.Add(kv.Key);
         foreach (var k in expired) _recentlyRecordedEntityIds.Remove(k);
 
-        string locationName = actionDecisionModule != null
-            ? actionDecisionModule.ResolveCurrentLocationName()
-            : "未知区域";
-
         string missionId = _planningModule?.GetCurrentMissionId() ?? string.Empty;
         string slotId    = _planningModule?.GetCurrentSlotId()    ?? string.Empty;
 
@@ -1102,9 +1115,11 @@ public class PerceptionModule : MonoBehaviour
             slotId:     slotId,
             stepLabel:  observationType,
             summary:    summary,
-            detail:     $"{summary}（区域：{locationName}）",
-            targetRef:  locationName,
-            entityRefs: new[] { entityId });
+            detail:     summary,
+            targetRef:  entityId,
+            entityRefs: System.Array.Empty<string>());
+
+        Debug.Log($"[PerceptionModule] 写入观测记忆：{observationType} / {summary}");
     }
 }
 
