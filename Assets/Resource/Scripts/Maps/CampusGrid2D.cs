@@ -400,6 +400,19 @@ public class CampusGrid2D : MonoBehaviour
             return true;
         }
 
+        // 诊断日志：打印与查询最接近的已注册名称（帮助排查 LLM 输出与地图不匹配的问题）
+        if (featureUidsByName != null)
+        {
+            var similar = featureUidsByName.Keys
+                .Where(k => k.Contains(q) || q.Contains(k))
+                .Take(5)
+                .ToList();
+            string hint = similar.Count > 0
+                ? string.Join(", ", similar)
+                : "(无近似匹配)";
+            Debug.LogWarning($"[CampusGrid2D] 查找失败: \"{q}\" | 近似名称: {hint} | 已注册名称总数: {featureUidsByName.Count}");
+        }
+
         return false;
     }
 
@@ -2342,6 +2355,12 @@ public class CampusGrid2D : MonoBehaviour
                 pathClearanceBlockedGrid[x, z] = IsWithinBuildingClearance(x, z, searchRadius);
             }
         }
+
+        // 将缓冲区合并到 blockedGrid，使 IsWalkable 自动包含建筑安全距离
+        for (int x = 0; x < gridWidth; x++)
+            for (int z = 0; z < gridLength; z++)
+                if (pathClearanceBlockedGrid[x, z])
+                    blockedGrid[x, z] = true;
     }
 
     /// <summary>
@@ -2378,9 +2397,17 @@ public class CampusGrid2D : MonoBehaviour
 
     private bool IsPathWalkable(int x, int z, HashSet<long> transientBlockedKeys)
     {
-        if (!IsWalkable(x, z)) return false;
-        if (pathClearanceBlockedGrid != null && IsInBounds(x, z) && pathClearanceBlockedGrid[x, z]) return false;
+        if (!IsWalkable(x, z)) return false;   // blockedGrid 已含建筑缓冲区
         return transientBlockedKeys == null || !transientBlockedKeys.Contains(PackCellKey(x, z));
+    }
+
+    /// <summary>
+    /// 公共接口：检查格子是否可安全通行（含建筑安全缓冲区检查）。
+    /// 避障、方向验证等模块应使用此方法而非 IsWalkable，以保持与 A* 寻路一致。
+    /// </summary>
+    public bool IsPathSafe(int x, int z)
+    {
+        return IsWalkable(x, z);   // 缓冲区已包含在 blockedGrid 中
     }
 
     private bool CanTraverseDiagonal(Vector2Int from, Vector2Int to, HashSet<long> transientBlockedKeys = null)

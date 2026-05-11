@@ -135,7 +135,6 @@ public static class MADPrompt
             "        \"stepId\": \"s_mad_1\",\n" +
             "        \"text\": \"前往充电站\",\n" +
             "        \"targetName\": \"充电站\",\n" +
-            "        \"doneCond\": \"充电完成\",\n" +
             "        \"constraintIds\": []\n" +
             "      }\n" +
             "    ],\n" +

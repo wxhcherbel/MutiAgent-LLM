@@ -45,13 +45,7 @@ public class RollingPlanResult
     [JsonConverter(typeof(ThoughtJsonConverter))]
     public string thought;
 
-    /// <summary>LLM 判断当前步骤是否已完成。</summary>
-    public bool isDone;
-
-    /// <summary>完成或未完成的原因说明。</summary>
-    public string doneReason;
-
-    /// <summary>下一批待执行原子动作（isDone=true 时可为空数组，最多3个）。</summary>
+    /// <summary>下一批待执行原子动作（步骤目标已达成时填空数组，最多3个）。</summary>
     public AtomicAction[] nextActions;
 }
 

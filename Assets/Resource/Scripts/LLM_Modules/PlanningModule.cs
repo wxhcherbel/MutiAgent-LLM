@@ -52,6 +52,7 @@ public class PlanningModule : MonoBehaviour
     private float waitStart;
     private const float WaitSec = 25f;
 
+
     // ─── 外部依赖 ─────────────────────────────────────────────
     private LLMInterface llm;
     private CommunicationModule comm;
@@ -294,7 +295,7 @@ public class PlanningModule : MonoBehaviour
             "    若某目标由运行时动态决定（C3-1 约束涉及的目标）,不要在 desc 中提及或命名该中间目标,\n" +
             "    反例（禁止）:「飞往检查点A,再前往艺术中心」（任务未命名「检查点A」）\n" +
             "    正例（允许）:「飞往艺术中心,到达后参与巡逻」\n" +
-            "5. doneCond 没有时填 \" \";constraintIds 没有就填 []。\n\n" +
+            "5. constraintIds 没有就填 []。\n\n" +
             "【Constraints 回写规则】\n" +
             "6. 必须保留输入中的每一条 constraintId,不新增,不删除。\n" +
             "7. C1:把对应 constraintId 绑定到负责该资源/区域的槽位。\n" +
@@ -327,8 +328,8 @@ public class PlanningModule : MonoBehaviour
             "{\n" +
             "  \"thought\": {\"reasoning\":\"C1约束指定A负责南区、B负责北区，设2个Scout槽分工明确；C3+1要求s0先行发信号，s1等待；C3-1互斥充电桩两槽都绑定\",\"confidence\":\"高\",\"confidence_reason\":\"约束与槽位一一对应无歧义\",\"suggestion\":\"存在单向前置依赖（C3+1）时，信号发出方与等待方应分设不同槽位，避免因角色合并导致循环等待\"},\n" +
             "  \"slots\": [\n" +
-            "    {\"slotId\":\"s0\",\"role\":\"Scout\",\"desc\":\"飞往南区执行搜索,需要时前往共享充电点补能\",\"doneCond\":\"南区搜索完成\",\"constraintIds\":[\"c1_area_a\",\"c2_sync_report\",\"c3_wait_cover\",\"c3_charge_mutex\"]},\n" +
-            "    {\"slotId\":\"s1\",\"role\":\"Scout\",\"desc\":\"飞往北区执行搜索,需要时前往共享充电点补能\",\"doneCond\":\"北区搜索完成\",\"constraintIds\":[\"c2_sync_report\",\"c3_wait_cover\",\"c3_charge_mutex\"]}\n" +
+            "    {\"slotId\":\"s0\",\"role\":\"Scout\",\"desc\":\"飞往南区执行搜索,需要时前往共享充电点补能\",\"constraintIds\":[\"c1_area_a\",\"c2_sync_report\",\"c3_wait_cover\",\"c3_charge_mutex\"]},\n" +
+            "    {\"slotId\":\"s1\",\"role\":\"Scout\",\"desc\":\"飞往北区执行搜索,需要时前往共享充电点补能\",\"constraintIds\":[\"c2_sync_report\",\"c3_wait_cover\",\"c3_charge_mutex\"]}\n" +
             "  ],\n" +
             "  \"constraints\": [\n" +
             "    {\"constraintId\":\"c1_area_a\",\"cType\":\"C1\",\"subject\":\"侦察机A\",\"targetObject\":\"南区\"},\n" +
@@ -519,7 +520,7 @@ public class PlanningModule : MonoBehaviour
             missionId: parsed.msnId,
             slotId: chosenSlot.slotId,
             role: chosenSlot.role,
-            doneCond: chosenSlot.doneCond,
+            desc: chosenSlot.desc,
             thought: pickResult?.thought);
 
         if (isLeader)
@@ -549,8 +550,8 @@ public class PlanningModule : MonoBehaviour
     /// </summary>
     public void InjectSoloMission(string goal, string[] steps)
     {
-        if (busy) { Debug.LogWarning($"[{props?.AgentID}][PlanningModule] busy，InjectSoloMission 忽略"); return; }
         if (steps == null || steps.Length == 0) { Debug.LogWarning($"[{props?.AgentID}][PlanningModule] InjectSoloMission steps 为空"); return; }
+        if (busy) { Debug.LogWarning($"[{props?.AgentID}][PlanningModule] busy，InjectSoloMission 忽略（等待下一轮评估）"); return; }
 
         busy = true;
         string msnId = GenMsnId();
@@ -566,10 +567,11 @@ public class PlanningModule : MonoBehaviour
                 stepId        = $"step_{i + 1}",
                 text          = s,
                 targetName    = ExtractSimpleTargetName(s),
-                doneCond      = string.Empty,
                 constraintIds = new string[0]
             }).ToArray(),
-            curIdx = 0
+            curIdx = 0,
+            createdTime      = Time.time,
+            maxValidDuration = 90f   // Solo 涌现有效期 90s（约 3 个评估周期）
         };
 
         parsed = new ParsedMission { msnId = msnId, relType = "Solo" };
@@ -581,6 +583,12 @@ public class PlanningModule : MonoBehaviour
 
     /// <summary>当前是否正在执行自主涌现的独立任务（供感知事件判断是否触发协作）。</summary>
     public bool IsRunningSolo => state == PlanningState.Active && parsed?.relType == "Solo";
+
+    /// <summary>当前正在执行的步骤索引（0-based），无活跃计划时返回 -1。</summary>
+    public int CurrentStepIndex => agentPlan != null ? agentPlan.curIdx : -1;
+
+    /// <summary>当前计划的总步骤数，无活跃计划时返回 0。</summary>
+    public int TotalStepCount => agentPlan?.steps?.Length ?? 0;
 
     /// <summary>
     /// 涌现协作任务注入：跳过 LLM1/2/3，使用已生成的 constraints 和 role，
@@ -608,8 +616,8 @@ public class PlanningModule : MonoBehaviour
         {
             slotId        = "s_emergent",
             role          = "Custom",
-            desc          = myRole,
-            doneCond      = string.Empty,
+            // StepGen 需要看到真实任务目标，而不是仅看到角色名。
+            desc          = goal,
             constraintIds = constraints?.Select(c => c.constraintId).ToArray() ?? new string[0]
         };
 
@@ -649,7 +657,7 @@ public class PlanningModule : MonoBehaviour
                 roleName    = confirmedSlot.role,
                 slotId      = confirmedSlot.slotId,
                 slotLabel   = confirmedSlot.role,
-                slotTarget  = confirmedSlot.doneCond,
+                slotTarget  = confirmedSlot.desc,
                 maxMemories = 4,
                 maxInsights = 2
             });
@@ -662,7 +670,6 @@ public class PlanningModule : MonoBehaviour
         "## 输入上下文\n" +
         $"计划(desc): {confirmedSlot.desc}\n" +
         $"当前AgentID: {props?.AgentID} | 角色: {confirmedSlot.role}\n" +
-        $"完成条件: {confirmedSlot.doneCond}\n" +
         $"无人机状态: [位置: {pos}, 电量: {battery:F0}%]\n" +
         $"待分配约束列表: {constraintsJson}\n\n" +
 
@@ -675,7 +682,6 @@ public class PlanningModule : MonoBehaviour
         "   - stepId: 格式为 \"step_1\", \"step_2\"...\n" +
         "   - text: 完整保留操作及其所有的前置/后置描述（例:\"从北门进入厂区东边并开启扫描\"）。\n" +
         "   - targetName: 提取最核心的【主体建筑/区域实体名】（如:控制中心、厂区）。当遇到包含方位或附属结构的复合描述（如\"厂区东边\"、\"大楼入口\"）时,必须向上追溯,仅提取其依附的【绝对主实体名】（即提取为\"厂区\"、\"大楼\"）。若无明确主体实体一律填 \"\"。\n" +
-        "   - doneCond: 描述该步完成时的预期状态。无则填 \"\"。\n" +
         "   - constraintIds: 填入分配到该步骤的约束ID数组,没有则填 []。\n\n" +
 
         "## 任务二:约束条件分配标准\n" +
@@ -688,35 +694,31 @@ public class PlanningModule : MonoBehaviour
         "3. C3类 (资源互斥 sign=-1):分配给多机共享同一路径或目标、容易产生空间冲突的【移动步骤】。\n" +
         "⚠️ 强制要求:【待分配约束列表】中的每一个 constraintId 都必须出现在某个步骤的 constraintIds 中，不得遗漏任何一个。\n\n" +
 
-        "## 输出要求\n" +
+        "## 输出格式示例，仅供参考\n" +
         "仅输出合法的 JSON 对象。thought 字段输出 JSON 对象，字段：split_reasoning（步骤拆分依据与地标提取，1-3句）、constraint_checks（数组，对每个输入 constraintId 逐条核查，每项含 constraintId/assigned_step/reason）、confidence（高/中/低）、confidence_reason（原因）、suggestion（可跨任务复用的抽象步骤拆分/地标提取原则，描述结构性条件而非当前任务细节；无新规律则填\"\"）。\n" +
-        "原始计划为：'等待安全信号后，从营地出发前往哨站附近拍照，然后穿过狭窄通道飞往能源站北侧，到达后等待全体小队汇合一起开启护盾'。\n" +
+        "下面示例只用于说明 JSON 结构，不可复用其中的任务内容、地标名、步骤文本、constraintId。\n" +
         "{\n" +
-        "  \"thought\": {\"split_reasoning\":\"原始计划含2个不同目的地，拆解为2步；step_1提取绝对地标'哨站'；step_2复合描述'能源站北侧'向上追溯提取主实体'能源站'\",\"constraint_checks\":[{\"constraintId\":\"c3_wait_signal\",\"assigned_step\":\"step_1\",\"reason\":\"C3+1等待前置信号，绑定需等待信号的前置步骤\"},{\"constraintId\":\"c3_channel_mutex\",\"assigned_step\":\"step_2\",\"reason\":\"C3-1互斥约束绑定狭窄通道移动步骤\"},{\"constraintId\":\"c2_sync_shield\",\"assigned_step\":\"step_2\",\"reason\":\"C2同步约束绑定需集体到位的到达步骤\"}],\"confidence\":\"高\",\"confidence_reason\":\"目的地和约束匹配关系清晰\",\"suggestion\":\"当步骤描述含方位修饰词时应向上追溯到主实体名以避免导航失配\"},\n" +
+        "  \"thought\": {\n" +
+        "    \"split_reasoning\": \"根据当前任务描述填写\",\n" +
+        "    \"constraint_checks\": [\n" +
+        "      {\"constraintId\": \"输入中的某个约束ID\", \"assigned_step\": \"step_1\", \"reason\": \"根据当前任务填写\"}\n" +
+        "    ],\n" +
+        "    \"confidence\": \"高/中/低\",\n" +
+        "    \"confidence_reason\": \"根据当前任务填写\",\n" +
+        "    \"suggestion\": \"\"\n" +
+        "  },\n" +
         "  \"steps\": [\n" +
         "    {\n" +
         "      \"stepId\": \"step_1\",\n" +
-        "      \"text\": \"等待安全信号后，从营地出发前往哨站附近拍照\",\n" +
-        "      \"targetName\": \"哨站\",\n" +
-        "      \"doneCond\": \"拍照完成\",\n" +
-        "      \"constraintIds\": [\"c3_wait_signal\"]\n" +
-        "    },\n" +
-        "    {\n" +
-        "      \"stepId\": \"step_2\",\n" +
-        "      \"text\": \"然后穿过狭窄通道飞往能源站北侧\",\n" +
-        "      \"targetName\": \"能源站\",\n" +
-        "      \"doneCond\": \"\",\n" +
-        "      \"constraintIds\": [\"c3_channel_mutex\", \"c2_sync_shield\"]\n" +
-        "    },\n" +
-        "    {\n" +
-        "      \"stepId\": \"step_3\",\n" +
-        "      \"text\": \"到达后等待全体小队汇合一起开启护盾\",\n" +
-        "      \"targetName\": \"\",\n" +
-        "      \"doneCond\": \"护盾开启\",\n" +
-        "      \"constraintIds\": [ ]\n" +
-        "    },\n" +
+        "      \"text\": \"根据当前任务填写\",\n" +
+        "      \"targetName\": \"根据当前任务填写\",\n" +
+        "      \"constraintIds\": [\"输入中的约束ID\"]\n" +
+        "    }\n" +
         "  ]\n" +
-        "}";
+        "}\n\n" +
+        "## 最终输出要求\n" +
+        $"现在请严格基于本次输入上下文生成结果。当前任务描述是：{confirmedSlot.desc}\n" +
+        "不要复用上方示例中的任务内容、地标名、步骤文本或 constraintId。只输出最终 JSON，不要附加说明。";
 
         string llmResult = null;
         yield return StartCoroutine(llm.SendRequest(
@@ -771,7 +773,9 @@ public class PlanningModule : MonoBehaviour
             desc    = confirmedSlot.desc,
             thought = stepThought,
             steps   = steps,
-            curIdx  = 0
+            curIdx  = 0,
+            createdTime      = Time.time,
+            maxValidDuration = confirmedSlot.slotId == "s_emergent" ? 120f : 0f  // 涌现协作 120s，正常任务无限制
         };
 
         if (memory != null && steps.Length > 0)
@@ -782,7 +786,7 @@ public class PlanningModule : MonoBehaviour
                 slotId:      confirmedSlot.slotId,
                 stepLabel:   confirmedSlot.role,
                 planSummary: $"[{confirmedSlot.role}] 计划步骤: {stepsSummary}",
-                targetRef:   confirmedSlot.doneCond,
+                targetRef:   confirmedSlot.desc,
                 thought:     stepThought,
                 tags:        new[] { confirmedSlot.role, parsed.msnId });
         }
@@ -806,182 +810,6 @@ public class PlanningModule : MonoBehaviour
     {
         yield return StartCoroutine(RunStepGeneration());
     }
-
-    // ── 以下为已废弃的原始 RunLLM4 实现（已提取到 RunStepGeneration，保留注释供参考）──
-    // ReSharper disable once UnusedMember.Local
-    private IEnumerator RunLLM4_Legacy_Unused()
-    {
-        Vector3 pos   = dynState != null ? dynState.Position : transform.position;
-        float battery = dynState != null ? dynState.BatteryLevel : 100f;
-
-        var slotConstraints = new List<StructuredConstraint>();
-        if (confirmedSlot.constraintIds != null)
-        {
-            foreach (var cid in confirmedSlot.constraintIds)
-            {
-                var c = GetConstraint(cid);
-                if (c != null) slotConstraints.Add(c);
-            }
-        }
-        string constraintsJson = JsonConvert.SerializeObject(slotConstraints);
-
-        string planningMemoryContext = string.Empty;
-        if (memory != null)
-        {
-            planningMemoryContext = memory.BuildPlanningContext(new PlanningMemoryContextRequest
-            {
-                missionText = parsed?.groupMsns != null && parsed.groupMsns.Length > 0 ? parsed.groupMsns[0] : string.Empty,
-                missionId = parsed?.msnId ?? string.Empty,
-                roleName = confirmedSlot.role,
-                slotId = confirmedSlot.slotId,
-                slotLabel = confirmedSlot.role,
-                slotTarget = confirmedSlot.doneCond,
-                maxMemories = 4,
-                maxInsights = 2
-            });
-        }
-
-        string prompt =
-        "你是无人机任务规划中枢。请在不改变计划原意的前提下,将整体任务拆分为具体的【执行步骤】,并精准挂载【约束条件】。\n\n" +
-        "## 历史经验与反思规则（来自记忆模块）\n" +
-        (string.IsNullOrWhiteSpace(planningMemoryContext) ? "（无历史经验，首次执行此类任务）" : planningMemoryContext) + "\n\n" +
-        "## 输入上下文\n" +
-        $"计划(desc): {confirmedSlot.desc}\n" +
-        $"当前AgentID: {props?.AgentID} | 角色: {confirmedSlot.role}\n" +
-        $"完成条件: {confirmedSlot.doneCond}\n" +
-        $"无人机状态: [位置: {pos}, 电量: {battery:F0}%]\n" +
-        $"待分配约束列表: {constraintsJson}\n\n" +
-
-        "## 任务一:步骤拆分与提取标准（正向定义）\n" +
-        "1. 什么是【完整的一步】:\n" +
-        "   - 一个步骤必须包含核心动作以及它的全部上下文描述（如路线、起点、执行方式）。动作及其上下文修饰语是一个不可分割的语义整体。\n" +
-        "   - 移动类任务:每一处不同目的地的移动单独为一步。若到达目的地后还需执行动作，且该动作依赖多机同步（存在C2约束），则C2约束挂载在移动步骤，到达后的动作必须拆为独立的下一步——C2协同构成同步边界，边界两侧的动作不可合并。例：'飞往能源站，到达后等全体汇合一起开启护盾'→ step_1:飞往能源站（挂C2）；step_2:开启护盾（无C2）。\n" +
-        "   - 原地任务:无人机停留在同一空间位置执行的所有连续动作，且不存在C2同步边界时，打包合并为一步。\n" +
-        "2. 字段填充规范:\n" +
-        "   - stepId: 格式为 \"step_1\", \"step_2\"...\n" +
-        "   - text: 完整保留操作及其所有的前置/后置描述（例:“从北门进入厂区东边并开启扫描”）。\n" +
-        "   - targetName: 提取最核心的【主体建筑/区域实体名】（如:控制中心、厂区）。当遇到包含方位或附属结构的复合描述（如“厂区东边”、“大楼入口”）时,必须向上追溯,仅提取其依附的【绝对主实体名】（即提取为“厂区”、“大楼”）。若无明确主体实体一律填 \"\"。\n" +
-        "   - doneCond: 描述该步完成时的预期状态。无则填 \"\"。\n" +
-        "   - constraintIds: 填入分配到该步骤的约束ID数组,没有则填 []。\n\n" +
-
-        "## 任务二:约束条件分配标准\n" +
-        "分析约束的核心业务目的,将其匹配给最契合的那一个步骤:\n" +
-        "1. C2类 (同步完成):分配给需要“集体到位”或“共同集结”的到达步骤,而不是到达后的步骤。\n" +
-        "2. C3类 (条件依赖 sign=+1) — 根据自身槽位判断角色：\n" +
-        "   - 若约束的 watchAgent 字段 == 当前槽位ID（" + confirmedSlot.slotId +
-        "）：本机是信号发出方，将该约束挂到发出就绪信号的步骤。\n" +
-        "   - 若约束的 watchAgent 字段 != 当前槽位ID（或为空）：本机是等待方，将该约束挂到需要等待信号后才能开始的前置步骤。\n" +
-        "3. C3类 (资源互斥 sign=-1):分配给多机共享同一路径或目标、容易产生空间冲突的【移动步骤】。\n" +
-        "⚠️ 强制要求:【待分配约束列表】中的每一个 constraintId 都必须出现在某个步骤的 constraintIds 中，不得遗漏任何一个。\n\n" +
-
-        "## 输出要求\n" +
-        "仅输出合法的 JSON 对象。thought 字段输出 JSON 对象，字段：split_reasoning（步骤拆分依据与地标提取，1-3句）、constraint_checks（数组，对每个输入 constraintId 逐条核查，每项含 constraintId/assigned_step/reason）、confidence（高/中/低）、confidence_reason（原因）、suggestion（可跨任务复用的抽象步骤拆分/地标提取原则，描述结构性条件而非当前任务细节；无新规律则填\"\"）。\n" +
-        "原始计划为：'等待安全信号后，从营地出发前往哨站附近拍照，然后穿过狭窄通道飞往能源站北侧，到达后等待全体小队汇合一起开启护盾'。\n" +
-        "{\n" +
-        "  \"thought\": {\"split_reasoning\":\"原始计划含2个不同目的地，拆解为2步；step_1提取绝对地标'哨站'；step_2复合描述'能源站北侧'向上追溯提取主实体'能源站'\",\"constraint_checks\":[{\"constraintId\":\"c3_wait_signal\",\"assigned_step\":\"step_1\",\"reason\":\"C3+1等待前置信号，绑定需等待信号的前置步骤\"},{\"constraintId\":\"c3_channel_mutex\",\"assigned_step\":\"step_2\",\"reason\":\"C3-1互斥约束绑定狭窄通道移动步骤\"},{\"constraintId\":\"c2_sync_shield\",\"assigned_step\":\"step_2\",\"reason\":\"C2同步约束绑定需集体到位的到达步骤\"}],\"confidence\":\"高\",\"confidence_reason\":\"目的地和约束匹配关系清晰\",\"suggestion\":\"当步骤描述含方位修饰词时应向上追溯到主实体名以避免导航失配\"},\n" +
-        "  \"steps\": [\n" +
-        "    {\n" +
-        "      \"stepId\": \"step_1\",\n" +
-        "      \"text\": \"等待安全信号后，从营地出发前往哨站附近拍照\",\n" +
-        "      \"targetName\": \"哨站\",\n" +
-        "      \"doneCond\": \"拍照完成\",\n" +
-        "      \"constraintIds\": [\"c3_wait_signal\"]\n" +
-        "    },\n" +
-        "    {\n" +
-        "      \"stepId\": \"step_2\",\n" +
-        "      \"text\": \"然后穿过狭窄通道飞往能源站北侧\",\n" +
-        "      \"targetName\": \"能源站\",\n" +
-        "      \"doneCond\": \"\",\n" +
-        "      \"constraintIds\": [\"c3_channel_mutex\", \"c2_sync_shield\"]\n" +
-        "    },\n" +
-        "    {\n" +
-        "      \"stepId\": \"step_3\",\n" +
-        "      \"text\": \"到达后等待全体小队汇合一起开启护盾\",\n" +
-        "      \"targetName\": \"\",\n" + 
-        "      \"doneCond\": \"护盾开启\",\n" +
-        "      \"constraintIds\": [ ]\n" +
-        "    },\n" +
-        "  ]\n" +
-        "}";
-
-        string llmResult = null;
-        yield return StartCoroutine(llm.SendRequest(
-            new LLMRequestOptions { prompt = prompt, maxTokens = 800, enableJsonMode = true, callTag = "LLM#4_StepGen", agentId = props?.AgentID },
-            r => llmResult = r));
-
-        if (string.IsNullOrWhiteSpace(llmResult))
-        {
-            Debug.LogError("[PlanningModule] LLM#4 返回空");
-            busy = false; // BUG-03 修复:失败路径必须重置 busy
-            SetState(PlanningState.Failed);
-            yield break;
-        }
-        Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] LLM#4 原始回复: {llmResult}");
-        PlanStep[] steps = null;
-        string stepThought = string.Empty;
-        try
-        {
-            string parsedJson = ExtractJson(llmResult);
-            if (!string.IsNullOrWhiteSpace(parsedJson) && parsedJson.TrimStart().StartsWith("{"))
-            {
-                LLM4StepGenResult result = JsonConvert.DeserializeObject<LLM4StepGenResult>(parsedJson);
-                stepThought = result?.thought ?? string.Empty;
-                steps = result?.steps;
-            }
-            else
-            {
-                // 兼容旧格式:LLM 直接返回步骤数组
-                steps = JsonConvert.DeserializeObject<PlanStep[]>(parsedJson);
-            }
-
-            if (!string.IsNullOrWhiteSpace(stepThought))
-                Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] LLM#4 Thought: {stepThought}");
-
-            if (steps == null)
-                throw new Exception("LLM#4 steps 解析结果为 null");
-
-            Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] LLM#4 生成步骤: {string.Join(", ", steps.Select(s => s.stepId + ":" + s.text))}");
-        }
-        catch (Exception e)
-        {
-            Debug.LogError($"{props?.AgentID ?? "Unknown"}: [PlanningModule] LLM#4 JSON解析失败: {e.Message}");
-            busy = false; // BUG-03 修复
-            SetState(PlanningState.Failed);
-            yield break;
-        }
-
-        agentPlan = new AgentPlan
-        {
-            msnId  = parsed.msnId,
-            slotId = confirmedSlot.slotId,
-            role   = confirmedSlot.role,
-            desc   = confirmedSlot.desc,
-            thought = stepThought,
-            steps  = steps,
-            curIdx = 0
-        };
-
-        // 将 LLM#4 生成的计划快照写入记忆，供后续同类任务规划参考
-        // 记录角色、步骤概要、目标条件，而非全量 JSON（避免占用过多 token）
-        if (memory != null && steps.Length > 0)
-        {
-            string stepsSummary = string.Join(" → ", steps.Select(s => s.text));
-            memory.RememberPlanSnapshot(
-                missionId: parsed.msnId,
-                slotId: confirmedSlot.slotId,
-                stepLabel: confirmedSlot.role,
-                planSummary: $"[{confirmedSlot.role}] 计划步骤: {stepsSummary}",
-                targetRef: confirmedSlot.doneCond,
-                thought: stepThought,
-                tags: new[] { confirmedSlot.role, parsed.msnId });
-        }
-
-        Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] {props.AgentID} 计划就绪,共 {steps.Length} 步");
-        SetState(PlanningState.Active);
-        if (parsed != null && parsed.timeLimit > 0f)
-            StartCoroutine(TimeLimitCoroutine(parsed.timeLimit));
-    }
-
     // ─────────────────────────────────────────────────────────
     // 分组逻辑(协调者本地执行)
     // ─────────────────────────────────────────────────────────
@@ -1698,10 +1526,21 @@ public class PlanningModule : MonoBehaviour
         return merged;
     }
 
-    /// <summary>完成当前步骤:curIdx++,若超出数组长度则转 Done。</summary>
+    /// <summary>完成当前步骤:curIdx++,若超出数组长度则转 Done。推进前检查计划时效性。</summary>
     public void CompleteCurrentStep()
     {
         if (agentPlan == null || agentPlan.steps == null) return;
+
+        // 时效性检查：涌现计划过期后不再推进剩余步骤
+        if (agentPlan.IsExpired)
+        {
+            Debug.LogWarning($"[PlanningModule] {props?.AgentID} 涌现计划已过期" +
+                $"（已过 {Time.time - agentPlan.createdTime:F0}s，有效期 {agentPlan.maxValidDuration:F0}s），标记 Failed");
+            SetState(PlanningState.Failed);
+            busy = false;
+            return;
+        }
+
         agentPlan.curIdx++;
         if (agentPlan.curIdx >= agentPlan.steps.Length)
         {
@@ -1771,7 +1610,7 @@ public class PlanningModule : MonoBehaviour
     /// </summary>
     public void ResetForNewMission()
     {
-        Debug.Log($"[PlanningModule] {props?.AgentID} MAD 触发重置，准备执行新任务");
+        Debug.Log($"[PlanningModule] {props?.AgentID} 重置，准备执行新任务");
         SetState(PlanningState.Idle);
         busy      = false;
         agentPlan = null;

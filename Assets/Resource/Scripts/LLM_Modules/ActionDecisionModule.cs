@@ -41,7 +41,7 @@ public class ActionDecisionModule : MonoBehaviour
 
     // ─── nextActions 空重试计数 ───────────────────────────────────
     /// <summary>
-    /// LLM 返回 isDone=false 但 nextActions 为空时的连续重试次数。
+    /// LLM 返回 nextActions 为空但步骤未达成时的连续重试次数。
     /// 最多重试 2 次后设为 Failed，防止无限循环。每次步骤开始时归零。
     /// </summary>
     private int _emptyActionRetries = 0;
@@ -72,6 +72,7 @@ public class ActionDecisionModule : MonoBehaviour
     /// UpdateHistory 调用 RememberActionExecution() 记录每批次动作结果。
     /// </summary>
     private MemoryModule _memoryModule;
+    private PerceptionModule _perceptionModule;
 
     /// <summary>
     /// 反思模块（同 GameObject），在动作批次完成或失败后接收通知。
@@ -108,6 +109,8 @@ public class ActionDecisionModule : MonoBehaviour
         // 初始化记忆与反思模块（同 GameObject，失败时降级为无记忆模式）
         _memoryModule = GetComponent<MemoryModule>();
         _reflectionModule = GetComponent<ReflectionModule>();
+
+        _perceptionModule = GetComponent<PerceptionModule>();
 
         // 获取人格系统（挂在同一 agent GameObject 上，Inspector 中配置人格档案）
         _personalitySystem = GetComponent<PersonalitySystem>();
@@ -171,6 +174,18 @@ public class ActionDecisionModule : MonoBehaviour
         replanCount = 0;
         _emptyActionRetries   = 0;
         _c3DebateTriggered    = false;
+        if (agentState != null)
+        {
+            // 同步 agent 总状态，避免外部模块把执行中的 agent 误判为空闲。
+            agentState.Status = AgentStatus.ExecutingTask;
+            Debug.Log($"[ADM] {agentProperties?.AgentID} 进入步骤执行态: {step.stepId} | {step.text}");
+        }
+        if (agentState != null)
+        {
+            // 兜底同步总状态，保证执行期间不会被 AutonomousDriveModule 误判为空闲。
+            agentState.Status = AgentStatus.ExecutingTask;
+        }
+
         SetStatus(ADMStatus.Idle);
         activeCoroutine = StartCoroutine(RunRollingLoop(step));
     }
@@ -221,6 +236,24 @@ public class ActionDecisionModule : MonoBehaviour
         }
 
         Debug.Log($"[ADM] {agentProperties?.AgentID} 切换到动作 {ctx.currentActionIdx + 1}/{ctx.actionQueue.Length}");
+    }
+
+    /// <summary>
+    /// 外部强制中断当前步骤执行（如协作涌现需要抢占 Solo 任务）。
+    /// 停止 rolling loop 协程和运动执行，将 ADM 状态重置为 Idle。
+    /// </summary>
+    public void AbortCurrentStep(string reason)
+    {
+        Debug.Log($"<color=#FF8800>[ADM] {agentProperties?.AgentID} AbortCurrentStep: {reason}</color>");
+        if (activeCoroutine != null) { StopCoroutine(activeCoroutine); activeCoroutine = null; }
+
+        // 通知运动执行层中断
+        var motionExecutor = GetComponent<AgentMotionExecutor>();
+        motionExecutor?.ForceAbort();
+
+        ctx = null;
+        SetStatus(ADMStatus.Idle);
+        if (agentState != null) agentState.Status = AgentStatus.Idle;
     }
 
     /// <summary>当前 ADM 是否空闲（可接受新步骤）。</summary>
@@ -322,7 +355,7 @@ public class ActionDecisionModule : MonoBehaviour
 
     /// <summary>
     /// 滚动规划主循环协程。
-    /// 每轮：检查 C3 → 读白板/裁判 → LLM 判断是否完成 + 生成下 1-3 个动作 → 执行 → 循环。
+    /// 每轮：检查 C3 → 读白板/裁判 → LLM 生成下 1-3 个动作 → 执行 → 系统判定步骤完成 → 循环。
     /// </summary>
     private IEnumerator RunRollingLoop(PlanStep step)
     {
@@ -440,62 +473,62 @@ public class ActionDecisionModule : MonoBehaviour
                 yield break;
             }
 
-            // ── 8. 处理 isDone = true ────────────────────────────────
-            if (planResult.isDone)
-            {
-                Debug.Log($"[ADM] {agentProperties?.AgentID} 步骤完成: {planResult.doneReason}");
-                ReleaseC3MutexLocks(mutexCids);
-
-                // 写 DoneSignal 到白板（C2 约束）
-                WriteWhiteboardDoneSignals();
-
-                // 等待 C2 同步（若有 syncWith）
-                yield return StartCoroutine(WaitForC2Sync());
-
-                // 步骤完成：记录进展记忆（供下一任务规划阶段参考）
-                _memoryModule?.RememberProgress(
-                    missionId: ctx.msnId,
-                    slotId: ctx.stepId,
-                    stepLabel: step.text,
-                    summary: $"步骤完成: {step.text}。{planResult.doneReason}",
-                    targetRef: step.targetName);
-
-                // 重置连续失败计数（步骤成功视为清算点）
-                _reflectionModule?.NotifyActionOutcome(
-                    missionId: ctx.msnId,
-                    missionText: ctx.stepText,
-                    slotId: ctx.slotId,
-                    stepText: step.text,
-                    targetRef: step.targetName,
-                    success: true,
-                    summary: planResult.doneReason);
-
-                planningModule?.CompleteCurrentStep();
-                SetStatus(ADMStatus.Done);
-                if (agentState != null) agentState.Status = AgentStatus.Idle;
-                yield break;
-            }
-
-            // ── 9. nextActions 为空的保护 ──────────────────────────
-            // LLM 返回 isDone=false 但没有给出动作，说明 LLM 当前轮次判断混乱。
-            // 最多重试 MaxEmptyActionRetries 次（重新走完整 LLM 流程）；
-            // 超限后设 Failed，由 PlanningModule 决定是否重规划，而非错误地标记步骤完成。
+            // ── 8. nextActions 为空 → 系统判定步骤是否完成 ──────────
             if (planResult.nextActions == null || planResult.nextActions.Length == 0)
             {
-                ReleaseC3MutexLocks(mutexCids);
-                _emptyActionRetries++;
-                if (_emptyActionRetries <= MaxEmptyActionRetries)
+                bool hasTarget = !string.IsNullOrWhiteSpace(step.targetName);
+                bool atTarget  = IsNearTarget(step.targetName, ctx.currentLocationName);
+
+                if (!hasTarget || atTarget)
                 {
-                    Debug.LogWarning($"[ADM] {agentProperties?.AgentID} LLM 返回 isDone=false 但 nextActions 为空，" +
-                                     $"重试 ({_emptyActionRetries}/{MaxEmptyActionRetries})");
-                    // 不增加 iterationCount，直接重试本轮 LLM 调用
-                    continue;
+                    // 无导航目标 或 已到达目标，且 LLM 无更多动作 → 步骤完成
+                    string doneReason = hasTarget
+                        ? $"已到达 {step.targetName}，所有动作执行完毕"
+                        : "所有动作执行完毕";
+                    Debug.Log($"[ADM] {agentProperties?.AgentID} 步骤完成（系统判定）: {doneReason}");
+                    ReleaseC3MutexLocks(mutexCids);
+
+                    WriteWhiteboardDoneSignals();
+                    yield return StartCoroutine(WaitForC2Sync());
+
+                    _memoryModule?.RememberProgress(
+                        missionId: ctx.msnId,
+                        slotId: ctx.stepId,
+                        stepLabel: step.text,
+                        summary: $"步骤完成: {step.text}。{doneReason}",
+                        targetRef: step.targetName);
+
+                    _reflectionModule?.NotifyActionOutcome(
+                        missionId: ctx.msnId,
+                        missionText: ctx.stepText,
+                        slotId: ctx.slotId,
+                        stepText: step.text,
+                        targetRef: step.targetName,
+                        success: true,
+                        summary: doneReason);
+
+                    planningModule?.CompleteCurrentStep();
+                    SetStatus(ADMStatus.Done);
+                    if (agentState != null) agentState.Status = AgentStatus.Idle;
+                    yield break;
                 }
-                Debug.LogError($"[ADM] {agentProperties?.AgentID} LLM 连续 {MaxEmptyActionRetries} 次返回空动作，步骤设为 Failed");
-                SetStatus(ADMStatus.Failed);
-                if (agentState != null) agentState.Status = AgentStatus.Idle;
-                planningModule?.MarkCurrentStepFailed($"LLM 连续 {MaxEmptyActionRetries} 次返回空动作");
-                yield break;
+                else
+                {
+                    // 有目标但未到达，LLM 却没给导航动作 → 重试
+                    ReleaseC3MutexLocks(mutexCids);
+                    _emptyActionRetries++;
+                    if (_emptyActionRetries <= MaxEmptyActionRetries)
+                    {
+                        Debug.LogWarning($"[ADM] {agentProperties?.AgentID} 未到达 {step.targetName} 但 nextActions 为空，" +
+                                         $"重试 ({_emptyActionRetries}/{MaxEmptyActionRetries})");
+                        continue;
+                    }
+                    Debug.LogError($"[ADM] {agentProperties?.AgentID} LLM 连续 {MaxEmptyActionRetries} 次返回空动作，步骤设为 Failed");
+                    SetStatus(ADMStatus.Failed);
+                    if (agentState != null) agentState.Status = AgentStatus.Idle;
+                    planningModule?.MarkCurrentStepFailed($"未到达 {step.targetName} 且 LLM 连续 {MaxEmptyActionRetries} 次返回空动作");
+                    yield break;
+                }
             }
             // 成功生成动作，重置重试计数
             _emptyActionRetries = 0;
@@ -580,8 +613,8 @@ public class ActionDecisionModule : MonoBehaviour
         // thought 模板：JSON 结构，强制 LLM 逐步思考并以可解析的结构输出
         // iterationCount>=3 时要求填写 context 和 trajectory_analysis，帮助检测循环导航
         string thoughtGuide = ctx.iterationCount >= 3
-            ? "{\"context\":\"我在哪/要去哪/走了几步\",\"trajectory_analysis\":\"历史是否有重复节点/是否朝目标推进\",\"done_check\":{\"position_reached\":true,\"condition_met\":false,\"observation_done\":true},\"next_step_reasoning\":\"下一节点选择理由\",\"confidence\":\"高/中/低\",\"confidence_reason\":\"原因\",\"suggestion\":\"可跨任务复用的抽象导航/决策原则（描述结构性条件），无新规律则填\\\"\\\"\"}"
-            : "{\"context\":\"\",\"trajectory_analysis\":\"\",\"done_check\":{\"position_reached\":true,\"condition_met\":false,\"observation_done\":true},\"next_step_reasoning\":\"完成判断和下一步意图\",\"confidence\":\"高/中/低\",\"confidence_reason\":\"原因\",\"suggestion\":\"可跨任务复用的抽象导航/决策原则（描述结构性条件），无新规律则填\\\"\\\"\"}";
+            ? "{\"context\":\"我在哪/要去哪/走了几步\",\"trajectory_analysis\":\"历史是否有重复节点/是否朝目标推进\",\"next_step_reasoning\":\"下一节点选择理由\",\"confidence\":\"高/中/低\",\"confidence_reason\":\"原因\",\"suggestion\":\"可跨任务复用的抽象导航/决策原则（描述结构性条件），无新规律则填\\\"\\\"\"}"
+            : "{\"context\":\"\",\"trajectory_analysis\":\"\",\"next_step_reasoning\":\"下一步意图\",\"confidence\":\"高/中/低\",\"confidence_reason\":\"原因\",\"suggestion\":\"可跨任务复用的抽象导航/决策原则（描述结构性条件），无新规律则填\\\"\\\"\"}";
 
         // 从 MemoryModule 检索当前步骤相关的历史经验和反思洞察
         // 失败时降级为空字符串（不影响决策流程，只是少了历史参考）
@@ -617,8 +650,7 @@ public class ActionDecisionModule : MonoBehaviour
 
             "## 步骤目标\n" +
             $"步骤：{step.text}\n" +
-            $"导航目标：{(string.IsNullOrWhiteSpace(step.targetName) ? "无" : step.targetName)}\n" +
-            $"完成条件：{(string.IsNullOrWhiteSpace(step.doneCond) ? "未指定" : step.doneCond)}\n\n" +
+            $"导航目标：{(string.IsNullOrWhiteSpace(step.targetName) ? "无" : step.targetName)}\n\n" +
 
             styleSection +
 
@@ -632,12 +664,15 @@ public class ActionDecisionModule : MonoBehaviour
 
             "## 当前状态\n" +
             $"角色：{ctx.role} | 当前位置：{ctx.currentLocationName}\n" +
+            $"携带物品：{(string.IsNullOrWhiteSpace(agentState?.CarriedItemName) ? "无" : agentState.CarriedItemName)}\n" +
             $"导航目标：{(string.IsNullOrWhiteSpace(step.targetName) ? "无" : step.targetName)}{targetSpatialHint}\n\n" +
 
             "## 周边地图（半径300m）\n" +
             relativeMap + "\n\n" +
 
             BuildTopoWaypointBlock(suggestedWaypoints, occupiedNodes) +
+
+            BuildNearbyInteractableBlock() +
 
             "## 导航规则\n" +
             "地图仅覆盖当前位置300m内地物。\n" +
@@ -649,7 +684,8 @@ public class ActionDecisionModule : MonoBehaviour
             "  ③ 若以上都无，选方向最接近目标的节点，并在 thought 中说明原因\n" +
             "  每次选择必须有方向依据，不要随机选。\n" +
             "• targetName 禁止编造或使用范围外地名。\n" +
-            "• 已在目标附近时，不要再 MoveTo 同一目标，应立即执行下一步动作（巡逻/Signal/Wait 等）。\n\n" +
+            "• 已在目标附近时，不要再 MoveTo 同一目标，应立即执行下一步动作（巡逻/Signal/Wait 等）。\n" +
+            "• 若「附近可交互目标」中列出了小节点，可用 MoveTo 前往，targetName 填列出的名称（如 ResourcePoint_7）。\n\n" +
 
             "## 白板状态（组内协同）\n" +
             (string.IsNullOrWhiteSpace(whiteboardCtx) ? "（无白板数据）" : whiteboardCtx) + "\n\n" +
@@ -658,12 +694,12 @@ public class ActionDecisionModule : MonoBehaviour
             (string.IsNullOrWhiteSpace(constraintBlock) ? "无约束（本步骤独立执行）" : constraintBlock) + "\n\n" +
 
             "## 可用动作\n" +
-            "• MoveTo：前往地图内静态地点，targetName=地点名，spatialHint=路径偏好，actionParams=飞行参数\n" +
+            "• MoveTo：前往地图地点或附近可交互目标，targetName=地点名或目标名称（如 ResourcePoint_7），spatialHint=路径偏好\n" +
             "• Wait：原地悬停等待，duration=等待秒数，actionParams=等待条件说明\n" +
             "• Track：跟踪动态移动实体，targetAgentId=目标智能体ID，duration=跟踪时长，actionParams=相对方向（前/后/左/右）\n" +
             "• Signal：向队友广播结构化信息，targetAgentId=接收方ID（\"all\"=全体），actionParams=消息内容\n" +
-            "• Get：在当前位置获取物资或触发交互，targetName=目标名称，duration=交互等待时长（秒）\n" +
-            "• Put：在当前位置放下物资或完成交付，targetName=交付对象名称，duration=交互等待时长（秒）\n" +
+            "• Get：拾取附近物体（需先 MoveTo 到目标附近8m内），targetName=目标名称，duration=拾取耗时（秒）。拾取后物体挂载在无人机下方跟随移动，同一时间只能携带一个物体\n" +
+            "• Put：将当前携带的物体放置在当前位置，targetName=放置说明（可选），duration=放置耗时（秒）。放置后物体脱离无人机落到地面\n" +
             "• Land：降落至地面，targetName=降落区域（可选）\n" +
             "• Takeoff：从地面起飞至悬停高度\n" +
             "• Patrol：对区域做 Frontier-based 系统覆盖（始终前往最近未访问格，非随机游走）。\n" +
@@ -671,26 +707,15 @@ public class ActionDecisionModule : MonoBehaviour
             "• Approach：逼近目标agent至极近距离进行物理干扰（破坏性agent专用），targetAgentId=目标agent ID，duration=持续时间(秒)\n" +
             "• Flee：远离威胁agent（防御/规避用），targetAgentId=威胁agent ID，duration=逃离持续时间(秒)\n\n" +
 
-            "## 步骤完成判断（重要）\n" +
-            "综合以下证据判断步骤目标是否真正达成（而非只是执行了某个动作）：\n" +
-            "- 已执行历史：各动作的执行结果（覆盖率、是否到达、观察结论等）\n" +
-            "- 当前状态：当前位置与目标名的关系\n" +
-            "- 步骤目标与完成条件\n\n" +
-            "判断标准：目标已实际实现 → isDone=true；目标尚未实现 → isDone=false 并规划下一步。\n" +
-            "若存在 C3 约束（信号等待/互斥），还需白板中已出现对应信号才可 isDone=true。\n" +
-            "【C2 约束不在此判断】isDone=true 后系统自动处理 C2 同步，不要因等待 C2 而推迟 isDone=true。\n\n" +
-
             "## 输出（JSON 对象，非数组）\n" +
             "{\n" +
             $"  \"thought\": {thoughtGuide},\n" +
-            "  \"isDone\": true/false,\n" +
-            "  \"doneReason\": \"完成或未完成的具体原因（引用当前位置/历史/条件对比）\",\n" +
             "  \"nextActions\": [\n" +
             "    {\"actionId\":\"aa_1\",\"type\":\"MoveTo\",\"targetName\":\"地点名\",\"targetAgentId\":\"\",\"duration\":0,\"actionParams\":\"\",\"spatialHint\":\"\"}\n" +
             "  ]\n" +
             "}\n" +
-            "1. thought 必填，按上方 JSON 结构输出实际推理内容（done_check 三项必须填写真实布尔值；迭代<3时 context/trajectory_analysis 可填空字符串）。\n" +
-            "2. isDone=true 时 nextActions 填 []；isDone=false 时必须提供 1-3 个动作。\n" +
+            "1. thought 必填，按上方 JSON 结构输出实际推理内容（迭代<3时 context/trajectory_analysis 可填空字符串）。\n" +
+            "2. 提供 1-3 个动作；若步骤描述的所有动作已全部执行完毕（已到达目标且无后续操作），填 []。\n" +
             "3. 每个动作必须包含全部字段：actionId / type / targetName / targetAgentId / duration / actionParams / spatialHint。\n" +
             "4. 若存在 C3 约束，生成的动作必须遵守其信号/互斥要求（如等待 ReadySignal、避开已占节点）；C2 约束无需在动作层面等待。\n";
     }
@@ -831,6 +856,65 @@ public class ActionDecisionModule : MonoBehaviour
         return "## A* 下一跳参考（静态地图，仅供参考）\n" +
                $"  {annotated}\n" +
                "请在 thought 中评估此建议：该节点是否曾在历史中频繁出现？移动至此是否更接近目标方向？若不合理，请从地图中选取更优节点并说明理由。\n\n";
+    }
+
+    /// <summary>
+    /// 构建"附近可交互目标"段：当 agent 感知范围内有小节点时展示。
+    /// LLM 可用列出的名称作为 MoveTo 的 targetName。
+    /// </summary>
+    private string BuildNearbyInteractableBlock()
+    {
+        if (_perceptionModule == null) return string.Empty;
+
+        var detected = _perceptionModule.detectedObjects;
+        if (detected == null || detected.Count == 0) return string.Empty;
+
+        Vector3 agentPos = agentState != null ? agentState.Position : transform.position;
+        const float maxInteractRange = 20f;
+
+        // 按类型聚合，保留最近节点名称
+        var groups = new Dictionary<SmallNodeType, (string name, float dist, int count)>();
+        foreach (var node in detected)
+        {
+            if (node.NodeType == SmallNodeType.Agent) continue;
+            if (string.IsNullOrWhiteSpace(node.NodeId)) continue;
+
+            float dist = Vector3.Distance(agentPos, node.WorldPosition);
+            if (dist > maxInteractRange) continue;
+
+            if (groups.TryGetValue(node.NodeType, out var existing))
+            {
+                if (dist < existing.dist)
+                    groups[node.NodeType] = (node.NodeId, dist, existing.count + 1);
+                else
+                    groups[node.NodeType] = (existing.name, existing.dist, existing.count + 1);
+            }
+            else
+            {
+                groups[node.NodeType] = (node.NodeId, dist, 1);
+            }
+        }
+
+        if (groups.Count == 0) return string.Empty;
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("## 附近可交互目标");
+        sb.AppendLine("以下目标在感知范围内，可用 MoveTo 前往，到达后可执行 Get/Put 等交互：");
+        foreach (var kv in groups.OrderBy(g => g.Value.dist))
+        {
+            string typeName = kv.Key switch
+            {
+                SmallNodeType.ResourcePoint => "资源点",
+                SmallNodeType.Tree => "树木",
+                SmallNodeType.Pedestrian => "行人",
+                SmallNodeType.Vehicle => "车辆",
+                _ => kv.Key.ToString()
+            };
+            string countStr = kv.Value.count > 1 ? $"(共{kv.Value.count}个)" : "";
+            sb.AppendLine($"- {typeName}{countStr} 约{kv.Value.dist:0}m → targetName 填 \"{kv.Value.name}\"");
+        }
+        sb.AppendLine();
+        return sb.ToString();
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -1007,22 +1091,20 @@ public class ActionDecisionModule : MonoBehaviour
 
         var currentStep = planningModule?.GetCurrentStep();
         string roleTag  = ctx.role.ToString();
-        string doneCond = currentStep != null
-            ? (string.IsNullOrWhiteSpace(currentStep.doneCond) ? currentStep.text : currentStep.doneCond)
-            : ctx.stepText;
+        string stepDesc = currentStep?.text ?? ctx.stepText;
 
         foreach (var c in ctx.stepConstraints)
         {
             if (c.cType == "C2" || c.cType == "Completion")
             {
-                // C2：写 DoneSignal，progress 格式 "[角色] 完成条件" 供 GroupMonitor 收集
+                // C2：写 DoneSignal，progress 格式 "[角色] 步骤描述" 供 GroupMonitor 收集
                 SharedWhiteboard.Instance.WriteEntry(groupId, new WhiteboardEntry
                 {
                     agentId      = agentId,
                     constraintId = c.constraintId,
                     entryType    = WhiteboardEntryType.DoneSignal,
                     status       = 1,
-                    progress     = $"[{roleTag}] {doneCond}",
+                    progress     = $"[{roleTag}] {stepDesc}",
                 });
                 Debug.Log($"[ADM] {agentId} 写入 DoneSignal: constraintId={c.constraintId}");
             }

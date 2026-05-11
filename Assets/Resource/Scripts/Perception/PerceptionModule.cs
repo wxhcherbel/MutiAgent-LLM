@@ -487,7 +487,7 @@ public class PerceptionModule : MonoBehaviour
             string locName = actionDecisionModule != null
                 ? actionDecisionModule.ResolveCurrentLocationName() : "未知位置";
             _autonomousDriveModule?.OnPerceptionEvent(
-                $"感知到资源点 {nodeData.NodeId}", locName, SmallNodeType.ResourcePoint);
+                $"{locName}附近发现资源点", locName);
         }
     }
 
@@ -551,7 +551,8 @@ public class PerceptionModule : MonoBehaviour
         // 通知 AutonomousDriveModule（感知触发协作评估）
         string locationName = actionDecisionModule != null
             ? actionDecisionModule.ResolveCurrentLocationName() : "未知位置";
-        _autonomousDriveModule?.OnPerceptionEvent(description, locationName, SmallNodeType.Agent);
+        _autonomousDriveModule?.OnPerceptionEvent(
+            $"{locationName}附近发现敌方智能体 {otherAgent.Properties.AgentID}", locationName);
     }
 
     /// <summary>
@@ -821,11 +822,13 @@ public class PerceptionModule : MonoBehaviour
     /// </summary>
     private string BuildSmallNodeId(GameObject obj, SmallNodeType nodeType, Vector3 pos)
     {
-        if (obj != null)
+        // 优先使用 GameObject 名称（如 Tree_1、ResourcePoint_7），与 Unity 场景命名一致
+        if (obj != null && !string.IsNullOrWhiteSpace(obj.name))
         {
-            return $"{nodeType}:{obj.GetInstanceID()}";
+            return obj.name;
         }
 
+        // 无名称时用坐标兜底
         int px = Mathf.RoundToInt(pos.x * 10f);
         int py = Mathf.RoundToInt(pos.y * 10f);
         int pz = Mathf.RoundToInt(pos.z * 10f);
@@ -1189,6 +1192,86 @@ public static class SmallNodeRegistry
         }
 
         data = null;
+        return false;
+    }
+
+    /// <summary>
+    /// 根据 NodeId（精确）或名称片段（模糊）查询小节点世界坐标。
+    /// maxRange 限制查询距离，防止 LLM 引用已远离的节点。
+    /// </summary>
+    public static bool TryGetNodeWorldPosition(string nodeIdOrName, Vector3 agentPos, float maxRange, out Vector3 worldPos)
+    {
+        worldPos = Vector3.zero;
+        if (string.IsNullOrWhiteSpace(nodeIdOrName)) return false;
+
+        // 精确匹配
+        if (TryGetNode(nodeIdOrName, out SmallNodeData exact))
+        {
+            if (exact.SceneObject == null) return false;
+            if (Vector3.Distance(agentPos, exact.WorldPosition) > maxRange) return false;
+            worldPos = exact.WorldPosition;
+            return true;
+        }
+
+        // 模糊匹配：NodeId 包含查询串，取最近的
+        string lower = nodeIdOrName.ToLower();
+        float bestDist = float.MaxValue;
+        SmallNodeData bestNode = null;
+
+        foreach (var kvp in nodes)
+        {
+            if (!kvp.Key.ToLower().Contains(lower)) continue;
+            if (kvp.Value.SceneObject == null) continue;
+            float d = Vector3.Distance(agentPos, kvp.Value.WorldPosition);
+            if (d > maxRange) continue;
+            if (d < bestDist) { bestDist = d; bestNode = kvp.Value; }
+        }
+
+        if (bestNode != null)
+        {
+            worldPos = bestNode.WorldPosition;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// 根据 NodeId（精确）或名称片段（模糊）查询小节点完整数据。
+    /// 与 TryGetNodeWorldPosition 类似，但返回完整 SmallNodeData（含 SceneObject 引用）。
+    /// </summary>
+    public static bool TryFindNode(string nodeIdOrName, Vector3 agentPos, float maxRange, out SmallNodeData data)
+    {
+        data = null;
+        if (string.IsNullOrWhiteSpace(nodeIdOrName)) return false;
+
+        // 精确匹配
+        if (nodes.TryGetValue(nodeIdOrName, out SmallNodeData exact))
+        {
+            if (exact.SceneObject == null) return false;
+            if (Vector3.Distance(agentPos, exact.WorldPosition) > maxRange) return false;
+            data = Clone(exact);
+            return true;
+        }
+
+        // 模糊匹配：NodeId 包含查询串，取最近的
+        string lower = nodeIdOrName.ToLower();
+        float bestDist = float.MaxValue;
+        SmallNodeData bestNode = null;
+
+        foreach (var kvp in nodes)
+        {
+            if (!kvp.Key.ToLower().Contains(lower)) continue;
+            if (kvp.Value.SceneObject == null) continue;
+            float d = Vector3.Distance(agentPos, kvp.Value.WorldPosition);
+            if (d > maxRange) continue;
+            if (d < bestDist) { bestDist = d; bestNode = kvp.Value; }
+        }
+
+        if (bestNode != null)
+        {
+            data = Clone(bestNode);
+            return true;
+        }
         return false;
     }
 

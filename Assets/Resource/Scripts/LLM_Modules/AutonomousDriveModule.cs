@@ -48,6 +48,7 @@ public class AutonomousDriveModule : MonoBehaviour
     // ─── 监控用快照字段（主线程写，AgentStateServer 读）──────────────────
     private string _lastGoal    = string.Empty;
     private string _lastThought = string.Empty;
+    private string[] _lastSteps  = Array.Empty<string>();
     private Dictionary<string, float> _lastDrives = new Dictionary<string, float>();
 
     // ── 公开只读属性（供 AgentStateServer 采集）──────────────────────────
@@ -55,6 +56,7 @@ public class AutonomousDriveModule : MonoBehaviour
     public bool   CollectingAcceptors => _collectingAcceptors;
     public string LastGoal            => _lastGoal;
     public string LastThought         => _lastThought;
+    public IReadOnlyList<string> LastSteps => _lastSteps;
     public float  EvaluationInterval  => evaluationInterval;
     public float  LastEvaluationTime  => _lastEvaluationTime;
 
@@ -94,12 +96,16 @@ public class AutonomousDriveModule : MonoBehaviour
 
     private void Update()
     {
-        if (_agent.CurrentState.Status != AgentStatus.Idle)
+        if (_agent.CurrentState.Status != AgentStatus.Idle || HasOngoingMission())
         {
             _lastEvaluationTime = Time.time;
             _idleStartTime = Time.time; // 非 Idle 时持续刷新，回到 Idle 时即为起点
             return;
         }
+
+        // 兜底保护：显式阻止非 Idle 或已有任务时继续触发 SoloEmergence。
+        if (_agent.CurrentState.Status != AgentStatus.Idle || HasOngoingMission())
+            return;
 
         if (Time.time - _lastEvaluationTime >= evaluationInterval && !_isEvaluating)
         {
@@ -142,20 +148,24 @@ public class AutonomousDriveModule : MonoBehaviour
 
         // 3. 收集记忆摘要和环境上下文（三段式地图）
         string memorySummary = BuildMemorySummary();
+        if (HasOngoingMission())
+        {
+            Debug.Log($"[{_agent.Properties.AgentID}] SoloEmergence 跳过：PlanningModule 已有活跃或处理中任务");
+            _isEvaluating = false;
+            yield break;
+        }
+
         string locationName  = _actionDecisionModule != null
             ? _actionDecisionModule.ResolveCurrentLocationName()
             : "未知位置";
         string strategicMap = _campusGrid != null
             ? MapTopologySerializer.GetStrategicMap(_campusGrid, _agent.transform.position)
             : "(地图不可用)";
-        string perceptionSection = MapTopologySerializer.BuildPerceptionSection(
-            _perceptionModule?.detectedObjects, _perceptionModule?.enemyAgents,
-            _agent.transform.position);
         string memoryObservations = BuildObservationMemorySummary();
 
         // 4. 调用 LLM 生成任务目标 + 步骤
         string prompt = BuildEmergencePrompt(topDrive.Key, topDrive.Value, locationName,
-            strategicMap, perceptionSection, memoryObservations, memorySummary);
+            strategicMap, memoryObservations, memorySummary);
         string llmResponse = null;
         yield return StartCoroutine(_llm.SendRequest(
             new LLMRequestOptions
@@ -548,7 +558,7 @@ public class AutonomousDriveModule : MonoBehaviour
 
     private string BuildEmergencePrompt(
         string drive, float strength, string loc,
-        string strategicMap, string perceptionSection, string memoryObservations,
+        string strategicMap, string memoryObservations,
         string memorySummary)
     {
         string memSection = string.IsNullOrWhiteSpace(memorySummary)
@@ -557,7 +567,7 @@ public class AutonomousDriveModule : MonoBehaviour
 
         string memObsSection = string.IsNullOrWhiteSpace(memoryObservations)
             ? string.Empty
-            : $"## 历史观测记忆\n{memoryObservations}\n\n";
+            : $"## 环境观测（哪些区域有什么）\n{memoryObservations}\n\n";
 
         // 根据 agent 阵营构建不同的角色指令
         string roleInstruction;
@@ -575,7 +585,6 @@ public class AutonomousDriveModule : MonoBehaviour
                $"- 位置：{loc}\n" +
                $"- 核心驱动：{drive} (强度 {strength:F2})\n\n" +
                $"## 战略地图（建筑/地标拓扑）\n{strategicMap}\n\n" +
-               $"## 当前感知（你的传感器实时数据）\n{perceptionSection}\n\n" +
                memObsSection +
                memSection +
                roleInstruction +
@@ -593,32 +602,35 @@ public class AutonomousDriveModule : MonoBehaviour
     }
 
     private string BuildCollabSetupPrompt(
-        string eventDesc, string location, SmallNodeType nodeType,
+        string eventDesc, string location,
         float batteryRatio, string currentLocation,
-        string strategicMap, string perceptionSection, string memorySummary)
+        string strategicMap, string observationSummary, string memorySummary)
     {
         string memSection = string.IsNullOrWhiteSpace(memorySummary)
             ? ""
             : $"## 近期记忆\n{memorySummary}\n\n";
+
+        string obsSection = string.IsNullOrWhiteSpace(observationSummary)
+            ? ""
+            : $"## 历史观测\n{observationSummary}\n\n";
 
         return $"你是无人机 {_agent.Properties.AgentID}，正在执行独立任务时感知到需要协作的新情况。请评估是否值得发起协作，并设计协作方案。\n\n" +
                $"## 你的当前状态\n" +
                $"- 当前位置：{currentLocation}\n" +
                $"- 电量：{batteryRatio:P0}\n" +
                $"- 当前任务：正在执行 Solo 任务\n\n" +
-               $"## 感知事件\n" +
-               $"- 事件描述：{eventDesc}\n" +
-               $"- 发生位置：{location}\n" +
-               $"- 节点类型：{nodeType}\n\n" +
+               $"## 触发事件\n" +
+               $"- {eventDesc}\n" +
+               $"- 发生区域：{location}\n\n" +
                $"## 附近环境\n{strategicMap}\n\n" +
-               $"## 当前感知\n{perceptionSection}\n\n" +
+               obsSection +
                memSection +
                "## 协作约束类型详细说明\n" +
                "协作任务需要设计结构化约束来协调多个智能体。共有三种约束类型：\n\n" +
                "### C1 - 资源互斥约束\n" +
                "含义：某个资源或目标只能由一个智能体独占操作，其他智能体需等待。\n" +
                "示例：只有一个充电桩，drone_A 使用时 drone_B 必须等待。\n" +
-               "字段：constraintId(唯一ID), cType=\"C1\", subject(执行者ID), targetObject(目标名), exclusive(true/false)\n\n" +
+               "字段：constraintId(唯一ID), cType=\"C1\", subject(执行者ID), targetObject(目标名), exclusive(是否独占?true:false)\n\n" +
                "### C2 - 同步完成约束\n" +
                "含义：多个智能体必须同时完成各自子任务，或一方完成后另一方才执行下一步。\n" +
                "示例：两架无人机分别到达目标区域两端后同时开始扫描。\n" +
@@ -683,9 +695,16 @@ public class AutonomousDriveModule : MonoBehaviour
 
         _lastGoal    = result.goal;
         _lastThought = result.thought ?? string.Empty;
+        _lastSteps   = result.steps ?? Array.Empty<string>();
 
         Debug.Log($"<color=#00FF00>[{_agent.Properties.AgentID}] 涌现思考: {result.thought}</color>");
         Debug.Log($"<color=#00FF00>[{_agent.Properties.AgentID}] 涌现目标: {result.goal} | 步骤数: {result.steps.Length}</color>");
+
+        if (HasOngoingMission())
+        {
+            Debug.Log($"[{_agent.Properties.AgentID}] 丢弃 SoloEmergence 结果：当前已有活跃或处理中任务");
+            yield break;
+        }
 
         _planningModule?.InjectSoloMission(result.goal, result.steps);
 
@@ -706,22 +725,24 @@ public class AutonomousDriveModule : MonoBehaviour
     // ─────────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// PerceptionModule 感知到 ResourcePoint 或敌方 Agent 时调用。
-    /// 只在 agent 正在执行 Solo 任务时响应，评估是否需要发起协作。
+    /// 感知到需要协作评估的事件时调用（资源点、敌方、突发情况等）。
+    /// 只在 agent 正在执行 Solo 任务时响应。
     /// </summary>
-    public void OnPerceptionEvent(string eventDesc, string location, SmallNodeType nodeType)
+    /// <param name="eventDesc">事件描述，如"green_41附近发现资源点"</param>
+    /// <param name="location">事件发生的大节点名称，如"green_41"</param>
+    public void OnPerceptionEvent(string eventDesc, string location)
     {
         if (_isEvaluating || _collectingAcceptors)           return;
         if (_planningModule == null || !_planningModule.IsRunningSolo) return;
 
-        StartCoroutine(EvaluateCollabTrigger(eventDesc, location, nodeType));
+        StartCoroutine(EvaluateCollabTrigger(eventDesc, location));
     }
 
-    private IEnumerator EvaluateCollabTrigger(string eventDesc, string location, SmallNodeType nodeType)
+    private IEnumerator EvaluateCollabTrigger(string eventDesc, string location)
     {
         _isEvaluating = true;
 
-        // 收集完整上下文供 LLM 做出合理的协作评估
+        // 收集上下文
         float batteryRatio = _agent.CurrentState.BatteryLevel /
                              Mathf.Max(1f, _agent.Properties.BatteryCapacity);
         string currentLoc = _actionDecisionModule != null
@@ -730,9 +751,7 @@ public class AutonomousDriveModule : MonoBehaviour
         string stratMap = _campusGrid != null
             ? MapTopologySerializer.GetStrategicMap(_campusGrid, _agent.transform.position)
             : "(地图不可用)";
-        string percSection = MapTopologySerializer.BuildPerceptionSection(
-            _perceptionModule?.detectedObjects, _perceptionModule?.enemyAgents,
-            _agent.transform.position);
+        string observationSummary = BuildObservationMemorySummary();
         string memSummary = BuildMemorySummary();
 
         // 1. CollabSetup LLM：从事件上下文生成协作目标、约束、角色
@@ -740,8 +759,8 @@ public class AutonomousDriveModule : MonoBehaviour
         yield return StartCoroutine(_llm.SendRequest(
             new LLMRequestOptions
             {
-                prompt         = BuildCollabSetupPrompt(eventDesc, location, nodeType,
-                                     batteryRatio, currentLoc, stratMap, percSection, memSummary),
+                prompt         = BuildCollabSetupPrompt(eventDesc, location,
+                                     batteryRatio, currentLoc, stratMap, observationSummary, memSummary),
                 maxTokens      = 800,
                 enableJsonMode = true,
                 callTag        = "CollabSetup",
@@ -813,6 +832,13 @@ public class AutonomousDriveModule : MonoBehaviour
                   $"伙伴数: {selected.Count}</color>");
 
         // 5. 发起方自己以协作角色重规划（中断当前 Solo，进入协作路径）
+        //    BUG-FIX: IsRunningSolo=true 意味着 busy=true，必须先中断 Solo 才能注入协作计划
+        if (_planningModule != null && _planningModule.IsRunningSolo)
+        {
+            Debug.Log($"<color=#FF8800>[{_agent.Properties.AgentID}] 中断当前 Solo 任务，切换为协作涌现</color>");
+            _actionDecisionModule?.AbortCurrentStep("协作涌现中断 Solo");
+            _planningModule.ResetForNewMission();
+        }
         _planningModule?.InjectEmergentCollabMission(
             msnId, setup.collaborationGoal, setup.constraints, setup.myRole);
 
@@ -972,6 +998,15 @@ public class AutonomousDriveModule : MonoBehaviour
     // ─────────────────────────────────────────────────────────────────────
     // 辅助
     // ─────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// PlanningModule 处于处理中或已有活跃计划时，禁止再次发起 SoloEmergence。
+    /// </summary>
+    private bool HasOngoingMission()
+    {
+        return _planningModule != null &&
+               (_planningModule.IsBusy || _planningModule.HasActiveMission());
+    }
 
     private static string ExtractJson(string raw)
     {

@@ -658,6 +658,9 @@ public partial class AgentStateServer : MonoBehaviour
                 isAdversarial       = ePs?.IsAdversarial ?? false,
                 isRunningSolo       = ePlan?.IsRunningSolo ?? false,
                 inCollabSetup       = adm.IsEvaluating && (ePlan?.IsRunningSolo ?? false),
+                lastSteps           = adm.LastSteps?.ToArray() ?? Array.Empty<string>(),
+                currentStepIndex    = ePlan?.CurrentStepIndex ?? -1,
+                totalStepCount      = ePlan?.TotalStepCount ?? 0,
             });
         }
 

@@ -496,6 +496,15 @@ public class EmergenceSnapshot
     /// 由 isEvaluating &amp;&amp; isRunningSolo 联合推断：Solo 执行中被感知触发评估。
     /// </summary>
     public bool inCollabSetup;
+
+    /// <summary>最近一次涌现生成的步骤列表（原始自然语言）。</summary>
+    public string[] lastSteps;
+
+    /// <summary>当前正在执行的步骤索引（0-based），-1 表示无活跃计划。</summary>
+    public int currentStepIndex;
+
+    /// <summary>当前计划总步骤数。</summary>
+    public int totalStepCount;
 }
 
 /// <summary>

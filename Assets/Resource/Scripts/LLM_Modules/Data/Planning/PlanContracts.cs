@@ -1,5 +1,6 @@
 using System;
 using Newtonsoft.Json;
+using UnityEngine;
 
 /// <summary>
 /// 结构化协同约束，涵盖三种约束类型（C1~C3）。
@@ -85,9 +86,6 @@ public class PlanSlot
     /// <summary>该槽位的职责描述。</summary>
     public string desc;
 
-    /// <summary>该槽位的完成条件。</summary>
-    public string doneCond;
-
     /// <summary>该槽位关联的结构化约束 ID 列表（引用 ParsedMission.constraints）。</summary>
     public string[] constraintIds;
 }
@@ -133,9 +131,6 @@ public class PlanStep
     /// 无明确空间目标的步骤填 ""。
     /// </summary>
     public string targetName;
-
-    /// <summary>该步骤的完成条件。</summary>
-    public string doneCond;
 
     /// <summary>该步骤关联的结构化约束 ID 列表（从 ParsedMission.constraints 中引用）。</summary>
     public string[] constraintIds;
@@ -184,4 +179,16 @@ public class AgentPlan
 
     /// <summary>当前执行到的步骤索引。</summary>
     public int curIdx;
+
+    /// <summary>计划创建时间（Time.time），用于时效性判断。</summary>
+    [JsonIgnore]
+    public float createdTime;
+
+    /// <summary>计划最大有效时长（秒）。超期后视为过时，应标记 Failed。0 或负值表示无限制。</summary>
+    [JsonIgnore]
+    public float maxValidDuration;
+
+    /// <summary>检查计划是否已超过有效期。</summary>
+    [JsonIgnore]
+    public bool IsExpired => maxValidDuration > 0f && (UnityEngine.Time.time - createdTime) > maxValidDuration;
 }

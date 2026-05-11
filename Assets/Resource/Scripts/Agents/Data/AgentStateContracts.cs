@@ -22,23 +22,11 @@ public class AgentProperties
     /// <summary>最大平移速度。</summary>
     public float MaxSpeed;
 
-    /// <summary>最大角速度。</summary>
-    public float MaxAngularSpeed;
-
-    /// <summary>平移加速度。</summary>
-    public float Acceleration;
-
     /// <summary>电池容量上限。</summary>
     public float BatteryCapacity;
 
     /// <summary>通信半径。</summary>
     public float CommunicationRange;
-
-    /// <summary>载重能力。</summary>
-    public float PayloadCapacity;
-
-    /// <summary>物理包围尺寸。</summary>
-    public Vector3 PhysicalSize;
 
     /// <summary>感知半径。</summary>
     public float PerceptionRange;
@@ -62,8 +50,11 @@ public class AgentDynamicState
     /// <summary>当前剩余电量。</summary>
     public float BatteryLevel;
 
-    /// <summary>当前载荷重量。</summary>
-    public float CurrentLoad;
+    /// <summary>当前携带的物品名称，null 或空表示未携带。</summary>
+    public string CarriedItemName;
+
+    /// <summary>当前携带物品的场景对象引用（运行时）。</summary>
+    [System.NonSerialized] public GameObject CarriedObject;
 
     /// <summary>当前运行状态。</summary>
     public AgentStatus Status;

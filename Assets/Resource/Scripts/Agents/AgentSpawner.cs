@@ -36,7 +36,7 @@ public class AgentSpawner : MonoBehaviour
 
     [Header("阵营配置")]
     [Tooltip("本次生成中破坏/对抗型 agent 的数量，其余均为协作型。生成时从后往前分配：后 adversarialCount 个为破坏型。")]
-    public int adversarialCount = 2;                 // 破坏型 agent 数量（0 表示全部协作型）
+    public int adversarialCount = 0;                 // 破坏型 agent 数量（0 表示全部协作型）
     [Min(0f)] public float droneSpawnHeight = 2f;    // 无人机在地面基础上的起飞高度
 
     [Header("地图引用")]
@@ -839,13 +839,9 @@ public class AgentSpawner : MonoBehaviour
             Type = type,
             Role = RoleType.Scout,
             MaxSpeed = 10f,
-            MaxAngularSpeed = type == AgentType.Quadcopter ? 180f : 90f,
-            Acceleration = type == AgentType.Quadcopter ? 8f : 4f,
             BatteryCapacity = 100f,
             CommunicationRange = commRange,
-            PerceptionRange = perceptionRange,
-            PayloadCapacity = type == AgentType.Quadcopter ? 5f : 20f,
-            PhysicalSize = agentObj.GetComponent<Collider>().bounds.size
+            PerceptionRange = perceptionRange
         };
 
         // 4) 通信模块

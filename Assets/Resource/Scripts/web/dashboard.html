@@ -3087,6 +3087,27 @@ function renderEmergence() {
         ${e.lastThought ? `<div style="font-size:10px;color:var(--muted);margin-top:3px;font-style:italic">${escHtml(e.lastThought)}</div>` : ''}
       </div>` : ''}
 
+      ${(e.lastSteps && e.lastSteps.length > 0) ? `
+      <div style="margin-top:6px;padding:5px 7px;background:rgba(63,185,80,0.06);border:1px solid rgba(63,185,80,0.15);border-radius:4px">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+          <span style="font-size:9px;color:var(--green)">涌现步骤</span>
+          ${e.currentStepIndex >= 0 ? `<span style="font-size:9px;color:var(--muted)">${e.currentStepIndex + 1}/${e.totalStepCount}</span>` : ''}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:2px">
+          ${e.lastSteps.map((step, i) => {
+            const isCurrent = (i === e.currentStepIndex);
+            const isDone    = (e.currentStepIndex >= 0 && i < e.currentStepIndex);
+            const icon      = isDone ? '✓' : isCurrent ? '▶' : '○';
+            const color     = isDone ? 'var(--muted)' : isCurrent ? 'var(--green)' : 'var(--text)';
+            const deco      = isDone ? 'line-through' : 'none';
+            return `<div style="display:flex;align-items:flex-start;gap:5px;font-size:10px">
+              <span style="color:${color};flex-shrink:0;width:12px;text-align:center">${icon}</span>
+              <span style="color:${color};text-decoration:${deco}">${escHtml(step)}</span>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>` : ''}
+
       ${(e.collectingAcceptors || e.inCollabSetup) && (e.pendingAcceptors||[]).length > 0 ? `
       <div style="margin-top:6px">
         <div style="font-size:9px;color:var(--orange);margin-bottom:3px">协作候选（${(e.pendingAcceptors||[]).length}）</div>

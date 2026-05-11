@@ -497,10 +497,10 @@ public class MemoryModule : MonoBehaviour
         string missionId,
         string slotId,
         string role,
-        string doneCond,
+        string desc,
         string thought)
     {
-        string summary = $"选择槽位 {slotId}({role}): {doneCond}";
+        string summary = $"选择槽位 {slotId}({role}): {desc}";
         string detail = string.IsNullOrWhiteSpace(thought)
             ? summary
             : $"{summary}\n[推理] {thought}";
@@ -515,7 +515,7 @@ public class MemoryModule : MonoBehaviour
             sourceModule: "PlanningModule",
             missionId: missionId,
             slotId: slotId,
-            targetRef: doneCond,
+            targetRef: desc,
             tags: new[] { role, "slot_selection" });
     }
 

@@ -8,13 +8,15 @@ using UnityEngine;
 /// 行为执行层：
 /// 1. 轮询 ADM，消费当前 AtomicAction。
 /// 2. 将动作转换成路径跟随、悬停、跟踪等移动指令。
-/// 3. 使用 前向射线扇 + 承诺式侧向避障 + 网格安全验证 做局部避障。
+/// 3. 使用 Context Steering（上下文导向）做局部避障。
 ///
-/// 避障核心原理（Bug Algorithm 变体）：
-///   - 前方无障碍 → 直飞目标
-///   - 前方有障碍 → 选择较空旷的一侧，承诺转向，直到前方再次畅通
-///   - 转向前验证目标网格是否可行走，防止飞入禁飞区
-///   - 不使用加权平均（容易产生局部极小值），而是明确的二选一决策
+/// 避障核心原理（Context Steering）：
+///   - 每帧对 360° 方向槽位填充 Interest/Danger/Mask 三层评分
+///   - Interest：目标方向（cos 衰减）
+///   - Danger：射线探测到的障碍（距离反比），当前 MoveTo 目标可被豁免
+///   - Mask：网格不可走方向（硬屏蔽）
+///   - 最终选 score = interest - danger 最高的未屏蔽方向
+///   - 邻近槽位加权平滑，消除离散跳变
 /// </summary>
 public class AgentMotionExecutor : MonoBehaviour
 {
@@ -44,8 +46,16 @@ public class AgentMotionExecutor : MonoBehaviour
     [SerializeField] private float crowdAvoidanceStrength = 4.6f;
     [SerializeField] private bool logAvoidance = true;
 
-    // 探测射线：前方锥形，7 根，覆盖 ±60°
-    private static readonly float[] ProbeAngles = { 0f, -20f, 20f, -40f, 40f, -60f, 60f };
+    // 物理射线实际使用的掩码（排除 Building 层，建筑由网格检查处理）
+    private int _dynamicObstacleMask;
+    private int _agentLayerIndex = -1;
+
+    // ── Context Steering ──
+    private const int SteerSlots = 12;  // 方向槽位数（每30°一个，360°全覆盖）
+    private readonly float[] _interestMap = new float[SteerSlots];
+    private readonly float[] _dangerMap  = new float[SteerSlots];
+    private readonly bool[]  _maskMap    = new bool[SteerSlots];
+    private string _currentMoveTargetNodeId;  // 当前 MoveTo 目标小节点ID（用于避障豁免）
 
     private AerialMotionController aerialMotion;
     private ActionDecisionModule adm;
@@ -70,12 +80,6 @@ public class AgentMotionExecutor : MonoBehaviour
     private float noiseX;
     private float noiseZ;
 
-    // ── 避障状态机 ──
-    private bool _isAvoiding;                // 是否正在避障
-    private int _committedSide;              // 承诺侧向：+1 右转，-1 左转
-    private float _forwardClearTimer;        // 前方畅通持续计时（防止过早退出避障）
-    private const float ClearConfirmTime = 0.4f;  // 前方需要畅通多久才退出避障
-
     // 卡住恢复
     private int localStuckCount;
     private float escapeAltitudeBoost;
@@ -85,6 +89,9 @@ public class AgentMotionExecutor : MonoBehaviour
     private const float YieldDuration = 2.0f;
     private const float YieldMemoryCleanupInterval = 5f;
     private float yieldCleanupTimer;
+
+    // 携带物品：恢复缩放用临时变量（主状态在 AgentDynamicState）
+    private Vector3 _carriedOriginalScale;
 
     /// <summary>避障探测快照（供可视化）。</summary>
     public struct AvoidanceProbeSnapshot
@@ -158,6 +165,17 @@ public class AgentMotionExecutor : MonoBehaviour
             if (agentLayer >= 0)
                 agentAvoidanceLayers = 1 << agentLayer;
         }
+        _agentLayerIndex = LayerMask.NameToLayer("Agent");
+
+        // 构建物理射线掩码：排除 Building 层。
+        // 建筑是静态障碍，已由 A* 路径规划处理。
+        // SphereCast 只检测 Obstacle 层（命中后再用 tag 过滤，仅保留 Tree）。
+        // Agent-Agent 避障由 TryBuildCrowdAvoidance 的 OverlapSphere 独立处理。
+        _dynamicObstacleMask = obstacleLayers.value;
+        if (buildingLayer >= 0)
+            _dynamicObstacleMask &= ~(1 << buildingLayer);
+
+        Debug.Log($"[AME] {name} 避障层初始化: obstacleLayers={obstacleLayers.value}, buildingLayer={buildingLayer}, dynamicMask={_dynamicObstacleMask}, agentMask={agentAvoidanceLayers.value} (SphereCast仅检测Tree标签)");
     }
 
     private void Update()
@@ -235,17 +253,46 @@ public class AgentMotionExecutor : MonoBehaviour
 
     private IEnumerator DoMoveTo(AtomicAction action)
     {
-        if (campusGrid == null || aerialMotion == null) { Debug.LogWarning("[AME] MoveTo 缺少执行依赖"); yield break; }
+        if (campusGrid == null || aerialMotion == null)
+        {
+            Debug.LogWarning("[AME] MoveTo 缺少执行依赖");
+            action.result = "执行失败：缺少 campusGrid 或 aerialMotion 依赖";
+            yield break;
+        }
 
         Debug.Log($"[AME] {props?.AgentID ?? name} 开始 MoveTo -> {action.targetName}");
         AgentStateServer.PushMotionEvent(props?.AgentID ?? name, "move_start", $"前往 {action.targetName}");
 
+        _currentMoveTargetNodeId = null;
         if (!TryBuildPathToTargetName(action.targetName, aerialMotion.TargetHeight, out List<Vector3> path))
-        { Debug.LogWarning($"[AME] MoveTo 找不到目标接近点：{action.targetName}"); yield break; }
+        {
+            // 备选策略 1：尝试解析为感知到的小节点（资源点/树木等），直飞
+            if (TryBuildDirectPathToSmallNode(action.targetName, aerialMotion.TargetHeight, out path))
+            {
+                Debug.Log($"[AME] {props?.AgentID ?? name} 小节点直飞 -> {action.targetName}");
+                _currentMoveTargetNodeId = action.targetName;  // 标记为避障豁免目标
+            }
+            // 备选策略 2：尝试直飞目标特征质心
+            else if (TryBuildFallbackPathToFeature(action.targetName, aerialMotion.TargetHeight, out path))
+            {
+                Debug.LogWarning($"[AME] {props?.AgentID ?? name} 找不到 {action.targetName} 标准接近点，改用质心直飞");
+            }
+            else
+            {
+                Debug.LogWarning($"[AME] MoveTo 找不到目标接近点：{action.targetName}（三级查找均失败：UID/别名/显示名均无匹配）");
+                action.result = $"路径规划失败：目标 {action.targetName} 不可达，请换一个目标";
+                AgentStateServer.PushMotionEvent(props?.AgentID ?? name, "path_fail", $"目标 {action.targetName} 不可达");
+                yield break;
+            }
+        }
 
         currentPath = path;
         waypointIdx = 0;
         pathVisualizer?.ShowPath(currentPath, GetTeamColor());
+
+        // 诊断日志：路径信息
+        float totalDist = HorizontalDistance(transform.position, currentPath[currentPath.Count - 1]);
+        Debug.Log($"[AME] {props?.AgentID ?? name} 路径已建: {currentPath.Count} 航点, 直线距终点={totalDist:F1}m, 当前位置={transform.position}");
 
         const float waypointTimeout = 15f;
         float waypointTimer = 0f;
@@ -253,7 +300,7 @@ public class AgentMotionExecutor : MonoBehaviour
         while (waypointIdx < currentPath.Count)
         {
             Vector3 waypoint = currentPath[waypointIdx];
-            Vector3 carrot = GetPurePursuitCarrot(currentPath, waypointIdx, lookAheadDist);
+            Vector3 carrot = GetGridSafeCarrot(currentPath, waypointIdx, lookAheadDist);
             CommandMoveTarget(carrot, allowAvoidance: true);
 
             waypointTimer += Time.deltaTime;
@@ -263,7 +310,18 @@ public class AgentMotionExecutor : MonoBehaviour
             {
                 Debug.LogWarning($"[AME] {action.targetName} 航点[{waypointIdx}] 超时");
                 AgentStateServer.PushMotionEvent(props?.AgentID ?? name, "waypoint_timeout", $"航点[{waypointIdx}] 超时");
-                waypointIdx++; waypointTimer = 0f;
+                // P4-fix: 超时时优先重规划，避免跳过关键转折航点穿越建筑
+                Vector3 finalGoal = currentPath[currentPath.Count - 1];
+                if (TryReplanPath(finalGoal, aerialMotion.TargetHeight, out List<Vector3> timeoutReplanned))
+                {
+                    currentPath = timeoutReplanned; waypointIdx = 0;
+                    pathVisualizer?.ShowPath(currentPath, GetTeamColor());
+                }
+                else
+                {
+                    waypointIdx++; // 重规划失败才兜底跳过
+                }
+                waypointTimer = 0f;
             }
 
             if (isStuck)
@@ -290,8 +348,10 @@ public class AgentMotionExecutor : MonoBehaviour
         }
 
         pathVisualizer?.ClearPath();
+        _currentMoveTargetNodeId = null;
         ResetAvoidanceState();
-        Debug.Log($"[AME] MoveTo 完成 -> {action.targetName}");
+        float finalDistToTarget = HorizontalDistance(transform.position, finalPoint);
+        Debug.Log($"[AME] MoveTo 完成 -> {action.targetName}, 距目标={finalDistToTarget:F1}m, 位置={transform.position}");
         AgentStateServer.PushMotionEvent(props?.AgentID ?? name, "arrive", $"到达 {action.targetName}");
     }
 
@@ -339,8 +399,127 @@ public class AgentMotionExecutor : MonoBehaviour
         yield break;
     }
 
-    private IEnumerator DoGet(AtomicAction action) { yield return StartCoroutine(HoldPosition(action.duration > 0f ? action.duration : 1f)); Debug.Log($"[AME] Get 完成 -> {action.targetName}"); }
-    private IEnumerator DoPut(AtomicAction action) { yield return StartCoroutine(HoldPosition(action.duration > 0f ? action.duration : 1f)); Debug.Log($"[AME] Put 完成 -> {action.targetName}"); }
+    private IEnumerator DoGet(AtomicAction action)
+    {
+        string targetName = action.targetName;
+        var state = agent?.CurrentState;
+
+        // 已携带物品
+        if (state != null && state.CarriedObject != null)
+        {
+            action.result = $"拾取失败：已携带 {state.CarriedItemName}，需先放下";
+            Debug.LogWarning($"[AME] Get 失败 -> 已携带 {state.CarriedItemName}");
+            yield break;
+        }
+
+        // 未指定目标
+        if (string.IsNullOrWhiteSpace(targetName))
+        {
+            action.result = "拾取失败：未指定目标名称";
+            Debug.LogWarning("[AME] Get 失败 -> 未指定 targetName");
+            yield break;
+        }
+
+        // 通过 SmallNodeRegistry 查找目标（精确+模糊匹配）
+        if (!SmallNodeRegistry.TryFindNode(targetName, transform.position, 60f, out SmallNodeData nodeData))
+        {
+            action.result = $"拾取失败：找不到 {targetName}";
+            Debug.LogWarning($"[AME] Get 失败 -> 找不到 {targetName}");
+            yield break;
+        }
+
+        GameObject targetObj = nodeData.SceneObject;
+        if (targetObj == null)
+        {
+            action.result = $"拾取失败：{targetName} 场景对象无效";
+            yield break;
+        }
+
+        // 距离检查（8m，考虑无人机悬停高度+水平误差）
+        float dist = Vector3.Distance(transform.position, targetObj.transform.position);
+        if (dist > 8f)
+        {
+            action.result = $"拾取失败：{targetName} 距离过远({dist:F1}m > 8m)，请先 MoveTo 靠近";
+            Debug.LogWarning($"[AME] Get 失败 -> {targetName} 距离 {dist:F1}m");
+            yield break;
+        }
+
+        // 悬停等待（模拟拾取动作）
+        yield return StartCoroutine(HoldPosition(action.duration > 0f ? action.duration : 1f));
+
+        // 挂载物体到无人机下方
+        _carriedOriginalScale = targetObj.transform.localScale;
+
+        Rigidbody rb = targetObj.GetComponent<Rigidbody>();
+        if (rb != null) { rb.isKinematic = true; rb.velocity = Vector3.zero; rb.angularVelocity = Vector3.zero; }
+        Collider col = targetObj.GetComponent<Collider>();
+        if (col != null) col.enabled = false;
+
+        targetObj.transform.SetParent(transform);
+        targetObj.transform.localPosition = new Vector3(0f, -1.2f, 0f);
+        targetObj.transform.localRotation = Quaternion.identity;
+
+        // 更新携带状态
+        if (state != null)
+        {
+            state.CarriedItemName = nodeData.NodeId;
+            state.CarriedObject = targetObj;
+        }
+
+        AgentStateServer.PushMotionEvent(props?.AgentID ?? name, "get_done", $"拾取 {targetName} 成功");
+        action.result = $"成功拾取 {targetName}";
+        Debug.Log($"[AME] Get 完成 -> {targetName} (nodeId={nodeData.NodeId})");
+    }
+
+    private IEnumerator DoPut(AtomicAction action)
+    {
+        var state = agent?.CurrentState;
+
+        // 没有携带物品
+        if (state == null || state.CarriedObject == null)
+        {
+            action.result = "放置失败：当前未携带任何物品";
+            Debug.LogWarning("[AME] Put 失败 -> 未携带物品");
+            yield break;
+        }
+
+        // 悬停等待（模拟放置动作）
+        yield return StartCoroutine(HoldPosition(action.duration > 0f ? action.duration : 1f));
+
+        // 分离物体
+        GameObject obj = state.CarriedObject;
+        string carriedName = state.CarriedItemName;
+
+        obj.transform.SetParent(null);
+        Vector3 dropPos = transform.position;
+        dropPos.y = 0f;
+        obj.transform.position = dropPos;
+        obj.transform.localScale = _carriedOriginalScale;
+
+        Rigidbody rb = obj.GetComponent<Rigidbody>();
+        if (rb != null) rb.isKinematic = false;
+        Collider col = obj.GetComponent<Collider>();
+        if (col != null) col.enabled = true;
+
+        // 更新 SmallNodeRegistry 中的位置
+        SmallNodeRegistry.RegisterOrUpdate(new SmallNodeData
+        {
+            NodeId = carriedName,
+            WorldPosition = dropPos,
+            SceneObject = obj,
+            IsDynamic = true,
+            LastSeenTime = Time.time
+        });
+
+        // 清除携带状态
+        state.CarriedItemName = null;
+        state.CarriedObject = null;
+
+        string displayName = string.IsNullOrWhiteSpace(action.targetName) ? carriedName : action.targetName;
+        AgentStateServer.PushMotionEvent(props?.AgentID ?? name, "put_done", $"放置 {displayName} 于 ({dropPos.x:F1},{dropPos.z:F1})");
+        action.result = $"成功放置 {displayName}";
+        Debug.Log($"[AME] Put 完成 -> {displayName} at {dropPos}");
+    }
 
     private IEnumerator DoLand(AtomicAction action)
     {
@@ -394,7 +573,7 @@ public class AgentMotionExecutor : MonoBehaviour
 
             while (waypointIdx < currentPath.Count && elapsed < totalDuration)
             {
-                Vector3 carrot = GetPurePursuitCarrot(currentPath, waypointIdx, lookAheadDist);
+                Vector3 carrot = GetGridSafeCarrot(currentPath, waypointIdx, lookAheadDist);
                 CommandMoveTarget(carrot, allowAvoidance: true);
                 if (ShouldAdvanceWaypoint(currentPath[waypointIdx], waypointArrivalDistance + 0.4f)) waypointIdx++;
                 if (isStuck) { TryHandleLocalObstacleStuck(currentPath[currentPath.Count - 1], aerialMotion.TargetHeight, out _); isStuck = false; }
@@ -486,32 +665,59 @@ public class AgentMotionExecutor : MonoBehaviour
         return gridPath.Select(cell => { Vector3 w = campusGrid.GridToWorldCenter(cell.x, cell.y); w.y = height; return w; }).ToList();
     }
 
+    /// <summary>
+    /// 备选路径：当标准接近格不可用时，尝试用特征质心作为目标直飞。
+    /// </summary>
+    private bool TryBuildFallbackPathToFeature(string targetName, float height, out List<Vector3> path)
+    {
+        path = new List<Vector3>();
+        if (campusGrid == null) return false;
+        if (!campusGrid.TryResolveFeatureSpatialProfile(targetName, transform.position, out var profile))
+            return false;
+
+        Vector3 targetWorld = profile.anchorWorld;
+        targetWorld.y = height;
+
+        Vector2Int startCell = campusGrid.WorldToGrid(transform.position);
+        Vector2Int goalCell = campusGrid.WorldToGrid(targetWorld);
+        // 用 IsWalkable（而非 IsPathWalkable）放宽搜索，允许接近 clearance zone
+        if (!campusGrid.TryFindNearestWalkable(startCell, 4, out startCell)) return false;
+        if (!campusGrid.TryFindNearestWalkable(goalCell, 6, out goalCell)) return false;
+
+        List<Vector2Int> gridPath = campusGrid.FindPathAStar(startCell, goalCell);
+        if (gridPath == null || gridPath.Count == 0)
+        {
+            // A* 也失败，直接生成单点路径直飞
+            path = new List<Vector3> { targetWorld };
+            return true;
+        }
+        path = BuildWorldPath(gridPath, height);
+        return path.Count > 0;
+    }
+
+    /// <summary>
+    /// 尝试将目标名解析为 SmallNodeRegistry 中的感知小节点，生成直飞路径。
+    /// </summary>
+    private bool TryBuildDirectPathToSmallNode(string targetName, float height, out List<Vector3> path)
+    {
+        path = new List<Vector3>();
+        if (string.IsNullOrWhiteSpace(targetName)) return false;
+        if (!SmallNodeRegistry.TryGetNodeWorldPosition(targetName, transform.position, 60f, out Vector3 nodePos))
+            return false;
+
+        path.Add(new Vector3(nodePos.x, height, nodePos.z));
+        return true;
+    }
+
     // ==================================================================
-    // ★★★ 避障核心：前向射线扇 + 承诺式侧向避障 ★★★
-    // ==================================================================
-    //
-    //  原理（类似 Bug Algorithm）：
-    //
-    //  1. 沿 desiredDir 和两侧各 ±20°/±40°/±60° 共 7 根射线探测
-    //  2. 如果中心射线（0°）在 dangerDistance 内命中障碍：
-    //     a. 统计左侧总净空 vs 右侧总净空
-    //     b. 选较大一侧，**承诺**转向该侧
-    //     c. 承诺期间不再切换侧向（消除震荡）
-    //  3. 承诺期间：
-    //     - 持续检测前方是否畅通
-    //     - 畅通持续 0.4s 以上 → 退出避障，恢复直飞
-    //     - 转向角度与障碍物距离成反比：越近转越狠（30°~90°）
-    //  4. 每次转向前，在 CampusGrid2D 上验证目标网格是否可行走
-    //     如果不可行走 → 尝试另一侧 / 减小转向角度
-    //  5. 拥挤分离（agent-agent）作为额外偏移叠加
-    //
+    // ★★★ 避障核心：Context Steering（interest/danger/mask 三层评分） ★★★
     // ==================================================================
 
     private void CommandMoveTarget(Vector3 carrotTarget, bool allowAvoidance)
     {
         Vector3 targetToUse;
         if (allowAvoidance && obstacleLayers.value != 0)
-            targetToUse = ComputeAvoidedTarget(carrotTarget);
+            targetToUse = ComputeContextSteering(carrotTarget);
         else
             targetToUse = carrotTarget;
 
@@ -519,10 +725,14 @@ public class AgentMotionExecutor : MonoBehaviour
         aerialMotion.MoveTarget = targetToUse;
     }
 
+    // ==================================================================
+    // Context Steering 避障
+    // ==================================================================
+
     /// <summary>
-    /// 核心避障：计算避障后的实际导航目标点。
+    /// Context Steering：根据 interest/danger/mask 三层评分选择最优移动方向。
     /// </summary>
-    private Vector3 ComputeAvoidedTarget(Vector3 carrotTarget)
+    private Vector3 ComputeContextSteering(Vector3 carrotTarget)
     {
         CleanupYieldMemory();
 
@@ -533,219 +743,175 @@ public class AgentMotionExecutor : MonoBehaviour
         if (distToTarget < 0.2f) return carrotTarget;
 
         Vector3 desiredDir = toTarget / distToTarget;
-        int layerMask = obstacleLayers.value | agentAvoidanceLayers.value;
 
-        // ── 1. 前向锥形射线探测 ──
-        float[] clearances = new float[ProbeAngles.Length];
-        bool forwardBlocked = false;
-        float closestForward = detectionRange;
-        float leftClearanceSum = 0f;
-        float rightClearanceSum = 0f;
-        Vector3 forwardHitNormal = Vector3.zero;
+        // 清零
+        System.Array.Clear(_interestMap, 0, SteerSlots);
+        System.Array.Clear(_dangerMap, 0, SteerSlots);
+        System.Array.Clear(_maskMap, 0, SteerSlots);
 
-        for (int i = 0; i < ProbeAngles.Length; i++)
+        // ── Step 1: Interest Map（目标方向） ──
+        for (int i = 0; i < SteerSlots; i++)
         {
-            Vector3 rayDir = Quaternion.Euler(0f, ProbeAngles[i], 0f) * desiredDir;
-            float clearance = detectionRange;
+            Vector3 slotDir = SlotDirection(i);
+            float dot = Vector3.Dot(slotDir, desiredDir);
+            _interestMap[i] = Mathf.Max(0f, dot);
+        }
 
-            if (TrySphereCastNonSelf(pos, probeRadius, rayDir, out RaycastHit hit, detectionRange, layerMask))
+        // ── Step 2: Danger Map（射线探测障碍） ──
+        int layerMask = _dynamicObstacleMask;
+        float maxDanger = 0f;
+        for (int i = 0; i < SteerSlots; i++)
+        {
+            Vector3 slotDir = SlotDirection(i);
+            if (TrySphereCastNonSelf(pos, probeRadius, slotDir, out RaycastHit hit, detectionRange, layerMask))
             {
-                clearance = hit.distance;
-                if (i == 0) forwardHitNormal = hit.normal;
+                // 如果命中的是当前 MoveTo 目标小节点 → 不作为 danger（豁免）
+                if (IsCurrentMoveTarget(hit.collider))
+                    continue;
+
+                float danger = 1f - Mathf.Clamp01(hit.distance / dangerDistance);
+                _dangerMap[i] = Mathf.Max(_dangerMap[i], danger);
+                if (danger > maxDanger) maxDanger = danger;
+
+                // 邻近槽位衰减（模拟障碍物体积宽度）
+                int prev = (i - 1 + SteerSlots) % SteerSlots;
+                int next = (i + 1) % SteerSlots;
+                _dangerMap[prev] = Mathf.Max(_dangerMap[prev], danger * 0.5f);
+                _dangerMap[next] = Mathf.Max(_dangerMap[next], danger * 0.5f);
             }
+        }
 
-            // 叠加网格检查：如果射线方向 4m 处是不可行走区域，视为有近距离障碍
-            if (campusGrid != null)
+        // ── Step 3: Mask Map（网格不可走方向硬屏蔽） ──
+        if (campusGrid != null)
+        {
+            for (int i = 0; i < SteerSlots; i++)
             {
-                Vector3 gridSample = pos + rayDir * Mathf.Min(clearance, 4f);
-                Vector2Int cell = campusGrid.WorldToGrid(gridSample);
-                if (campusGrid.IsInBounds(cell.x, cell.y) && !campusGrid.IsWalkable(cell.x, cell.y))
-                    clearance = Mathf.Min(clearance, 1.5f);
-
-                // 更近距离（2m）网格检查
-                Vector3 nearSample = pos + rayDir * Mathf.Min(clearance, 2f);
-                Vector2Int nearCell = campusGrid.WorldToGrid(nearSample);
-                if (campusGrid.IsInBounds(nearCell.x, nearCell.y) && !campusGrid.IsWalkable(nearCell.x, nearCell.y))
-                    clearance = Mathf.Min(clearance, 0.5f);
+                if (!IsDirectionGridSafe(pos, SlotDirection(i), 4f))
+                    _maskMap[i] = true;
             }
-
-            clearances[i] = clearance;
-
-            // 中心射线判断是否需要避障
-            if (i == 0 && clearance < dangerDistance) forwardBlocked = true;
-            if (i == 0) closestForward = clearance;
-
-            // 统计左右净空（左=负角度，右=正角度）
-            if (ProbeAngles[i] < 0f) leftClearanceSum += clearance;
-            if (ProbeAngles[i] > 0f) rightClearanceSum += clearance;
         }
 
-        // ── 2. 避障状态机决策 ──
-
-        if (!forwardBlocked && !_isAvoiding)
+        // ── Step 4: 合成最终方向 ──
+        float bestScore = float.MinValue;
+        int bestSlot = 0;
+        for (int i = 0; i < SteerSlots; i++)
         {
-            // 前方畅通且未在避障中 → 直飞目标
-            _forwardClearTimer = 0f;
-            return ApplyCrowdOffset(pos, desiredDir, carrotTarget);
+            if (_maskMap[i]) continue;
+            float score = _interestMap[i] - _dangerMap[i];
+            if (score > bestScore) { bestScore = score; bestSlot = i; }
         }
 
-        if (forwardBlocked && !_isAvoiding)
+        Vector3 bestDir;
+        if (bestScore == float.MinValue)
         {
-            // 前方阻塞，进入避障：选择较空旷的一侧并承诺
-            _isAvoiding = true;
-            _committedSide = PickAvoidanceSide(pos, desiredDir, leftClearanceSum, rightClearanceSum, forwardHitNormal);
-            _forwardClearTimer = 0f;
-            if (logAvoidance)
-                Debug.Log($"[AME] {props?.AgentID ?? name} 开始避障，承诺侧={(_committedSide > 0 ? "右" : "左")}，前方净空={closestForward:F1}m");
+            // 所有方向被 mask → 退化到安全方向搜索
+            bestDir = FindSafestDirection(pos, desiredDir, layerMask);
         }
-
-        if (_isAvoiding)
+        else
         {
-            // 检查是否可以退出避障
-            if (!forwardBlocked)
+            // 邻近槽位加权平滑，消除离散跳变
+            bestDir = SlotDirection(bestSlot);
+            int prev = (bestSlot - 1 + SteerSlots) % SteerSlots;
+            int next = (bestSlot + 1) % SteerSlots;
+            if (!_maskMap[prev] && !_maskMap[next])
             {
-                _forwardClearTimer += Time.deltaTime;
-                if (_forwardClearTimer >= ClearConfirmTime)
+                float scorePrev = _interestMap[prev] - _dangerMap[prev];
+                float scoreNext = _interestMap[next] - _dangerMap[next];
+                float totalW = bestScore + Mathf.Max(0f, scorePrev) + Mathf.Max(0f, scoreNext);
+                if (totalW > 0.01f)
                 {
-                    // 前方已畅通足够长时间，退出避障
-                    _isAvoiding = false;
-                    _forwardClearTimer = 0f;
-                    if (logAvoidance)
-                        Debug.Log($"[AME] {props?.AgentID ?? name} 退出避障，恢复直飞");
-                    return ApplyCrowdOffset(pos, desiredDir, carrotTarget);
+                    bestDir = (bestDir * bestScore
+                             + SlotDirection(prev) * Mathf.Max(0f, scorePrev)
+                             + SlotDirection(next) * Mathf.Max(0f, scoreNext)) / totalW;
+                    bestDir.y = 0f;
+                    bestDir.Normalize();
                 }
             }
-            else
-            {
-                _forwardClearTimer = 0f;
-            }
-
-            // ── 3. 计算避障转向 ──
-            // 转向角度：障碍物越近，转角越大（30°~90°）
-            float proximityRatio = 1f - Mathf.Clamp01(closestForward / dangerDistance);
-            float steerAngle = Mathf.Lerp(30f, 90f, proximityRatio);
-
-            Vector3 avoidDir = Quaternion.Euler(0f, _committedSide * steerAngle, 0f) * desiredDir;
-
-            // ── 4. 网格安全验证 ──
-            if (!IsDirectionGridSafe(pos, avoidDir, 4f))
-            {
-                // 主方向不安全，尝试减小角度
-                avoidDir = Quaternion.Euler(0f, _committedSide * steerAngle * 0.5f, 0f) * desiredDir;
-                if (!IsDirectionGridSafe(pos, avoidDir, 3f))
-                {
-                    // 还是不安全，尝试另一侧
-                    avoidDir = Quaternion.Euler(0f, -_committedSide * steerAngle, 0f) * desiredDir;
-                    if (!IsDirectionGridSafe(pos, avoidDir, 4f))
-                    {
-                        // 两侧都不安全，减速朝最安全的方向
-                        avoidDir = FindSafestDirection(pos, desiredDir, layerMask);
-                    }
-                    else
-                    {
-                        // 切换到另一侧
-                        _committedSide = -_committedSide;
-                        if (logAvoidance)
-                            Debug.Log($"[AME] {props?.AgentID ?? name} 网格约束，切换到另一侧={(_committedSide > 0 ? "右" : "左")}");
-                    }
-                }
-            }
-
-            // ── 5. 生成避障目标点 ──
-            // 在避障方向上放一个固定距离的目标（不是偏移原目标！）
-            float targetDist = Mathf.Max(3f, closestForward * 0.8f);
-            Vector3 avoidTarget = pos + avoidDir * targetDist;
-            avoidTarget.y = carrotTarget.y;
-
-            // 障碍物极近时减速（通过缩短目标距离实现）
-            if (closestForward < probeRadius * 3f)
-            {
-                avoidTarget = pos + avoidDir * Mathf.Max(1f, closestForward * 0.5f);
-                avoidTarget.y = carrotTarget.y;
-            }
-
-            // 可视化
-            CurrentAvoidanceProbe = new AvoidanceProbeSnapshot
-            {
-                valid = true,
-                origin = pos,
-                resultVelocity = avoidDir * targetDist,
-                maxDanger = proximityRatio,
-                gridConstrained = false,
-            };
-
-            return ApplyCrowdOffset(pos, avoidDir, avoidTarget);
         }
 
-        return carrotTarget;
+        // 生成目标点
+        float targetDist = Mathf.Clamp(distToTarget, 3f, detectionRange * 0.8f);
+        Vector3 steerTarget = pos + bestDir * targetDist;
+        steerTarget.y = carrotTarget.y;
+
+        // 可视化快照
+        CurrentAvoidanceProbe = new AvoidanceProbeSnapshot
+        {
+            valid = true,
+            origin = pos,
+            resultVelocity = bestDir * targetDist,
+            maxDanger = maxDanger,
+            gridConstrained = bestScore == float.MinValue,
+        };
+
+        return ApplyCrowdOffset(pos, bestDir, steerTarget);
     }
 
     /// <summary>
-    /// 选择避障侧向：综合净空统计 + 表面法线 + 网格安全性。
+    /// 将槽位索引转为世界方向向量（XZ 平面）。
     /// </summary>
-    private int PickAvoidanceSide(Vector3 pos, Vector3 desiredDir, float leftSum, float rightSum, Vector3 hitNormal)
+    private static Vector3 SlotDirection(int slotIndex)
     {
-        // 1. 基础选择：哪侧净空更大
-        int side = rightSum >= leftSum ? 1 : -1;
-
-        // 2. 如果有表面法线信息，用法线判断更可靠
-        if (hitNormal.sqrMagnitude > 0.01f)
-        {
-            Vector3 normalH = Vector3.ProjectOnPlane(hitNormal, Vector3.up);
-            if (normalH.sqrMagnitude > 0.01f)
-            {
-                Vector3 right = Vector3.Cross(Vector3.up, desiredDir).normalized;
-                float normalSide = Vector3.Dot(normalH.normalized, right);
-                // 法线指向右 → 障碍在左侧 → 应该右转（+1）
-                if (Mathf.Abs(normalSide) > 0.3f)
-                    side = normalSide > 0f ? 1 : -1;
-            }
-        }
-
-        // 3. 网格验证：如果选择的侧向不可行走，切换
-        Vector3 testDir = Quaternion.Euler(0f, side * 60f, 0f) * desiredDir;
-        if (!IsDirectionGridSafe(pos, testDir, 4f))
-        {
-            Vector3 otherDir = Quaternion.Euler(0f, -side * 60f, 0f) * desiredDir;
-            if (IsDirectionGridSafe(pos, otherDir, 4f))
-                side = -side;
-        }
-
-        // 4. 稳定性：用 agent ID hash 打破完全对称的僵局
-        if (Mathf.Abs(leftSum - rightSum) < 1f)
-            side = GetStableSideBiasSign() > 0f ? 1 : -1;
-
-        return side;
+        float angle = slotIndex * (360f / SteerSlots);
+        return Quaternion.Euler(0f, angle, 0f) * Vector3.forward;
     }
 
     /// <summary>
-    /// 检查某个方向在网格上是否安全（可行走）。
+    /// 判断碰撞体是否为当前 MoveTo 目标小节点（避障豁免）。
+    /// </summary>
+    private bool IsCurrentMoveTarget(Collider col)
+    {
+        if (string.IsNullOrEmpty(_currentMoveTargetNodeId)) return false;
+        if (col == null) return false;
+
+        var info = col.GetComponentInParent<SmallNodeRuntimeInfo>();
+        if (info == null) return false;
+
+        // 尝试匹配 InstanceID
+        string instanceId = col.gameObject.GetInstanceID().ToString();
+        return _currentMoveTargetNodeId.Contains(instanceId);
+    }
+
+    /// <summary>
+    /// Bresenham 逐格检查方向安全性。
+    /// 用 IsWalkable（硬障碍）而非 IsPathSafe，因为避障是应急行为：
+    /// 短暂穿越 clearance zone 比原地卡死要好。
+    /// clearance zone 由 A* 路径规划层保证，避障层不应重复施加。
     /// </summary>
     private bool IsDirectionGridSafe(Vector3 pos, Vector3 dir, float checkDist)
     {
         if (campusGrid == null) return true;
 
-        // 检查 2m 和 checkDist 处
-        Vector3 nearPoint = pos + dir * 2f;
-        Vector2Int nearCell = campusGrid.WorldToGrid(nearPoint);
-        if (campusGrid.IsInBounds(nearCell.x, nearCell.y) && !campusGrid.IsWalkable(nearCell.x, nearCell.y))
-            return false;
+        Vector2Int from = campusGrid.WorldToGrid(pos);
+        Vector2Int to = campusGrid.WorldToGrid(pos + dir * checkDist);
 
-        Vector3 farPoint = pos + dir * checkDist;
-        Vector2Int farCell = campusGrid.WorldToGrid(farPoint);
-        if (campusGrid.IsInBounds(farCell.x, farCell.y) && !campusGrid.IsWalkable(farCell.x, farCell.y))
-            return false;
+        int x0 = from.x, z0 = from.y;
+        int x1 = to.x, z1 = to.y;
+        int dx = Mathf.Abs(x1 - x0), dz = Mathf.Abs(z1 - z0);
+        int sx = x0 < x1 ? 1 : -1, sz = z0 < z1 ? 1 : -1;
+        int err = dx - dz;
 
+        while (true)
+        {
+            if (campusGrid.IsInBounds(x0, z0) && !campusGrid.IsWalkable(x0, z0))
+                return false;
+            if (x0 == x1 && z0 == z1) break;
+
+            int e2 = err * 2;
+            if (e2 > -dz) { err -= dz; x0 += sx; }
+            if (e2 < dx) { err += dx; z0 += sz; }
+        }
         return true;
     }
 
     /// <summary>
-    /// 两侧都不安全时，从多个候选方向中找最安全的。
+    /// 所有方向被 mask 屏蔽时的退化逻辑：从候选方向中找最安全的。
+    /// 限制最大角度 ±150（防止掉头后退），提高对齐权重。
     /// </summary>
     private Vector3 FindSafestDirection(Vector3 pos, Vector3 desiredDir, int layerMask)
     {
-        float[] testAngles = { 0f, -30f, 30f, -60f, 60f, -90f, 90f, -120f, 120f, 180f };
-        float bestClearance = -1f;
+        float[] testAngles = { 0f, -30f, 30f, -60f, 60f, -90f, 90f, -120f, 120f, -150f, 150f };
+        float bestScore = -1f;
         Vector3 bestDir = desiredDir;
 
         for (int i = 0; i < testAngles.Length; i++)
@@ -755,17 +921,23 @@ public class AgentMotionExecutor : MonoBehaviour
             if (TrySphereCastNonSelf(pos, probeRadius, dir, out RaycastHit hit, detectionRange, layerMask))
                 clearance = hit.distance;
 
-            // 网格安全加成
+            float score = clearance;
+
             if (IsDirectionGridSafe(pos, dir, 4f))
-                clearance += 5f;  // 网格安全的方向加大权重
+                score += 5f;
 
-            // 朝目标方向加成
-            float alignment = Mathf.Max(0f, Vector3.Dot(dir, desiredDir)) * 2f;
-            clearance += alignment;
+            // 提高对齐权重，防止轻易选择后退方向
+            float alignment = Mathf.Max(0f, Vector3.Dot(dir, desiredDir)) * detectionRange * 0.4f;
+            score += alignment;
 
-            if (clearance > bestClearance)
+            // 使用 agent ID hash 偏好一侧，打破对称僵局
+            float sideBias = GetStableSideBiasSign();
+            if (Mathf.Sign(testAngles[i]) == sideBias)
+                score += 2f;
+
+            if (score > bestScore)
             {
-                bestClearance = clearance;
+                bestScore = score;
                 bestDir = dir;
             }
         }
@@ -826,7 +998,8 @@ public class AgentMotionExecutor : MonoBehaviour
 
             string otherId = otherAgent.Properties?.AgentID ?? otherAgent.name;
             string selfId = props?.AgentID ?? name;
-            if (string.CompareOrdinal(selfId, otherId) < 0) { repulsion *= 1.6f; yieldMemory[otherId] = Time.time + YieldDuration; }
+            // P2-fix: 让步方(ID较大)获得更强位移主动避让，优先方(ID较小)轻微偏移
+            if (string.CompareOrdinal(selfId, otherId) > 0) { repulsion *= 1.6f; yieldMemory[otherId] = Time.time + YieldDuration; }
             else if (yieldMemory.TryGetValue(otherId, out float yieldUntil) && yieldUntil > Time.time) repulsion *= 0.3f;
 
             result.hasNearbyAgents = true;
@@ -865,24 +1038,50 @@ public class AgentMotionExecutor : MonoBehaviour
             if (TryReplanPath(finalGoal, height, out replanned)) { localStuckCount = 0; return true; }
         }
 
-        // 第 2-3 次：升高 + 重规划
+        // P3-fix: 第 2-3 次，判断卡住原因再决定策略
         if (localStuckCount <= 3)
         {
-            escapeAltitudeBoost += 3f;
-            aerialMotion.TargetHeight = Mathf.Min(defaultTargetHeight + escapeAltitudeBoost, defaultTargetHeight + 10f);
-            Debug.LogWarning($"[AME] {props?.AgentID ?? name} 卡住(×{localStuckCount})，升高至 {aerialMotion.TargetHeight:F1}m");
-            AgentStateServer.PushMotionEvent(props?.AgentID ?? name, "altitude_escape", $"升高 {escapeAltitudeBoost:F1}m 脱困");
-            ResetAvoidanceState();
-            if (TryReplanPath(finalGoal, aerialMotion.TargetHeight, out replanned)) return true;
+            bool isGridBlocked = IsCurrentPositionGridBlocked();
+            if (!isGridBlocked)
+            {
+                // 周围网格可行走但物理碰撞阻塞 → 升高有效
+                escapeAltitudeBoost += 3f;
+                aerialMotion.TargetHeight = Mathf.Min(defaultTargetHeight + escapeAltitudeBoost, defaultTargetHeight + 10f);
+                Debug.LogWarning($"[AME] {props?.AgentID ?? name} 卡住(×{localStuckCount})，物理阻塞，升高至 {aerialMotion.TargetHeight:F1}m");
+                AgentStateServer.PushMotionEvent(props?.AgentID ?? name, "altitude_escape", $"升高 {escapeAltitudeBoost:F1}m 脱困");
+                ResetAvoidanceState();
+                if (TryReplanPath(finalGoal, aerialMotion.TargetHeight, out replanned)) return true;
+            }
+            else
+            {
+                // 周围网格被建筑阻挡 → 升高无效，直接跳航点
+                Debug.LogWarning($"[AME] {props?.AgentID ?? name} 卡住(×{localStuckCount})，网格阻塞，跳过升高直接跳航点");
+            }
         }
 
-        // 第 4 次+：跳过航点
+        // 第 4 次+（或网格阻塞的 2-3 次）：跳过航点
         if (waypointIdx < currentPath.Count - 1)
         {
             waypointIdx++;
             Debug.LogWarning($"[AME] {props?.AgentID ?? name} 卡住(×{localStuckCount})，跳过航点 -> [{waypointIdx}]");
         }
         return false;
+    }
+
+    /// <summary>检查当前位置周围是否被硬障碍（建筑实体）包围。</summary>
+    private bool IsCurrentPositionGridBlocked()
+    {
+        if (campusGrid == null) return false;
+        Vector2Int cur = campusGrid.WorldToGrid(transform.position);
+        int blockedCount = 0;
+        for (int dx = -1; dx <= 1; dx++)
+            for (int dz = -1; dz <= 1; dz++)
+            {
+                int x = cur.x + dx, z = cur.y + dz;
+                if (campusGrid.IsInBounds(x, z) && !campusGrid.IsWalkable(x, z))
+                    blockedCount++;
+            }
+        return blockedCount >= 5;
     }
 
     private bool TryReplanPath(Vector3 finalGoal, float height, out List<Vector3> replannedPath)
@@ -911,17 +1110,23 @@ public class AgentMotionExecutor : MonoBehaviour
     // 工具方法
     // ==================================================================
 
+    // P3-perf: 使用 NonAlloc 缓冲区避免每帧 GC 分配
+    private static readonly RaycastHit[] _sphereCastBuffer = new RaycastHit[16];
+
     private bool TrySphereCastNonSelf(Vector3 origin, float radius, Vector3 direction, out RaycastHit closestHit, float maxDistance, int layerMask)
     {
         closestHit = default;
         if (layerMask == 0 || direction.sqrMagnitude < 0.001f || maxDistance <= 0.01f) return false;
-        RaycastHit[] hits = Physics.SphereCastAll(origin, radius, direction.normalized, maxDistance, layerMask, QueryTriggerInteraction.Ignore);
-        if (hits == null || hits.Length == 0) return false;
+        int count = Physics.SphereCastNonAlloc(origin, radius, direction.normalized, _sphereCastBuffer, maxDistance, layerMask, QueryTriggerInteraction.Ignore);
+        if (count == 0) return false;
         bool found = false; float closestDistance = float.MaxValue;
-        for (int i = 0; i < hits.Length; i++)
+        for (int i = 0; i < count; i++)
         {
-            if (hits[i].collider == null || IsSelfCollider(hits[i].collider)) continue;
-            if (hits[i].distance < closestDistance) { closestDistance = hits[i].distance; closestHit = hits[i]; found = true; }
+            Collider col = _sphereCastBuffer[i].collider;
+            if (col == null || IsSelfCollider(col)) continue;
+            // 仅对 Tree 标签的障碍物生效；行人/资源点等小节点不阻挡无人机
+            if (!col.CompareTag("Tree") && !(_agentLayerIndex >= 0 && col.gameObject.layer == _agentLayerIndex)) continue;
+            if (_sphereCastBuffer[i].distance < closestDistance) { closestDistance = _sphereCastBuffer[i].distance; closestHit = _sphereCastBuffer[i]; found = true; }
         }
         return found;
     }
@@ -930,11 +1135,32 @@ public class AgentMotionExecutor : MonoBehaviour
 
     private void ResetAvoidanceState()
     {
-        _isAvoiding = false;
-        _committedSide = 0;
-        _forwardClearTimer = 0f;
+        _currentMoveTargetNodeId = null;
         localStuckCount = 0;
         if (escapeAltitudeBoost > 0f && aerialMotion != null) { aerialMotion.TargetHeight = defaultTargetHeight; escapeAltitudeBoost = 0f; }
+    }
+
+    /// <summary>
+    /// P3-fix: 退出避障后，将 waypointIdx 推进到当前位置前方的最近航点，
+    /// 跳过已被绕过的航点，防止 Pure Pursuit carrot 回弹到障碍物背后。
+    /// </summary>
+    private void AdvanceWaypointsPastCurrentPos()
+    {
+        if (currentPath == null || currentPath.Count == 0) return;
+        Vector3 pos = transform.position;
+
+        // 找到离当前位置最近的航点
+        float minDist = float.MaxValue;
+        int closestIdx = waypointIdx;
+        for (int i = waypointIdx; i < currentPath.Count; i++)
+        {
+            float d = HorizontalDistance(pos, currentPath[i]);
+            if (d < minDist) { minDist = d; closestIdx = i; }
+        }
+
+        // 如果最近航点在当前索引之后，推进
+        if (closestIdx > waypointIdx)
+            waypointIdx = closestIdx;
     }
 
     private float ResolveCrowdSideSign(IntelligentAgent otherAgent, Vector3 right)
@@ -977,6 +1203,47 @@ public class AgentMotionExecutor : MonoBehaviour
             remaining -= seg; pos = wp;
         }
         return path[path.Count - 1];
+    }
+
+    /// <summary>
+    /// 视线安全 carrot：如果 drone→carrot 直线穿过建筑格，逐步缩短 lookAhead 直到安全。
+    /// 防止 Pure Pursuit 在建筑拐角处"切弯"飞进建筑墙。
+    /// </summary>
+    private Vector3 GetGridSafeCarrot(List<Vector3> path, int fromIdx, float lookAhead)
+    {
+        Vector3 carrot = GetPurePursuitCarrot(path, fromIdx, lookAhead);
+        if (campusGrid == null) return carrot;
+
+        Vector3 myPos = transform.position;
+
+        // 检查 drone→carrot 直线是否穿过建筑
+        if (IsLineGridClear(myPos, carrot))
+            return carrot;
+
+        // 穿过建筑了 → 逐步缩短 lookAhead
+        for (float la = lookAhead * 0.5f; la >= 1f; la *= 0.5f)
+        {
+            carrot = GetPurePursuitCarrot(path, fromIdx, la);
+            if (IsLineGridClear(myPos, carrot))
+                return carrot;
+        }
+
+        // 最短 lookAhead 也不行 → 直接用下一个航点
+        if (fromIdx < path.Count)
+            return path[fromIdx];
+        return carrot;
+    }
+
+    /// <summary>
+    /// 检查两点之间的直线是否不穿过任何不可行走的网格（建筑等）。
+    /// </summary>
+    private bool IsLineGridClear(Vector3 from, Vector3 to)
+    {
+        Vector3 dir = to - from;
+        dir.y = 0f;
+        float dist = dir.magnitude;
+        if (dist < 0.5f) return true;
+        return IsDirectionGridSafe(from, dir / dist, dist);
     }
 
     private Vector3 GetNoisyHoldPos(Vector3 anchor)
@@ -1023,6 +1290,18 @@ public class AgentMotionExecutor : MonoBehaviour
     {
         if (actionCoroutine != null) { StopCoroutine(actionCoroutine); actionCoroutine = null; }
         pathVisualizer?.ClearPath(); ResetAvoidanceState(); currentPath.Clear(); waypointIdx = 0;
+    }
+
+    /// <summary>
+    /// 外部强制中断所有运动执行（由 ADM.AbortCurrentStep 调用）。
+    /// 停止协程、清除路径和运动目标。
+    /// </summary>
+    public void ForceAbort()
+    {
+        AbortCurrentExecutionState();
+        actionRunning = false;
+        currentAction = null;
+        if (aerialMotion != null) aerialMotion.MoveTarget = null;
     }
 
     private static float HorizontalDistance(Vector3 a, Vector3 b) => Vector2.Distance(new Vector2(a.x, a.z), new Vector2(b.x, b.z));

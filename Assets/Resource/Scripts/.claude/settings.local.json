@@ -34,7 +34,8 @@
       "Bash(wc -l MAD_Module/*.cs)",
       "Bash(xargs ls:*)",
       "Bash(ls:*)",
-      "Bash(python convert_geojson.py)"
+      "Bash(python convert_geojson.py)",
+      "Bash(python:*)"
     ]
   }
 }

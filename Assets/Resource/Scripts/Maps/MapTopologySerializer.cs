@@ -145,65 +145,18 @@ public static class MapTopologySerializer
     /// <param name="detectedObjects">PerceptionModule.detectedObjects（当前帧检测到的小节点）。</param>
     /// <param name="enemyAgents">PerceptionModule.enemyAgents（当前帧检测到的敌方智能体）。</param>
     /// <param name="agentWorldPos">智能体当前世界坐标。</param>
+    /// <summary>
+    /// [已废弃] 方位式感知输出对 LLM 决策无可操作性，统一使用记忆中的
+    /// Observation 数据（"green_41附近有资源点"格式）。
+    /// 敌方 agent 信息通过 MemoryModule 记忆同样以 location-based 格式呈现。
+    /// </summary>
+    [System.Obsolete("使用 BuildObservationMemorySummary / MemoryModule Observation 代替")]
     public static string BuildPerceptionSection(
         List<SmallNodeData> detectedObjects,
         List<IntelligentAgent> enemyAgents,
         Vector3 agentWorldPos)
     {
-        var sb = new StringBuilder();
-        bool hasAny = false;
-
-        // ── 1. 小节点感知（按类型+方位聚合） ──────────────────────────
-        if (detectedObjects != null && detectedObjects.Count > 0)
-        {
-            // 按 (NodeType, compass方位) 聚合
-            var groups = new Dictionary<(SmallNodeType type, string compass), (int count, float minDist)>();
-            foreach (var node in detectedObjects)
-            {
-                if (node.NodeType == SmallNodeType.Agent) continue; // 敌方agent单独处理
-                float dx = node.WorldPosition.x - agentWorldPos.x;
-                float dz = node.WorldPosition.z - agentWorldPos.z;
-                float dist = Mathf.Sqrt(dx * dx + dz * dz);
-                string compass = GetCompass(dx, dz);
-                var key = (node.NodeType, compass);
-
-                if (groups.TryGetValue(key, out var existing))
-                    groups[key] = (existing.count + 1, Mathf.Min(existing.minDist, dist));
-                else
-                    groups[key] = (1, dist);
-            }
-
-            // 按距离排序输出
-            var sorted = groups.OrderBy(g => g.Value.minDist);
-            foreach (var kv in sorted)
-            {
-                string typeName = GetSmallNodeTypeName(kv.Key.type);
-                string countStr = kv.Value.count > 1 ? $"({kv.Value.count})" : "";
-                sb.AppendLine($"- {typeName}{countStr} @ {kv.Key.compass}方 {kv.Value.minDist:0}m");
-                hasAny = true;
-            }
-        }
-
-        // ── 2. 敌方智能体感知 ──────────────────────────────────────────
-        if (enemyAgents != null && enemyAgents.Count > 0)
-        {
-            foreach (var enemy in enemyAgents)
-            {
-                if (enemy == null) continue;
-                float dx = enemy.transform.position.x - agentWorldPos.x;
-                float dz = enemy.transform.position.z - agentWorldPos.z;
-                float dist = Mathf.Sqrt(dx * dx + dz * dz);
-                string compass = GetCompass(dx, dz);
-                string status = enemy.CurrentState != null ? enemy.CurrentState.Status.ToString() : "Unknown";
-                sb.AppendLine($"- [敌方] {enemy.Properties.AgentID} @ {compass}方 {dist:0}m（状态：{status}）");
-                hasAny = true;
-            }
-        }
-
-        if (!hasAny)
-            sb.AppendLine("（传感器范围内未检测到目标）");
-
-        return sb.ToString().TrimEnd();
+        return "（感知数据已整合到历史观测记忆中）";
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
