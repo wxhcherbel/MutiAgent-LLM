@@ -43,6 +43,7 @@ public class AerialMotionController : MonoBehaviour
     private float driftNoiseX;
     private float driftNoiseZ;
     private float bobNoise;
+    private float requestedSpeedScale = 1f;
 
     public Vector3? MoveTarget
     {
@@ -80,6 +81,16 @@ public class AerialMotionController : MonoBehaviour
         set => maxSpeed = Mathf.Max(0.1f, value);
     }
 
+    /// <summary>
+    /// 由上层局部规划器动态下发的速度缩放。
+    /// 取值越小，飞控越会提前减速，避免贴着障碍物硬冲。
+    /// </summary>
+    public float RequestedSpeedScale
+    {
+        get => requestedSpeedScale;
+        set => requestedSpeedScale = Mathf.Clamp(value, 0.05f, 1f);
+    }
+
     private void Awake()
     {
         rb = GetComponent<Rigidbody>();
@@ -109,7 +120,7 @@ public class AerialMotionController : MonoBehaviour
         Vector3 desiredPlanarVelocity = Vector3.zero;
         if (planarDistance > stopDistance)
         {
-            float desiredSpeed = maxSpeed;
+            float desiredSpeed = maxSpeed * requestedSpeedScale;
             if (planarDistance < slowDownDistance)
             {
                 desiredSpeed *= Mathf.Clamp01(planarDistance / Mathf.Max(0.01f, slowDownDistance));

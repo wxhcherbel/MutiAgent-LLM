@@ -40,12 +40,12 @@ public static class MapTopologySerializer
         Vector3? targetWorldPos = null,
         float radius = 300f)
     {
-        if (grid == null || grid.featureSpatialProfileByUid == null)
+        if (grid == null || grid.featureSpatialProfileBySceneName == null)
             return "(地图数据不可用)";
 
         // ── 1. 收集半径内要素（最多 20 个，按距离升序） ──────────────
         var nearby = new List<(FeatureSpatialProfile profile, float dist)>();
-        foreach (var kv in grid.featureSpatialProfileByUid)
+        foreach (var kv in grid.featureSpatialProfileBySceneName)
         {
             var p = kv.Value;
             if (p == null) continue;
@@ -107,7 +107,7 @@ public static class MapTopologySerializer
             float dx = p.centroidWorld.x - agentWorldPos.x;
             float dz = p.centroidWorld.z - agentWorldPos.z;
             string compass = GetCompass(dx, dz);
-            string displayName = string.IsNullOrWhiteSpace(p.runtimeAlias) ? p.name : p.runtimeAlias;
+            string displayName = string.IsNullOrWhiteSpace(p.sceneName) ? p.name : p.sceneName;
             string kind = string.IsNullOrWhiteSpace(p.kind) ? "other" : p.kind;
 
             string toward = "";

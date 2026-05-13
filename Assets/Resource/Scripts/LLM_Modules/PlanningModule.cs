@@ -67,6 +67,7 @@ public class PlanningModule : MonoBehaviour
     /// </summary>
     private PersonalitySystem _personalitySystem;
 
+    private ActionDecisionModule _actionDecisionModule;
 
     private static int msnCounter;
 
@@ -78,6 +79,7 @@ public class PlanningModule : MonoBehaviour
 
         // 获取人格系统（挂在同一 agent GameObject 上）
         _personalitySystem = GetComponent<PersonalitySystem>();
+        _actionDecisionModule = GetComponent<ActionDecisionModule>();
 
         // 向 AgentPlanRegistry 注册，供 MADDecisionForwarder 在任务继承时查询本 agent 的剩余步骤
         if (props != null)
@@ -218,7 +220,6 @@ public class PlanningModule : MonoBehaviour
         {
             Debug.LogError("[PlanningModule] LLM#1 返回空");
             SetState(PlanningState.Failed);
-            busy = false;
             yield break;
         }
         Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] LLM#1 任务解析原始回复: {llmResult}");
@@ -232,7 +233,6 @@ public class PlanningModule : MonoBehaviour
         {
             Debug.LogError($"[PlanningModule] LLM#1 JSON解析失败: {e.Message}\n原文: {llmResult}");
             SetState(PlanningState.Failed);
-            busy = false;
             yield break;
         }
 
@@ -346,7 +346,6 @@ public class PlanningModule : MonoBehaviour
         if (string.IsNullOrWhiteSpace(llmResult))
         {
             Debug.LogError("[PlanningModule] LLM#2 返回空");
-            busy = false; // BUG-03 修复:失败路径必须重置 busy,否则后续任务无法提交
             SetState(PlanningState.Failed);
             yield break;
         }
@@ -377,7 +376,6 @@ public class PlanningModule : MonoBehaviour
         catch (Exception e)
         {
             Debug.LogError($"[PlanningModule] LLM#2 JSON解析失败: {e.Message}");
-            busy = false; // BUG-03 修复
             SetState(PlanningState.Failed);
             yield break;
         }
@@ -633,7 +631,7 @@ public class PlanningModule : MonoBehaviour
     {
         SetState(PlanningState.StepGen);
 
-        Vector3 pos   = dynState != null ? dynState.Position : transform.position;
+        string locationName = _actionDecisionModule?.ResolveCurrentLocationName() ?? "未知位置";
         float battery = dynState != null ? dynState.BatteryLevel : 100f;
 
         var slotConstraints = new List<StructuredConstraint>();
@@ -670,7 +668,7 @@ public class PlanningModule : MonoBehaviour
         "## 输入上下文\n" +
         $"计划(desc): {confirmedSlot.desc}\n" +
         $"当前AgentID: {props?.AgentID} | 角色: {confirmedSlot.role}\n" +
-        $"无人机状态: [位置: {pos}, 电量: {battery:F0}%]\n" +
+        $"无人机状态: [当前位置: {locationName}, 电量: {battery:F0}%]\n" +
         $"待分配约束列表: {constraintsJson}\n\n" +
 
         "## 任务一:步骤拆分与提取标准（正向定义）\n" +
@@ -722,13 +720,12 @@ public class PlanningModule : MonoBehaviour
 
         string llmResult = null;
         yield return StartCoroutine(llm.SendRequest(
-            new LLMRequestOptions { prompt = prompt, maxTokens = 800, enableJsonMode = true, callTag = "LLM#4_StepGen", agentId = props?.AgentID },
+            new LLMRequestOptions { prompt = prompt, maxTokens = 1200, enableJsonMode = true, callTag = "LLM#4_StepGen", agentId = props?.AgentID },
             r => llmResult = r));
 
         if (string.IsNullOrWhiteSpace(llmResult))
         {
             Debug.LogError($"[{props?.AgentID}][PlanningModule] RunStepGeneration LLM 返回空");
-            busy = false;
             SetState(PlanningState.Failed);
             yield break;
         }
@@ -760,7 +757,6 @@ public class PlanningModule : MonoBehaviour
         catch (Exception e)
         {
             Debug.LogError($"{props?.AgentID ?? "Unknown"}: [PlanningModule] RunStepGeneration JSON解析失败: {e.Message}");
-            busy = false;
             SetState(PlanningState.Failed);
             yield break;
         }
@@ -1140,11 +1136,18 @@ public class PlanningModule : MonoBehaviour
     // 状态管理
     // ─────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// 统一状态入口：
+    /// 1. 写入当前状态；
+    /// 2. 刷新该状态的超时起点；
+    /// 3. 在 Done / Failed 时释放 busy 锁，避免任务链卡死。
+    /// Failed 表示本轮规划/执行链路已经终止，需要外部重新提任务或重新注入计划。
+    /// </summary>
     private void SetState(PlanningState s)
     {
         state     = s;
         waitStart = Time.time;
-        // BUG-M4: Failed/Done 时自动释放 busy 锁,防止 PlanningModule 卡死
+        // 统一在终态释放 busy，避免旧逻辑遗漏导致 PlanningModule 卡死。
         if (s == PlanningState.Failed || s == PlanningState.Done) busy = false;
         Debug.Log($"{props?.AgentID ?? "Unknown"}: [PlanningModule] {props?.AgentID} → {s}");
     }
@@ -1173,7 +1176,6 @@ public class PlanningModule : MonoBehaviour
         {
             Debug.LogWarning($"{props?.AgentID ?? "Unknown"}: [PlanningModule] {props?.AgentID} 等待超时,状态={state}");
             SetState(PlanningState.Failed);
-            busy = false;
         }
     }
 
@@ -1537,7 +1539,6 @@ public class PlanningModule : MonoBehaviour
             Debug.LogWarning($"[PlanningModule] {props?.AgentID} 涌现计划已过期" +
                 $"（已过 {Time.time - agentPlan.createdTime:F0}s，有效期 {agentPlan.maxValidDuration:F0}s），标记 Failed");
             SetState(PlanningState.Failed);
-            busy = false;
             return;
         }
 
@@ -1546,7 +1547,6 @@ public class PlanningModule : MonoBehaviour
         {
             Debug.Log($"[PlanningModule] {props?.AgentID} 所有步骤完成 → Done");
             SetState(PlanningState.Done);
-            busy = false;
         }
     }
 
@@ -1624,8 +1624,7 @@ public class PlanningModule : MonoBehaviour
         if (state == PlanningState.Active)
         {
             Debug.LogWarning($"[Planning] 任务 {parsed?.msnId} 时间限制 {seconds}s 到达,强制终止。");
-            state = PlanningState.Failed;
-            busy = false;
+            SetState(PlanningState.Failed);
         }
     }
     // ─────────────────────────────────────────────────────────

@@ -26,7 +26,7 @@ public enum CampusGridCellType : byte
 [Serializable]
 internal class Feature2D
 {
-    /// <summary>要素唯一 ID。</summary>
+    /// <summary>导入期原始 UID，仅作为元数据保留，不参与运行时查询。</summary>
     public string uid = "";
 
     /// <summary>原始名称。</summary>
@@ -35,10 +35,10 @@ internal class Feature2D
     /// <summary>归一化后的要素类型文本。</summary>
     public string kind = "other";
 
-    /// <summary>用于运行时查询的最终有效名称。</summary>
+    /// <summary>原始显示名称；无显式名称时退回到类型名。</summary>
     public string effectiveName = "";
 
-    /// <summary>运行时生成的别名。</summary>
+    /// <summary>该要素在 Unity 场景中的基础对象名，也是运行时唯一标准名。</summary>
     public string runtimeAlias = "";
 
     /// <summary>要素边界框。</summary>
@@ -99,6 +99,9 @@ internal enum FeatureRasterMode : byte
 /// </summary>
 internal class RasterAreaPart
 {
+    /// <summary>该分片在 Unity 场景中的精确对象名。</summary>
+    public string sceneObjectName = "";
+
     /// <summary>外边界多边形。</summary>
     public readonly List<Vector2> outer = new List<Vector2>();
 
@@ -133,13 +136,16 @@ internal class RasterStrokeQuad
 [Serializable]
 public class FeatureSpatialProfile
 {
-    /// <summary>要素唯一 ID。</summary>
+    /// <summary>导入期原始 UID，仅作为元数据保留。</summary>
     public string uid = "";
 
-    /// <summary>要素名称。</summary>
+    /// <summary>Unity 场景中的精确对象名，也是运行时查询唯一标准名。</summary>
+    public string sceneName = "";
+
+    /// <summary>原始显示名称。</summary>
     public string name = "";
 
-    /// <summary>运行时别名。</summary>
+    /// <summary>兼容旧字段，值与 sceneName 保持一致。</summary>
     public string runtimeAlias = "";
 
     /// <summary>要素类型文本。</summary>
@@ -190,13 +196,16 @@ public class FeatureSpatialProfile
 /// </summary>
 internal class FeatureSpatialIndex
 {
-    /// <summary>要素唯一 ID。</summary>
+    /// <summary>导入期原始 UID，仅作为元数据保留。</summary>
     public string uid = "";
 
-    /// <summary>要素名称。</summary>
+    /// <summary>Unity 场景中的精确对象名，也是运行时查询唯一标准名。</summary>
+    public string sceneName = "";
+
+    /// <summary>原始显示名称。</summary>
     public string name = "";
 
-    /// <summary>运行时别名。</summary>
+    /// <summary>兼容旧字段，值与 sceneName 保持一致。</summary>
     public string runtimeAlias = "";
 
     /// <summary>要素类型文本。</summary>

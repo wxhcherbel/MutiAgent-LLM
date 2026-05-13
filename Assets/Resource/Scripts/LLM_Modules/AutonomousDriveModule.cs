@@ -146,8 +146,7 @@ public class AutonomousDriveModule : MonoBehaviour
             yield break;
         }
 
-        // 3. 收集记忆摘要和环境上下文（三段式地图）
-        string memorySummary = BuildMemorySummary();
+        // 3. 检查任务状态，收集环境上下文
         if (HasOngoingMission())
         {
             Debug.Log($"[{_agent.Properties.AgentID}] SoloEmergence 跳过：PlanningModule 已有活跃或处理中任务");
@@ -161,11 +160,9 @@ public class AutonomousDriveModule : MonoBehaviour
         string strategicMap = _campusGrid != null
             ? MapTopologySerializer.GetStrategicMap(_campusGrid, _agent.transform.position)
             : "(地图不可用)";
-        string memoryObservations = BuildObservationMemorySummary();
 
         // 4. 调用 LLM 生成任务目标 + 步骤
-        string prompt = BuildEmergencePrompt(topDrive.Key, topDrive.Value, locationName,
-            strategicMap, memoryObservations, memorySummary);
+        string prompt = BuildEmergencePrompt(topDrive.Key, topDrive.Value, locationName, strategicMap);
         string llmResponse = null;
         yield return StartCoroutine(_llm.SendRequest(
             new LLMRequestOptions
@@ -330,27 +327,84 @@ public class AutonomousDriveModule : MonoBehaviour
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // 记忆摘要（注入 prompt）
+    // 提示词构建（Solo 涌现）
     // ─────────────────────────────────────────────────────────────────────
 
-    private string BuildMemorySummary()
+    /// <summary>
+    /// 格式化当前感知到的敌方列表。无敌方时返回空字符串。
+    /// </summary>
+    private string FormatEnemyList()
+    {
+        var enemies = _perceptionModule?.enemyAgents;
+        if (enemies == null || enemies.Count == 0) return string.Empty;
+
+        var sb = new System.Text.StringBuilder();
+        foreach (var enemy in enemies)
+        {
+            if (enemy == null) continue;
+            float dx = enemy.transform.position.x - _agent.transform.position.x;
+            float dz = enemy.transform.position.z - _agent.transform.position.z;
+            string compass = MapTopologySerializer.GetCompass(dx, dz);
+            float dist = Mathf.Sqrt(dx * dx + dz * dz);
+            string status = enemy.CurrentState != null ? enemy.CurrentState.Status.ToString() : "Unknown";
+            sb.AppendLine($"- {enemy.Properties.AgentID}：{compass}方向 {dist:0}m，状态={status}");
+        }
+        return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// 构建 Solo 涌现的完整提示词。内部自行查询记忆和感知。
+    /// </summary>
+    private string BuildEmergencePrompt(string drive, float strength, string loc, string strategicMap)
+    {
+        return
+        $@"你是无人机 {_agent.Properties.AgentID}。你现在处于自主思考模式。
+
+        ## 当前情境
+        - 位置：{loc}
+        - 核心驱动：{drive} (强度 {strength:F2})
+
+        ## 战略地图（建筑/地标拓扑）
+        {strategicMap}
+
+        {BuildMemorySection()}
+        {BuildRoleSection(drive)}
+        ## 思考要求
+        根据驱动、环境和记忆，生成一个有价值的任务目标和 2-5 个具体执行步骤。
+        每个步骤为自然语言动作描述（如""前往北区执行侦察""、""观察周边环境并记录异常""）。
+
+        ## 输出格式（严格 JSON）
+        {{
+        ""thought"": ""简短的内心独白"",
+        ""goal"": ""自然语言任务目标"",
+        ""steps"": [""步骤1"", ""步骤2"", ""步骤3""],
+        ""suggestion"": ""从本次决策中总结的可复用策略（如'在高威胁区域优先选择隐蔽路线'），若无则留空"",
+        ""confidence"": ""高/中/低""
+        }}";
+    }
+
+    /// <summary>查询环境观测 + 已覆盖区域记忆，返回格式化文本段落。无记忆时返回空。</summary>
+    private string BuildMemorySection()
     {
         if (_memoryModule == null) return string.Empty;
-
         var parts = new List<string>();
 
-        var enemyMemories = _memoryModule.Recall(new MemoryQuery
+        var observations = _memoryModule.Recall(new MemoryQuery
         {
             kinds    = new[] { AgentMemoryKind.Observation },
-            freeText = "敌方",
-            maxCount = 3
+            maxCount = 5
         });
-        if (enemyMemories != null && enemyMemories.Count > 0)
+        if (observations != null && observations.Count > 0)
         {
-            var zones = enemyMemories
-                .Where(m => !string.IsNullOrWhiteSpace(m.targetRef))
-                .Select(m => m.targetRef).Distinct();
-            parts.Add("近期威胁活动区域：" + string.Join("、", zones));
+            var items = new List<(int minutesAgo, string summary)>();
+            foreach (var m in observations)
+            {
+                int minutesAgo = Mathf.Max(1, (int)(DateTime.UtcNow - m.createdAt).TotalMinutes);
+                items.Add((minutesAgo, m.summary));
+            }
+            string obsText = MapTopologySerializer.BuildMemoryObservationsSection(items);
+            if (!string.IsNullOrWhiteSpace(obsText))
+                parts.Add($"## 环境观测记忆\n{obsText}");
         }
 
         var coverageMemories = _memoryModule.Recall(new MemoryQuery
@@ -362,309 +416,173 @@ public class AutonomousDriveModule : MonoBehaviour
         {
             var zones = coverageMemories
                 .Where(m => !string.IsNullOrWhiteSpace(m.targetRef))
-                .Select(m => m.targetRef).Distinct();
-            if (zones.Any())
-                parts.Add("近期已覆盖区域：" + string.Join("、", zones));
+                .Select(m => m.targetRef).Distinct().ToList();
+            if (zones.Count > 0)
+                parts.Add("## 近期已覆盖区域\n" + string.Join("、", zones));
         }
 
-        return parts.Count > 0 ? string.Join("\n", parts) : string.Empty;
+        return parts.Count > 0 ? string.Join("\n\n", parts) + "\n" : string.Empty;
     }
 
-    /// <summary>
-    /// 从 MemoryModule 中查询近期 Observation 记忆，格式化为历史观测摘要。
-    /// 弥补传感器范围有限的问题，提供超视距历史感知信息。
-    /// </summary>
-    private string BuildObservationMemorySummary()
+    /// <summary>根据驱动类型构建角色指令段落。</summary>
+    private string BuildRoleSection(string drive)
+    {
+        if (drive == "Disruption")
+            return BuildDisruptionRole();
+        else
+            return BuildCooperativeRole();
+    }
+
+    /// <summary>破坏型角色指令：有情报时给干扰策略，无情报时引导搜索。</summary>
+    private string BuildDisruptionRole()
+    {
+        string enemyList    = FormatEnemyList();
+        string enemyMemText = FormatEnemyMemories();
+        bool hasAnyIntel    = !string.IsNullOrWhiteSpace(enemyList) || !string.IsNullOrWhiteSpace(enemyMemText);
+
+        if (!hasAnyIntel)
+            return
+            @"## 角色：破坏型智能体（未侦测到敌方）
+            ### 优先任务：搜索与侦察
+            - 首要任务是发现和定位敌方智能体
+            - 前往高价值区域（资源点、建筑密集区、交通要道）巡逻
+            - 选择尚未巡逻过的区域（参考历史观测记忆）
+            - 发现敌方后记录其位置和行动状态
+            ";
+
+            string liveSection = string.IsNullOrWhiteSpace(enemyList) ? "" :
+            $@"### 当前侦测到的敌方智能体
+            {enemyList}
+            ";
+            string memSection = string.IsNullOrWhiteSpace(enemyMemText) ? "" :
+            $@"### 近期敌方活动记忆
+            {enemyMemText}
+            ";
+            return
+            $@"## 角色：破坏型智能体
+            核心目标：阻碍敌方任务执行。
+
+            {liveSection}{memSection}### 干扰策略参考
+            根据敌方状态选择最有效的干扰方式：
+            - 拦截：飞往敌方当前位置或预判路径，阻断其移动
+            - 抢占：先于敌方到达其任务目标位置，占据关键资源点
+            - 跟踪监视：持续跟踪敌方，记录其行动并上报
+            - 区域骚扰：在敌方任务区域反复巡逻制造干扰
+            ";
+    }
+
+    /// <summary>协作型角色指令：只在实际感知到敌方时注入威胁警告。</summary>
+    private string BuildCooperativeRole()
+    {
+        string enemyList = FormatEnemyList();
+        if (string.IsNullOrWhiteSpace(enemyList)) return string.Empty;
+
+        return
+        $@"## 威胁警告
+        附近存在破坏型敌方智能体，它们会试图干扰你的任务执行。
+
+        ### 当前侦测到的敌方智能体
+        {enemyList}
+
+        ### 反干扰策略
+        - 路径规避：避开敌方智能体所在区域，选择远离敌方的路线到达目标
+        - 时机选择：如果敌方正在你的目标区域附近，优先前往其他同等价值的目标
+        - 快速执行：在敌方活跃区域尽量缩短停留时间，快进快出
+        - 预警意识：在规划步骤时加入观察周边的环节，及时发现敌方接近
+        - 切勿主动接近敌方或与其对抗，你的核心目标是完成自己的任务
+        ";
+    }
+
+    /// <summary>格式化记忆中的敌方活动。无记忆时返回空字符串。</summary>
+    private string FormatEnemyMemories()
     {
         if (_memoryModule == null) return string.Empty;
-
-        var observations = _memoryModule.Recall(new MemoryQuery
+        var enemyMem = _memoryModule.Recall(new MemoryQuery
         {
             kinds    = new[] { AgentMemoryKind.Observation },
+            freeText = "敌方",
             maxCount = 5
         });
-        if (observations == null || observations.Count == 0) return string.Empty;
+        if (enemyMem == null || enemyMem.Count == 0) return string.Empty;
 
-        var items = new List<(int minutesAgo, string summary)>();
-        foreach (var m in observations)
+        var lines = new List<string>();
+        foreach (var m in enemyMem)
         {
             int minutesAgo = Mathf.Max(1, (int)(DateTime.UtcNow - m.createdAt).TotalMinutes);
-            items.Add((minutesAgo, m.summary));
+            lines.Add($"- {minutesAgo}分钟前：{m.summary}");
         }
-
-        return MapTopologySerializer.BuildMemoryObservationsSection(items);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────
-    // 破坏性 agent 提示词构建
-    // ─────────────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// 构建破坏性 agent 的完整干扰提示词，包含敌方情报和策略指导。
-    /// 分两种情况：有敌方情报时给出具体干扰策略，无情报时引导搜索巡逻。
-    /// </summary>
-    private string BuildDisruptionInstruction()
-    {
-        string enemyContext = BuildDisruptionContext();
-        bool hasEnemyIntel = !string.IsNullOrWhiteSpace(enemyContext);
-
-        if (hasEnemyIntel)
-        {
-            return "⚠️ 你是破坏型智能体，核心目标：阻碍敌方任务执行。\n\n" +
-                   enemyContext + "\n" +
-                   "## 干扰策略参考\n" +
-                   "根据敌方状态选择最有效的干扰方式：\n" +
-                   "- 拦截：飞往敌方当前位置或预判路径，阻断其移动\n" +
-                   "- 抢占：先于敌方到达其任务目标位置，占据关键资源点\n" +
-                   "- 跟踪监视：持续跟踪敌方，记录其行动并上报\n" +
-                   "- 区域骚扰：在敌方任务区域反复巡逻制造干扰\n\n";
-        }
-        else
-        {
-            return "⚠️ 你是破坏型智能体，但当前未侦测到任何敌方目标。\n\n" +
-                   "## 优先任务：搜索与侦察\n" +
-                   "- 首要任务是发现和定位敌方智能体\n" +
-                   "- 前往高价值区域（资源点、建筑密集区、交通要道）巡逻\n" +
-                   "- 选择尚未巡逻过的区域（参考历史观测记忆）\n" +
-                   "- 发现敌方后记录其位置和行动状态\n\n";
-        }
-    }
-
-    /// <summary>
-    /// 收集实时感知和记忆中的敌方情报，生成结构化文本。
-    /// </summary>
-    private string BuildDisruptionContext()
-    {
-        var sb = new System.Text.StringBuilder();
-
-        // 1. 实时感知：当前可见敌方
-        var enemies = _perceptionModule?.enemyAgents;
-        if (enemies != null && enemies.Count > 0)
-        {
-            sb.AppendLine("## 当前侦测到的敌方智能体");
-            foreach (var enemy in enemies)
-            {
-                if (enemy == null) continue;
-                float dx = enemy.transform.position.x - _agent.transform.position.x;
-                float dz = enemy.transform.position.z - _agent.transform.position.z;
-                string compass = MapTopologySerializer.GetCompass(dx, dz);
-                float dist = Mathf.Sqrt(dx * dx + dz * dz);
-                string status = enemy.CurrentState != null ? enemy.CurrentState.Status.ToString() : "Unknown";
-                sb.AppendLine($"- {enemy.Properties.AgentID}：{compass}方向 {dist:0}m，状态={status}");
-            }
-        }
-
-        // 2. 记忆：近期敌方观测
-        if (_memoryModule != null)
-        {
-            var enemyMemories = _memoryModule.Recall(new MemoryQuery
-            {
-                kinds    = new[] { AgentMemoryKind.Observation },
-                freeText = "敌方",
-                maxCount = 5
-            });
-            if (enemyMemories != null && enemyMemories.Count > 0)
-            {
-                sb.AppendLine("## 近期敌方活动记忆");
-                foreach (var m in enemyMemories)
-                {
-                    int minutesAgo = Mathf.Max(1, (int)(DateTime.UtcNow - m.createdAt).TotalMinutes);
-                    sb.AppendLine($"- {minutesAgo}分钟前：{m.summary}");
-                }
-            }
-        }
-
-        return sb.ToString().TrimEnd();
-    }
-
-    // ─────────────────────────────────────────────────────────────────────
-    // 协作型 agent 提示词构建（含反干扰意识）
-    // ─────────────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// 构建协作型（正常工作）agent 的角色提示词。
-    /// 如果感知到或记忆中有敌方智能体，则额外注入反干扰/规避指导。
-    /// </summary>
-    private string BuildCooperativeInstruction()
-    {
-        // 检查是否有敌方威胁（实时感知 + 记忆）
-        bool hasLiveEnemy = _perceptionModule?.enemyAgents != null && _perceptionModule.enemyAgents.Count > 0;
-        bool hasEnemyMemory = false;
-        if (_memoryModule != null)
-        {
-            var enemyMem = _memoryModule.Recall(new MemoryQuery
-            {
-                kinds    = new[] { AgentMemoryKind.Observation },
-                freeText = "敌方",
-                maxCount = 3
-            });
-            hasEnemyMemory = enemyMem != null && enemyMem.Count > 0;
-        }
-
-        if (!hasLiveEnemy && !hasEnemyMemory)
-            return string.Empty; // 无威胁时不额外注入，保持正常决策
-
-        var csb = new System.Text.StringBuilder();
-        csb.AppendLine("⚠️ 威胁警告：附近存在破坏型敌方智能体，它们会试图干扰你的任务执行。\n");
-
-        // 列出当前可见敌方
-        if (hasLiveEnemy)
-        {
-            csb.AppendLine("## 当前侦测到的敌方智能体");
-            foreach (var enemy in _perceptionModule.enemyAgents)
-            {
-                if (enemy == null) continue;
-                float edx = enemy.transform.position.x - _agent.transform.position.x;
-                float edz = enemy.transform.position.z - _agent.transform.position.z;
-                string compass = MapTopologySerializer.GetCompass(edx, edz);
-                float dist = Mathf.Sqrt(edx * edx + edz * edz);
-                string status = enemy.CurrentState != null ? enemy.CurrentState.Status.ToString() : "Unknown";
-                csb.AppendLine($"- {enemy.Properties.AgentID}：{compass}方向 {dist:0}m，状态={status}");
-            }
-            csb.AppendLine();
-        }
-
-        // 列出记忆中的敌方（仅在无实时感知时补充）
-        if (hasEnemyMemory && !hasLiveEnemy)
-        {
-            var enemyMem2 = _memoryModule.Recall(new MemoryQuery
-            {
-                kinds    = new[] { AgentMemoryKind.Observation },
-                freeText = "敌方",
-                maxCount = 3
-            });
-            csb.AppendLine("## 近期敌方活动记忆");
-            foreach (var m in enemyMem2)
-            {
-                int minutesAgo = Mathf.Max(1, (int)(DateTime.UtcNow - m.createdAt).TotalMinutes);
-                csb.AppendLine($"- {minutesAgo}分钟前：{m.summary}");
-            }
-            csb.AppendLine();
-        }
-
-        csb.AppendLine("## 反干扰策略（在执行正常任务的同时，务必考虑以下要点）");
-        csb.AppendLine("- 路径规避：避开敌方智能体所在区域，选择远离敌方的路线到达目标");
-        csb.AppendLine("- 时机选择：如果敌方正在你的目标区域附近，优先前往其他同等价值的目标");
-        csb.AppendLine("- 快速执行：在敌方活跃区域尽量缩短停留时间，快进快出");
-        csb.AppendLine("- 预警意识：在规划步骤时加入观察周边的环节，及时发现敌方接近");
-        csb.AppendLine("- 切勿主动接近敌方或与其对抗，你的核心目标是完成自己的任务\n");
-
-        return csb.ToString();
-    }
-
-    // ─────────────────────────────────────────────────────────────────────
-    // Prompt 构建
-    // ─────────────────────────────────────────────────────────────────────
-
-    private string BuildEmergencePrompt(
-        string drive, float strength, string loc,
-        string strategicMap, string memoryObservations,
-        string memorySummary)
-    {
-        string memSection = string.IsNullOrWhiteSpace(memorySummary)
-            ? string.Empty
-            : $"## 近期记忆摘要\n{memorySummary}\n\n";
-
-        string memObsSection = string.IsNullOrWhiteSpace(memoryObservations)
-            ? string.Empty
-            : $"## 环境观测（哪些区域有什么）\n{memoryObservations}\n\n";
-
-        // 根据 agent 阵营构建不同的角色指令
-        string roleInstruction;
-        if (drive == "Disruption")
-        {
-            roleInstruction = BuildDisruptionInstruction();
-        }
-        else
-        {
-            roleInstruction = BuildCooperativeInstruction();
-        }
-
-        return $"你是无人机 {_agent.Properties.AgentID}。你现在处于自主思考模式。\n" +
-               $"## 当前情境\n" +
-               $"- 位置：{loc}\n" +
-               $"- 核心驱动：{drive} (强度 {strength:F2})\n\n" +
-               $"## 战略地图（建筑/地标拓扑）\n{strategicMap}\n\n" +
-               memObsSection +
-               memSection +
-               roleInstruction +
-               $"## 思考要求\n" +
-               $"根据驱动、环境和记忆，生成一个有价值的任务目标和 2-5 个具体执行步骤。\n" +
-               $"每个步骤为自然语言动作描述（如\"前往北区执行侦察\"、\"观察周边环境并记录异常\"）。\n\n" +
-               $"## 输出格式（严格 JSON）\n" +
-               "{\n" +
-               "  \"thought\": \"简短的内心独白\",\n" +
-               "  \"goal\": \"自然语言任务目标\",\n" +
-               "  \"steps\": [\"步骤1\", \"步骤2\", \"步骤3\"],\n" +
-               "  \"suggestion\": \"从本次决策中总结的可复用策略（如'在高威胁区域优先选择隐蔽路线'），若无则留空\",\n" +
-               "  \"confidence\": \"高/中/低\"\n" +
-               "}\n";
+        return string.Join("\n", lines);
     }
 
     private string BuildCollabSetupPrompt(
         string eventDesc, string location,
         float batteryRatio, string currentLocation,
-        string strategicMap, string observationSummary, string memorySummary)
+        string strategicMap)
     {
-        string memSection = string.IsNullOrWhiteSpace(memorySummary)
-            ? ""
-            : $"## 近期记忆\n{memorySummary}\n\n";
+        return
+        $@"你是无人机 {_agent.Properties.AgentID}，正在执行独立任务时感知到需要协作的新情况。请评估是否值得发起协作，并设计协作方案。
 
-        string obsSection = string.IsNullOrWhiteSpace(observationSummary)
-            ? ""
-            : $"## 历史观测\n{observationSummary}\n\n";
+        ## 你的当前状态
+        - 当前位置：{currentLocation}
+        - 电量：{batteryRatio:P0}
+        - 当前任务：正在执行 Solo 任务
 
-        return $"你是无人机 {_agent.Properties.AgentID}，正在执行独立任务时感知到需要协作的新情况。请评估是否值得发起协作，并设计协作方案。\n\n" +
-               $"## 你的当前状态\n" +
-               $"- 当前位置：{currentLocation}\n" +
-               $"- 电量：{batteryRatio:P0}\n" +
-               $"- 当前任务：正在执行 Solo 任务\n\n" +
-               $"## 触发事件\n" +
-               $"- {eventDesc}\n" +
-               $"- 发生区域：{location}\n\n" +
-               $"## 附近环境\n{strategicMap}\n\n" +
-               obsSection +
-               memSection +
-               "## 协作约束类型详细说明\n" +
-               "协作任务需要设计结构化约束来协调多个智能体。共有三种约束类型：\n\n" +
-               "### C1 - 资源互斥约束\n" +
-               "含义：某个资源或目标只能由一个智能体独占操作，其他智能体需等待。\n" +
-               "示例：只有一个充电桩，drone_A 使用时 drone_B 必须等待。\n" +
-               "字段：constraintId(唯一ID), cType=\"C1\", subject(执行者ID), targetObject(目标名), exclusive(是否独占?true:false)\n\n" +
-               "### C2 - 同步完成约束\n" +
-               "含义：多个智能体必须同时完成各自子任务，或一方完成后另一方才执行下一步。\n" +
-               "示例：两架无人机分别到达目标区域两端后同时开始扫描。\n" +
-               "字段：constraintId(唯一ID), cType=\"C2\", condition(完成条件), syncWith(同步等待的智能体ID列表)\n\n" +
-               "### C3 - 行为耦合约束（两种子类型）\n" +
-               "C3 有两种模式，由 sign 字段区分：\n\n" +
-               "**sign=+1（单向前置等待）**：一个智能体必须等另一个智能体到位/就绪后才允许开始行动（非对称依赖）。\n" +
-               "  示例：drone_B 必须等 drone_A 到达掩护位置后才起飞。\n" +
-               "  字段：constraintId(唯一ID), cType=\"C3\", sign=1, watchAgent(被等待的智能体ID), reactTo=\"ReadySignal\"\n" +
-               "  运行机制：watchAgent 到达就绪状态后在白板写入 ReadySignal，等待方读取后才行动。\n\n" +
-               "**sign=-1（动态互斥）**：多个智能体不能同时前往同一目标、区域、地点，先到先得，后来者需自动避让选择其他目标。\n" +
-               "  适用条件：存在多个目标点，每个目标同一时刻只允许一个智能体占用，但具体谁去哪个目标在规划时无法确定。\n" +
-               "  示例：3个资源点需要3架无人机分别前往采集，但谁去哪个运行时动态决定。\n" +
-               "  字段：constraintId(唯一ID), cType=\"C3\", sign=-1, watchAgent=\"\", reactTo=\"IntentAnnounce\"\n" +
-               "  运行机制：每个智能体决定目标后在白板写入 IntentAnnounce 占位，其他智能体读取后避开已被占用的目标。\n\n" +
-               "**注意**：C3 是组内协同机制，参与互斥的智能体仍属同一协作团队，互斥/避让不代表对抗。\n" +
-               "只在存在明确的等待/互斥关系时才生成 C3，纯并行任务不需要。\n\n" +
-               "## 思考步骤（请按以下顺序推理）\n" +
-               "1. 这个事件是否重要到需要协作？独自处理是否可行？\n" +
-               "2. 如果需要协作，目标是什么？需要几个协作者？\n" +
-               "3. 发起者和协作者分别承担什么角色？\n" +
-               "4. 协作过程中有哪些约束关系？（用上述C1/C2/C3描述）\n" +
-               "5. 如何简洁地向协作者描述任务使其理解并愿意加入？\n\n" +
-               "## 输出格式（严格 JSON）\n" +
-               "{\n" +
-               "  \"collaborationGoal\": \"协作目标描述\",\n" +
-               "  \"constraints\": [\n" +
-               "    {\"constraintId\":\"c1_xxx\",\"cType\":\"C1\",\"channel\":\"direct\",\"groupScope\":0,\n" +
-               "     \"subject\":\"执行者ID\",\"targetObject\":\"目标名\",\"exclusive\":true}\n" +
-               "  ],\n" +
-               "  \"myRole\": \"发起者的角色描述\",\n" +
-               "  \"partnerRole\": \"协作者的角色描述\",\n" +
-               "  \"inviteMessage\": \"发给协作者的邀请说明（包含具体位置和任务内容）\"\n" +
-               "}\n";
+        ## 触发事件
+        - {eventDesc}
+        - 发生区域：{location}
+
+        ## 附近环境
+        {strategicMap}
+
+        {BuildMemorySection()}
+        ## 协作约束类型详细说明
+        协作任务需要设计结构化约束来协调多个智能体。共有三种约束类型：
+
+        ### C1 - 资源互斥约束
+        含义：某个资源或目标只能由一个智能体独占操作，其他智能体需等待。
+        示例：只有一个充电桩，drone_A 使用时 drone_B 必须等待。
+        字段：constraintId(唯一ID), cType=""C1"", subject(执行者ID), targetObject(目标名), exclusive(是否独占?true:false)
+
+        ### C2 - 同步完成约束
+        含义：多个智能体必须同时完成各自子任务，或一方完成后另一方才执行下一步。
+        示例：两架无人机分别到达目标区域两端后同时开始扫描。
+        字段：constraintId(唯一ID), cType=""C2"", condition(完成条件), syncWith(同步等待的智能体ID列表)
+
+        ### C3 - 行为耦合约束（两种子类型）
+        C3 有两种模式，由 sign 字段区分：
+
+        **sign=+1（单向前置等待）**：一个智能体必须等另一个智能体到位/就绪后才允许开始行动（非对称依赖）。
+        示例：drone_B 必须等 drone_A 到达掩护位置后才起飞。
+        字段：constraintId(唯一ID), cType=""C3"", sign=1, watchAgent(被等待的智能体ID), reactTo=""ReadySignal""
+        运行机制：watchAgent 到达就绪状态后在白板写入 ReadySignal，等待方读取后才行动。
+
+        **sign=-1（动态互斥）**：多个智能体不能同时前往同一目标、区域、地点，先到先得，后来者需自动避让选择其他目标。
+        适用条件：存在多个目标点，每个目标同一时刻只允许一个智能体占用，但具体谁去哪个目标在规划时无法确定。
+        示例：3个资源点需要3架无人机分别前往采集，但谁去哪个运行时动态决定。
+        字段：constraintId(唯一ID), cType=""C3"", sign=-1, watchAgent="""", reactTo=""IntentAnnounce""
+        运行机制：每个智能体决定目标后在白板写入 IntentAnnounce 占位，其他智能体读取后避开已被占用的目标。
+
+        **注意**：C3 是组内协同机制，参与互斥的智能体仍属同一协作团队，互斥/避让不代表对抗。
+        只在存在明确的等待/互斥关系时才生成 C3，纯并行任务不需要。
+
+        ## 思考步骤（请按以下顺序推理）
+        1. 这个事件是否重要到需要协作？独自处理是否可行？
+        2. 如果需要协作，目标是什么？需要几个协作者？
+        3. 发起者和协作者分别承担什么角色？
+        4. 协作过程中有哪些约束关系？（用上述C1/C2/C3描述）
+        5. 如何简洁地向协作者描述任务使其理解并愿意加入？
+
+        ## 输出格式（严格 JSON）
+        {{
+        ""collaborationGoal"": ""协作目标描述"",
+        ""constraints"": [
+            {{""constraintId"":""c1_xxx"",""cType"":""C1"",""channel"":""direct"",""groupScope"":0,
+            ""subject"":""执行者ID"",""targetObject"":""目标名"",""exclusive"":true}}
+        ],
+        ""myRole"": ""发起者的角色描述"",
+        ""partnerRole"": ""协作者的角色描述"",
+        ""inviteMessage"": ""发给协作者的邀请说明（包含具体位置和任务内容）""
+        }}";
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -751,16 +669,13 @@ public class AutonomousDriveModule : MonoBehaviour
         string stratMap = _campusGrid != null
             ? MapTopologySerializer.GetStrategicMap(_campusGrid, _agent.transform.position)
             : "(地图不可用)";
-        string observationSummary = BuildObservationMemorySummary();
-        string memSummary = BuildMemorySummary();
-
         // 1. CollabSetup LLM：从事件上下文生成协作目标、约束、角色
         string llmResponse = null;
         yield return StartCoroutine(_llm.SendRequest(
             new LLMRequestOptions
             {
                 prompt         = BuildCollabSetupPrompt(eventDesc, location,
-                                     batteryRatio, currentLoc, stratMap, observationSummary, memSummary),
+                                     batteryRatio, currentLoc, stratMap),
                 maxTokens      = 800,
                 enableJsonMode = true,
                 callTag        = "CollabSetup",
@@ -851,6 +766,9 @@ public class AutonomousDriveModule : MonoBehaviour
 
     public void OnColabInvite(string initiatorId, ColabInvitePayload payload)
     {
+        // 不处理自己发出的邀请
+        if (string.Equals(initiatorId, _agent.Properties?.AgentID, System.StringComparison.OrdinalIgnoreCase))
+            return;
         if (_agent.CurrentState.Status != AgentStatus.Idle) return;
         if (_planningModule != null && _planningModule.IsBusy)  return;
         if (_isEvaluating) return;
@@ -906,7 +824,7 @@ public class AutonomousDriveModule : MonoBehaviour
             $"5. 综合以上因素，做出加入或拒绝的决策。\n\n" +
             $"## 输出格式（严格 JSON）\n" +
             "{\n" +
-            "  \"join\": true,\n" +
+            "  \"join\": true/false,\n" +
             "  \"reason\": \"一句话说明决策原因\"\n" +
             "}\n";
 

@@ -32,7 +32,7 @@ public class CampusGrid2D : MonoBehaviour
 
     [Header("建筑安全边距")]
     [Tooltip("路径规划和靠近目标时与 Building 保持的最小距离，避免智能体被引导到贴墙位置。")]
-    [Min(0f)] public float buildingPathClearance = 2.4f;
+    [Min(0f)] public float buildingPathClearance = 0f;
 
     [Header("可视化")]
     public bool showGrid = true;
@@ -64,18 +64,15 @@ public class CampusGrid2D : MonoBehaviour
     [NonSerialized] public int gridLength;
     [NonSerialized] public bool[,] blockedGrid;
     [NonSerialized] public CampusGridCellType[,] cellTypeGrid;
-    [NonSerialized] public string[,] cellFeatureUidGrid;
-    [NonSerialized] public string[,] cellFeatureNameGrid;
-    [NonSerialized] public Dictionary<string, Vector2Int> featureAliasCellMap;
-    [NonSerialized] public Dictionary<string, string> featureAliasUidMap;
-    [NonSerialized] public Dictionary<string, string> featureAliasNameMap;
+    [NonSerialized] public string[,] cellFeatureSceneNameGrid;
+    [NonSerialized] public string[,] cellFeatureDisplayNameGrid;
     [NonSerialized] public Rect mapBoundsXY;
-    [NonSerialized] public Dictionary<string, FeatureSpatialProfile> featureSpatialProfileByUid;
+    [NonSerialized] public Dictionary<string, FeatureSpatialProfile> featureSpatialProfileBySceneName;
     [NonSerialized] public Dictionary<string, string[]> featureCollectionMembers;
 
-    private Dictionary<string, FeatureSpatialIndex> featureSpatialIndexByUid;
-    private Dictionary<string, List<string>> featureUidsByName;
-    private Dictionary<string, List<string>> featureUidsByCollectionKey;
+    private Dictionary<string, FeatureSpatialIndex> featureSpatialIndexBySceneName;
+    private Dictionary<string, List<string>> featureSceneNamesByDisplayName;
+    private Dictionary<string, List<string>> featureSceneNamesByCollectionKey;
     private bool[,] pathClearanceBlockedGrid;
 
     private float[,]      _astarGScore;
@@ -269,10 +266,10 @@ public class CampusGrid2D : MonoBehaviour
         return cellTypeGrid[x, z];
     }
 
-    public bool TryGetCellFeatureInfo(int x, int z, out string uid, out string name, out CampusGridCellType type, out bool blocked)
+    public bool TryGetCellFeatureInfo(int x, int z, out string sceneName, out string displayName, out CampusGridCellType type, out bool blocked)
     {
-        uid = string.Empty;
-        name = string.Empty;
+        sceneName = string.Empty;
+        displayName = string.Empty;
         type = CampusGridCellType.Other;
         blocked = false;
 
@@ -280,25 +277,25 @@ public class CampusGrid2D : MonoBehaviour
 
         type = cellTypeGrid[x, z];
         blocked = blockedGrid[x, z];
-        if (cellFeatureUidGrid != null) uid = cellFeatureUidGrid[x, z] ?? string.Empty;
-        if (cellFeatureNameGrid != null) name = cellFeatureNameGrid[x, z] ?? string.Empty;
+        if (cellFeatureSceneNameGrid != null) sceneName = cellFeatureSceneNameGrid[x, z] ?? string.Empty;
+        if (cellFeatureDisplayNameGrid != null) displayName = cellFeatureDisplayNameGrid[x, z] ?? string.Empty;
 
         return true;
     }
 
-    public bool TryGetCellFeatureInfoByWorld(Vector3 worldPos, out Vector2Int grid, out string uid, out string name, out CampusGridCellType type, out bool blocked)
+    public bool TryGetCellFeatureInfoByWorld(Vector3 worldPos, out Vector2Int grid, out string sceneName, out string displayName, out CampusGridCellType type, out bool blocked)
     {
         grid = WorldToGrid(worldPos);
         if (!IsInBounds(grid.x, grid.y))
         {
-            uid = string.Empty;
-            name = string.Empty;
+            sceneName = string.Empty;
+            displayName = string.Empty;
             type = CampusGridCellType.Other;
             blocked = false;
             return false;
         }
 
-        return TryGetCellFeatureInfo(grid.x, grid.y, out uid, out name, out type, out blocked);
+        return TryGetCellFeatureInfo(grid.x, grid.y, out sceneName, out displayName, out type, out blocked);
     }
 
     public bool TryResolveFeatureSpatialProfile(string query, Vector3 referenceWorld, out FeatureSpatialProfile profile, bool preferWalkableApproach = true, bool ignoreCase = true, Vector2Int? anchorBias = null)
@@ -350,20 +347,17 @@ public class CampusGrid2D : MonoBehaviour
 
     /// <summary>
     /// 根据查询字符串解析对应的要素空间索引（FeatureSpatialIndex）。
-    /// 依次尝试三种匹配策略：
-    ///   1. 直接以 UID 精确匹配 featureSpatialIndexByUid；
-    ///   2. 通过别名表 featureAliasUidMap 将别名映射到 UID 后再查找；
-    ///   3. 通过名称表 featureUidsByName 获取候选 UID 列表，取第一个匹配项。
+    /// 只接受 Unity 场景中的精确对象名；不再兼容 uid / 别名 / 显示名查询。
     /// 查询前会先剥离结构化目标前缀（如 "target:"）。
     /// </summary>
-    /// <param name="query">要素标识字符串，可以是 UID、别名或显示名称。</param>
+    /// <param name="query">要素标识字符串，必须是场景精确对象名。</param>
     /// <param name="index">输出找到的空间索引；未找到时为 null。</param>
     /// <param name="ignoreCase">保留参数，当前实现中匹配逻辑依赖字典键的大小写规则。</param>
     /// <returns>成功解析到非空索引时返回 true，否则返回 false。</returns>
     private bool TryResolveFeatureSpatialIndex(string query, out FeatureSpatialIndex index, bool ignoreCase = true)
     {
         index = null;
-        if (string.IsNullOrWhiteSpace(query) || featureSpatialIndexByUid == null || featureSpatialIndexByUid.Count == 0)
+        if (string.IsNullOrWhiteSpace(query) || featureSpatialIndexBySceneName == null || featureSpatialIndexBySceneName.Count == 0)
         {
             return false;
         }
@@ -373,44 +367,30 @@ public class CampusGrid2D : MonoBehaviour
         TryStripStructuredTargetPrefix(q, out _, out q);
         if (string.IsNullOrWhiteSpace(q)) return false;
 
-        // 策略 1：直接 UID 精确查找
-        if (featureSpatialIndexByUid.TryGetValue(q, out index) && index != null)
+        if (featureSpatialIndexBySceneName.TryGetValue(q, out index) && index != null)
         {
             return true;
         }
 
-        // 策略 2：别名 → UID → 索引
-        if (featureAliasUidMap != null &&
-            featureAliasUidMap.TryGetValue(q, out string aliasUid) &&
-            !string.IsNullOrWhiteSpace(aliasUid) &&
-            featureSpatialIndexByUid.TryGetValue(aliasUid.Trim(), out index) &&
-            index != null)
+        if (featureSceneNamesByDisplayName != null &&
+            featureSceneNamesByDisplayName.TryGetValue(q, out List<string> matchedSceneNames) &&
+            matchedSceneNames != null &&
+            matchedSceneNames.Count > 0)
         {
-            return true;
+            Debug.LogWarning($"[CampusGrid2D] 目标 \"{q}\" 不是精确场景名。请改用: {string.Join(", ", matchedSceneNames.Take(5))}");
+            return false;
         }
 
-        // 策略 3：显示名称 → UID 列表 → 取首个有效索引
-        if (featureUidsByName != null &&
-            featureUidsByName.TryGetValue(q, out List<string> namedUids) &&
-            namedUids != null &&
-            namedUids.Count > 0 &&
-            featureSpatialIndexByUid.TryGetValue(namedUids[0], out index) &&
-            index != null)
+        if (featureSpatialIndexBySceneName != null)
         {
-            return true;
-        }
-
-        // 诊断日志：打印与查询最接近的已注册名称（帮助排查 LLM 输出与地图不匹配的问题）
-        if (featureUidsByName != null)
-        {
-            var similar = featureUidsByName.Keys
+            var similar = featureSpatialIndexBySceneName.Keys
                 .Where(k => k.Contains(q) || q.Contains(k))
                 .Take(5)
                 .ToList();
             string hint = similar.Count > 0
                 ? string.Join(", ", similar)
                 : "(无近似匹配)";
-            Debug.LogWarning($"[CampusGrid2D] 查找失败: \"{q}\" | 近似名称: {hint} | 已注册名称总数: {featureUidsByName.Count}");
+            Debug.LogWarning($"[CampusGrid2D] 查找失败: \"{q}\"。当前仅支持 Unity 场景精确名查询。近似场景名: {hint}");
         }
 
         return false;
@@ -508,8 +488,9 @@ public class CampusGrid2D : MonoBehaviour
         FeatureSpatialProfile profile = new FeatureSpatialProfile
         {
             uid = index.uid,
+            sceneName = index.sceneName,
             name = index.name,
-            runtimeAlias = index.runtimeAlias,
+            runtimeAlias = index.sceneName,
             kind = index.kind,
             collectionKey = index.collectionKey,
             cellType = index.cellType,
@@ -580,14 +561,14 @@ public class CampusGrid2D : MonoBehaviour
     {
         if (profile == null) return;
 
-        if (!preferWalkableApproach || featureSpatialIndexByUid == null || string.IsNullOrWhiteSpace(profile.uid))
+        if (!preferWalkableApproach || featureSpatialIndexBySceneName == null || string.IsNullOrWhiteSpace(profile.sceneName))
         {
             profile.anchorCell = profile.centroidCell;
             profile.anchorWorld = profile.centroidWorld;
             return;
         }
 
-        if (!featureSpatialIndexByUid.TryGetValue(profile.uid, out FeatureSpatialIndex index) || index == null || index.occupiedCells.Count == 0)
+        if (!featureSpatialIndexBySceneName.TryGetValue(profile.sceneName, out FeatureSpatialIndex index) || index == null || index.occupiedCells.Count == 0)
         {
             profile.anchorCell = profile.centroidCell;
             profile.anchorWorld = profile.centroidWorld;
@@ -670,10 +651,9 @@ public class CampusGrid2D : MonoBehaviour
         return best;
     }
 
-    private static string SelectFeatureReferenceToken(string uid, string name, string runtimeAlias)
+    private static string SelectFeatureReferenceToken(string sceneName, string name)
     {
-        if (!string.IsNullOrWhiteSpace(runtimeAlias)) return runtimeAlias.Trim();
-        if (!string.IsNullOrWhiteSpace(uid)) return uid.Trim();
+        if (!string.IsNullOrWhiteSpace(sceneName)) return sceneName.Trim();
         return string.IsNullOrWhiteSpace(name) ? string.Empty : name.Trim();
     }
 
@@ -700,12 +680,12 @@ public class CampusGrid2D : MonoBehaviour
         Ray ray = cam.ScreenPointToRay(Input.mousePosition);
         if (TryGetQueryWorldPoint(ray, out Vector3 worldPoint, out string hitObjectName))
         {
-            if (TryGetCellFeatureInfoByWorld(worldPoint, out Vector2Int grid, out string uid, out string name, out CampusGridCellType type, out bool blocked))
+            if (TryGetCellFeatureInfoByWorld(worldPoint, out Vector2Int grid, out string sceneName, out string displayName, out CampusGridCellType type, out bool blocked))
             {
-                if (string.IsNullOrEmpty(name)) name = "(无名称)";
-                if (string.IsNullOrEmpty(uid)) uid = "-";
+                if (string.IsNullOrEmpty(sceneName)) sceneName = "-";
+                if (string.IsNullOrEmpty(displayName)) displayName = "(无显示名)";
 
-                string msg = $"grid=({grid.x},{grid.y}) type={type} blocked={blocked} name={name} uid={uid}";
+                string msg = $"grid=({grid.x},{grid.y}) type={type} blocked={blocked} scene={sceneName} display={displayName}";
                 if (!string.IsNullOrEmpty(hitObjectName)) msg += $" hit={hitObjectName}";
                 SetAndMaybeLogClickInfo(msg);
             }
@@ -920,25 +900,22 @@ public class CampusGrid2D : MonoBehaviour
 
         blockedGrid = new bool[gridWidth, gridLength];
         cellTypeGrid = new CampusGridCellType[gridWidth, gridLength];
-        cellFeatureUidGrid = new string[gridWidth, gridLength];
-        cellFeatureNameGrid = new string[gridWidth, gridLength];
+        cellFeatureSceneNameGrid = new string[gridWidth, gridLength];
+        cellFeatureDisplayNameGrid = new string[gridWidth, gridLength];
         _astarGScore   = new float[gridWidth, gridLength];
         _astarClosed   = new bool[gridWidth, gridLength];
         _astarCameFrom = new Vector2Int[gridWidth, gridLength];
         _astarHasParent = new bool[gridWidth, gridLength];
         int[,] cellPriorityGrid = new int[gridWidth, gridLength];
-        featureAliasCellMap = new Dictionary<string, Vector2Int>(StringComparer.OrdinalIgnoreCase);
-        featureAliasUidMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        featureAliasNameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        featureSpatialProfileByUid = new Dictionary<string, FeatureSpatialProfile>(StringComparer.OrdinalIgnoreCase);
+        featureSpatialProfileBySceneName = new Dictionary<string, FeatureSpatialProfile>(StringComparer.OrdinalIgnoreCase);
         featureCollectionMembers = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
-        featureSpatialIndexByUid = new Dictionary<string, FeatureSpatialIndex>(StringComparer.OrdinalIgnoreCase);
-        featureUidsByName = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-        featureUidsByCollectionKey = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        featureSpatialIndexBySceneName = new Dictionary<string, FeatureSpatialIndex>(StringComparer.OrdinalIgnoreCase);
+        featureSceneNamesByDisplayName = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        featureSceneNamesByCollectionKey = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
         AssignFeatureRuntimeMetadata(features);
-        InitializeFeatureSpatialIndexes(features);
         PrepareFeatureRasterization(features);
+        InitializeFeatureSpatialIndexes(features);
 
         for (int x = 0; x < gridWidth; x++)
         {
@@ -946,8 +923,8 @@ public class CampusGrid2D : MonoBehaviour
             {
                 blockedGrid[x, z] = false;
                 cellTypeGrid[x, z] = CampusGridCellType.Free;
-                cellFeatureUidGrid[x, z] = null;
-                cellFeatureNameGrid[x, z] = null;
+                cellFeatureSceneNameGrid[x, z] = null;
+                cellFeatureDisplayNameGrid[x, z] = null;
                 cellPriorityGrid[x, z] = int.MinValue;
             }
         }
@@ -961,7 +938,45 @@ public class CampusGrid2D : MonoBehaviour
             bool shouldBlock = IsBlockedKind(t);
             int featurePriority = GetFeatureRasterPriority(t);
 
-            if (!f.rasterBoundsValid) continue;
+            if (f.rasterMode == FeatureRasterMode.Area && f.rasterAreaParts.Count > 0)
+            {
+                for (int partIndex = 0; partIndex < f.rasterAreaParts.Count; partIndex++)
+                {
+                    RasterAreaPart part = f.rasterAreaParts[partIndex];
+                    if (part == null || !part.boundsValid || string.IsNullOrWhiteSpace(part.sceneObjectName)) continue;
+
+                    BoundsToGridRange(part.bounds, out int partXMin, out int partXMax, out int partZMin, out int partZMax);
+                    if (partXMax < partXMin || partZMax < partZMin) continue;
+
+                    for (int x = partXMin; x <= partXMax; x++)
+                    {
+                        for (int z = partZMin; z <= partZMax; z++)
+                        {
+                            Rect cellRect = GetCellRectXY(x, z);
+                            Vector2 cellCenter = GetCellCenterXY(x, z);
+                            if (!AreaPartOverlapsCell(part, cellRect, cellCenter)) continue;
+
+                            if (featurePriority < cellPriorityGrid[x, z]) continue;
+
+                            string prevSceneName = cellFeatureSceneNameGrid[x, z];
+                            if (!string.IsNullOrEmpty(prevSceneName) &&
+                                !string.Equals(prevSceneName, part.sceneObjectName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                UnregisterFeatureSpatialCell(prevSceneName, x, z);
+                            }
+
+                            cellPriorityGrid[x, z] = featurePriority;
+                            blockedGrid[x, z] = shouldBlock;
+                            cellTypeGrid[x, z] = t;
+                            AssignCellFeatureIdentity(x, z, part.sceneObjectName, f.effectiveName);
+                            RegisterFeatureSpatialCell(part.sceneObjectName, t, x, z);
+                        }
+                    }
+                }
+                continue;
+            }
+
+            if (!f.rasterBoundsValid || string.IsNullOrWhiteSpace(f.runtimeAlias)) continue;
             Rect rasterBounds = f.rasterBounds;
 
             BoundsToGridRange(rasterBounds, out int xMin, out int xMax, out int zMin, out int zMax);
@@ -975,16 +990,20 @@ public class CampusGrid2D : MonoBehaviour
                     Vector2 cellCenter = GetCellCenterXY(x, z);
                     if (!FeatureOverlapsCell(f, cellRect, cellCenter)) continue;
 
-                    RegisterFeatureAlias(f, x, z);
-                    RegisterFeatureSpatialCell(f, t, x, z);
-
                     if (featurePriority < cellPriorityGrid[x, z]) continue;
+
+                    string prevSceneName = cellFeatureSceneNameGrid[x, z];
+                    if (!string.IsNullOrEmpty(prevSceneName) &&
+                        !string.Equals(prevSceneName, f.runtimeAlias, StringComparison.OrdinalIgnoreCase))
+                    {
+                        UnregisterFeatureSpatialCell(prevSceneName, x, z);
+                    }
 
                     cellPriorityGrid[x, z] = featurePriority;
                     blockedGrid[x, z] = shouldBlock;
                     cellTypeGrid[x, z] = t;
-                    AssignCellFeatureIdentity(x, z, f.uid,
-                        string.IsNullOrWhiteSpace(f.runtimeAlias) ? f.effectiveName : f.runtimeAlias);
+                    AssignCellFeatureIdentity(x, z, f.runtimeAlias, f.effectiveName);
+                    RegisterFeatureSpatialCell(f.runtimeAlias, t, x, z);
                 }
             }
         }
@@ -1106,6 +1125,7 @@ public class CampusGrid2D : MonoBehaviour
         {
             List<Vector2> outer = cleanedOuters[i];
             RasterAreaPart part = new RasterAreaPart();
+            part.sceneObjectName = CampusFeatureSceneNaming.BuildPartSceneName(feature.runtimeAlias, i, cleanedOuters.Count);
             part.outer.AddRange(outer);
 
             for (int h = 0; h < cleanedHoles.Count; h++)
@@ -1834,20 +1854,6 @@ public class CampusGrid2D : MonoBehaviour
         );
     }
 
-
-    private static string NormalizeFeatureToken(string raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
-        string s = raw.Trim().ToLowerInvariant();
-        s = s.Replace(" ", string.Empty)
-             .Replace("_", string.Empty)
-             .Replace("-", string.Empty)
-             .Replace(":", string.Empty)
-             .Replace("：", string.Empty);
-        return s;
-    }
-
-
     private static bool TryStripStructuredTargetPrefix(string text, out string prefix, out string stripped)
     {
         prefix = string.Empty;
@@ -1874,16 +1880,7 @@ public class CampusGrid2D : MonoBehaviour
     private void AssignFeatureRuntimeMetadata(List<Feature2D> features)
     {
         if (features == null || features.Count == 0) return;
-
-        int buildingIndex = 0;
-        int sportsIndex = 0;
-        int waterIndex = 0;
-        int roadIndex = 0;
-        int expresswayIndex = 0;
-        int bridgeIndex = 0;
-        int parkingIndex = 0;
-        int greenIndex = 0;
-        int forestIndex = 0;
+        var sceneNameAllocator = new CampusFeatureSceneNameAllocator();
 
         for (int i = 0; i < features.Count; i++)
         {
@@ -1891,18 +1888,9 @@ public class CampusGrid2D : MonoBehaviour
             if (f == null) continue;
 
             f.effectiveName = GetEffectiveFeatureName(f);
-            f.runtimeAlias = BuildRuntimeAliasForFeature(
-                f,
-                ref buildingIndex,
-                ref sportsIndex,
-                ref waterIndex,
-                ref roadIndex,
-                ref expresswayIndex,
-                ref bridgeIndex,
-                ref parkingIndex,
-                ref greenIndex,
-                ref forestIndex
-            );
+            f.runtimeAlias = sceneNameAllocator.AllocateSceneName(
+                f.name,
+                CampusFeatureSceneNaming.GetDefaultScenePrefix(f.kind));
         }
     }
 
@@ -1914,42 +1902,9 @@ public class CampusGrid2D : MonoBehaviour
             return feature.name.Trim();
         }
 
-        // 网格层保存的是真实业务名，不是 Unity 场景里的实例编号名。
-        // 对没有显式名字的要素，退回到 kind 默认名，保证 building/forest 这类查询仍然可用。
+        // 这里保留的是显示名，供点击查询和诊断日志参考；
+        // 真正的运行时查询统一走 runtimeAlias / sceneName。
         return NormalizeFeatureKindToken(feature.kind);
-    }
-
-    private static string BuildRuntimeAliasForFeature(
-        Feature2D feature,
-        ref int buildingIndex,
-        ref int sportsIndex,
-        ref int waterIndex,
-        ref int roadIndex,
-        ref int expresswayIndex,
-        ref int bridgeIndex,
-        ref int parkingIndex,
-        ref int greenIndex,
-        ref int forestIndex)
-    {
-        if (feature == null) return string.Empty;
-
-        bool hasName = !string.IsNullOrWhiteSpace(feature.name) && feature.name.Trim() != "-";
-        if (hasName) return feature.name.Trim();
-
-        string kind = NormalizeFeatureKindToken(feature.kind);
-        switch (kind)
-        {
-            case "building":   return $"building_{++buildingIndex}";
-            case "road":       return $"road_{++roadIndex}";
-            case "expressway": return $"expressway_{++expresswayIndex}";
-            case "bridge":     return $"bridge_{++bridgeIndex}";
-            case "water":      return $"water_{++waterIndex}";
-            case "forest":     return $"forest_{++forestIndex}";
-            case "sports":     return $"sports_{++sportsIndex}";
-            case "parking":    return $"parking_{++parkingIndex}";
-            case "green":
-            default:           return $"green_{++greenIndex}";
-        }
     }
 
     private static string NormalizeFeatureKindToken(string kind)
@@ -1960,38 +1915,59 @@ public class CampusGrid2D : MonoBehaviour
 
     private void InitializeFeatureSpatialIndexes(List<Feature2D> features)
     {
-        if (features == null || featureSpatialIndexByUid == null) return;
+        if (features == null || featureSpatialIndexBySceneName == null) return;
 
         for (int i = 0; i < features.Count; i++)
         {
             Feature2D feature = features[i];
-            if (feature == null || string.IsNullOrWhiteSpace(feature.uid)) continue;
+            if (feature == null || string.IsNullOrWhiteSpace(feature.runtimeAlias)) continue;
 
-            string uid = feature.uid.Trim();
-            if (featureSpatialIndexByUid.ContainsKey(uid)) continue;
-
+            string uid = string.IsNullOrWhiteSpace(feature.uid) ? string.Empty : feature.uid.Trim();
+            string displayName = string.IsNullOrWhiteSpace(feature.effectiveName) ? string.Empty : feature.effectiveName.Trim();
+            string sceneName = feature.runtimeAlias.Trim();
             string collectionKey = $"feature_kind:{NormalizeFeatureKindToken(feature.kind)}";
-            featureSpatialIndexByUid[uid] = new FeatureSpatialIndex
-            {
-                uid = uid,
-                name = string.IsNullOrWhiteSpace(feature.effectiveName) ? string.Empty : feature.effectiveName.Trim(),
-                runtimeAlias = string.IsNullOrWhiteSpace(feature.runtimeAlias) ? string.Empty : feature.runtimeAlias.Trim(),
-                kind = NormalizeFeatureKindToken(feature.kind),
-                collectionKey = collectionKey,
-                cellType = KindToCellType(feature.kind)
-            };
 
-            RegisterFeatureSpatialName(uid, feature.effectiveName);
-            RegisterCollectionMembership(collectionKey, uid);
+            if (feature.rasterMode == FeatureRasterMode.Area && feature.rasterAreaParts.Count > 0)
+            {
+                for (int partIndex = 0; partIndex < feature.rasterAreaParts.Count; partIndex++)
+                {
+                    RasterAreaPart part = feature.rasterAreaParts[partIndex];
+                    string partSceneName = part?.sceneObjectName ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(partSceneName)) continue;
+                    RegisterFeatureSpatialIndex(partSceneName, uid, displayName, feature.kind, collectionKey);
+                }
+                continue;
+            }
+
+            RegisterFeatureSpatialIndex(sceneName, uid, displayName, feature.kind, collectionKey);
         }
     }
 
-    private void RegisterFeatureSpatialCell(Feature2D feature, CampusGridCellType cellType, int x, int z)
+    private void RegisterFeatureSpatialIndex(string sceneName, string uid, string displayName, string kind, string collectionKey)
     {
-        if (feature == null || string.IsNullOrWhiteSpace(feature.uid) || featureSpatialIndexByUid == null) return;
+        if (string.IsNullOrWhiteSpace(sceneName) || featureSpatialIndexBySceneName == null) return;
+        string key = sceneName.Trim();
+        if (featureSpatialIndexBySceneName.ContainsKey(key)) return;
 
-        string uid = feature.uid.Trim();
-        if (!featureSpatialIndexByUid.TryGetValue(uid, out FeatureSpatialIndex index) || index == null)
+        featureSpatialIndexBySceneName[key] = new FeatureSpatialIndex
+        {
+            uid = uid,
+            sceneName = key,
+            name = displayName,
+            runtimeAlias = key,
+            kind = NormalizeFeatureKindToken(kind),
+            collectionKey = collectionKey,
+            cellType = KindToCellType(kind)
+        };
+
+        RegisterFeatureSpatialName(key, displayName);
+        RegisterCollectionMembership(collectionKey, key);
+    }
+
+    private void RegisterFeatureSpatialCell(string sceneName, CampusGridCellType cellType, int x, int z)
+    {
+        if (string.IsNullOrWhiteSpace(sceneName) || featureSpatialIndexBySceneName == null) return;
+        if (!featureSpatialIndexBySceneName.TryGetValue(sceneName.Trim(), out FeatureSpatialIndex index) || index == null)
         {
             return;
         }
@@ -2007,47 +1983,71 @@ public class CampusGrid2D : MonoBehaviour
         if (z > index.maxZ) index.maxZ = z;
     }
 
+    private void UnregisterFeatureSpatialCell(string sceneName, int x, int z)
+    {
+        if (string.IsNullOrWhiteSpace(sceneName) || featureSpatialIndexBySceneName == null) return;
+        if (!featureSpatialIndexBySceneName.TryGetValue(sceneName.Trim(), out FeatureSpatialIndex index) || index == null) return;
+
+        long key = (((long)x) << 32) ^ (uint)z;
+        if (index.occupiedCellKeys.Remove(key))
+        {
+            index.occupiedCells.Remove(new Vector2Int(x, z));
+            // min/max 将在 FinalizeFeatureSpatialIndexes 中重算
+        }
+    }
 
     private void FinalizeFeatureSpatialIndexes()
     {
-        if (featureSpatialIndexByUid == null || featureSpatialProfileByUid == null || featureCollectionMembers == null) return;
+        if (featureSpatialIndexBySceneName == null || featureSpatialProfileBySceneName == null || featureCollectionMembers == null) return;
 
-        featureSpatialProfileByUid.Clear();
+        featureSpatialProfileBySceneName.Clear();
         featureCollectionMembers.Clear();
 
-        foreach (KeyValuePair<string, FeatureSpatialIndex> kv in featureSpatialIndexByUid)
+        foreach (KeyValuePair<string, FeatureSpatialIndex> kv in featureSpatialIndexBySceneName)
         {
             FeatureSpatialIndex index = kv.Value;
             if (index == null) continue;
 
+            // 重算 min/max（UnregisterFeatureSpatialCell 移除格子后原值可能不再正确）
+            index.minX = int.MaxValue;
+            index.maxX = int.MinValue;
+            index.minZ = int.MaxValue;
+            index.maxZ = int.MinValue;
+            for (int i = 0; i < index.occupiedCells.Count; i++)
+            {
+                Vector2Int c = index.occupiedCells[i];
+                if (c.x < index.minX) index.minX = c.x;
+                if (c.x > index.maxX) index.maxX = c.x;
+                if (c.y < index.minZ) index.minZ = c.y;
+                if (c.y > index.maxZ) index.maxZ = c.y;
+            }
+
             FeatureSpatialProfile profile = BuildSpatialProfileFromIndex(index);
-            featureSpatialProfileByUid[kv.Key] = profile;
+            featureSpatialProfileBySceneName[kv.Key] = profile;
         }
 
-        if (featureUidsByCollectionKey == null) return;
+        if (featureSceneNamesByCollectionKey == null) return;
 
-        foreach (KeyValuePair<string, List<string>> kv in featureUidsByCollectionKey)
+        foreach (KeyValuePair<string, List<string>> kv in featureSceneNamesByCollectionKey)
         {
             if (string.IsNullOrWhiteSpace(kv.Key) || kv.Value == null || kv.Value.Count == 0) continue;
 
+            var profileCache = new Dictionary<string, FeatureSpatialProfile>(
+                StringComparer.OrdinalIgnoreCase);
+
             List<string> members = kv.Value
-                .Where(uid => !string.IsNullOrWhiteSpace(uid))
-                .Select(uid =>
+                .Where(sceneName => !string.IsNullOrWhiteSpace(sceneName))
+                .Select(sceneName =>
                 {
-                    FeatureSpatialProfile profile = featureSpatialProfileByUid.TryGetValue(uid, out FeatureSpatialProfile found) ? found : null;
-                    return profile != null ? SelectFeatureReferenceToken(profile.uid, profile.name, profile.runtimeAlias) : uid;
+                    FeatureSpatialProfile profile = featureSpatialProfileBySceneName.TryGetValue(sceneName, out FeatureSpatialProfile found) ? found : null;
+                    string token = profile != null ? SelectFeatureReferenceToken(profile.sceneName, profile.name) : sceneName;
+                    if (!string.IsNullOrWhiteSpace(token) && profile != null && !profileCache.ContainsKey(token))
+                        profileCache[token] = profile;
+                    return token;
                 })
                 .Where(token => !string.IsNullOrWhiteSpace(token))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
-
-            var profileCache = new Dictionary<string, FeatureSpatialProfile>(
-                StringComparer.OrdinalIgnoreCase);
-            foreach (string token in members)
-            {
-                if (TryResolveFeatureSpatialIndex(token, out FeatureSpatialIndex idx))
-                    profileCache[token] = BuildSpatialProfileFromIndex(idx);
-            }
 
             members.Sort((a, b) =>
             {
@@ -2066,56 +2066,36 @@ public class CampusGrid2D : MonoBehaviour
         }
     }
 
-    private void RegisterFeatureSpatialName(string uid, string featureName)
+    private void RegisterFeatureSpatialName(string sceneName, string featureName)
     {
-        if (string.IsNullOrWhiteSpace(uid) || string.IsNullOrWhiteSpace(featureName) || featureUidsByName == null) return;
+        if (string.IsNullOrWhiteSpace(sceneName) || string.IsNullOrWhiteSpace(featureName) || featureSceneNamesByDisplayName == null) return;
 
         string key = featureName.Trim();
-        if (!featureUidsByName.TryGetValue(key, out List<string> list))
+        if (!featureSceneNamesByDisplayName.TryGetValue(key, out List<string> list))
         {
             list = new List<string>();
-            featureUidsByName[key] = list;
+            featureSceneNamesByDisplayName[key] = list;
         }
 
-        if (!list.Any(existing => string.Equals(existing, uid, StringComparison.OrdinalIgnoreCase)))
+        if (!list.Any(existing => string.Equals(existing, sceneName, StringComparison.OrdinalIgnoreCase)))
         {
-            list.Add(uid);
+            list.Add(sceneName);
         }
     }
 
-    private void RegisterCollectionMembership(string collectionKey, string uid)
+    private void RegisterCollectionMembership(string collectionKey, string sceneName)
     {
-        if (string.IsNullOrWhiteSpace(collectionKey) || string.IsNullOrWhiteSpace(uid) || featureUidsByCollectionKey == null) return;
+        if (string.IsNullOrWhiteSpace(collectionKey) || string.IsNullOrWhiteSpace(sceneName) || featureSceneNamesByCollectionKey == null) return;
 
-        if (!featureUidsByCollectionKey.TryGetValue(collectionKey, out List<string> list))
+        if (!featureSceneNamesByCollectionKey.TryGetValue(collectionKey, out List<string> list))
         {
             list = new List<string>();
-            featureUidsByCollectionKey[collectionKey] = list;
+            featureSceneNamesByCollectionKey[collectionKey] = list;
         }
 
-        if (!list.Any(existing => string.Equals(existing, uid, StringComparison.OrdinalIgnoreCase)))
+        if (!list.Any(existing => string.Equals(existing, sceneName, StringComparison.OrdinalIgnoreCase)))
         {
-            list.Add(uid);
-        }
-    }
-
-    private void RegisterFeatureAlias(Feature2D feature, int x, int z)
-    {
-        if (featureAliasCellMap == null || featureAliasUidMap == null || featureAliasNameMap == null || feature == null) return;
-        if (string.IsNullOrWhiteSpace(feature.runtimeAlias)) return;
-
-        string alias = feature.runtimeAlias.Trim();
-        if (!featureAliasCellMap.ContainsKey(alias))
-        {
-            featureAliasCellMap[alias] = new Vector2Int(x, z);
-        }
-        if (!featureAliasUidMap.ContainsKey(alias))
-        {
-            featureAliasUidMap[alias] = string.IsNullOrWhiteSpace(feature.uid) ? string.Empty : feature.uid.Trim();
-        }
-        if (!featureAliasNameMap.ContainsKey(alias))
-        {
-            featureAliasNameMap[alias] = string.IsNullOrWhiteSpace(feature.effectiveName) ? string.Empty : feature.effectiveName.Trim();
+            list.Add(sceneName);
         }
     }
 
@@ -2250,34 +2230,68 @@ public class CampusGrid2D : MonoBehaviour
         return inside;
     }
 
-    private void AssignCellFeatureIdentity(int x, int z, string uid, string name)
+    private void AssignCellFeatureIdentity(int x, int z, string sceneName, string displayName)
     {
-        if (cellFeatureUidGrid != null) cellFeatureUidGrid[x, z] = string.IsNullOrWhiteSpace(uid) ? null : uid.Trim();
-        if (cellFeatureNameGrid != null) cellFeatureNameGrid[x, z] = string.IsNullOrWhiteSpace(name) ? null : name.Trim();
+        if (cellFeatureSceneNameGrid != null) cellFeatureSceneNameGrid[x, z] = string.IsNullOrWhiteSpace(sceneName) ? null : sceneName.Trim();
+        if (cellFeatureDisplayNameGrid != null) cellFeatureDisplayNameGrid[x, z] = string.IsNullOrWhiteSpace(displayName) ? null : displayName.Trim();
     }
 
     /// <summary>
-    /// 在 worldPos 附近 searchRadius 格半径内，找到最近有名字的特征格，返回其名称；找不到返回 null。
+    /// 在 worldPos 附近找到最近的命名特征，返回其精确场景名；找不到返回 null。
+    /// 综合两种距离度量：grid cell 归属（精确但边界有盲区）和 anchor 世界距离（覆盖接近点），取最近者。
     /// </summary>
     public string TryGetNearestFeatureNameByWorld(Vector3 worldPos, int searchRadius = 5)
     {
-        if (cellFeatureNameGrid == null) return null;
-        Vector2Int center = WorldToGrid(worldPos);
-        string best = null;
-        int bestDist = int.MaxValue;
-        for (int dx = -searchRadius; dx <= searchRadius; dx++)
+        string bestName = null;
+        float bestDistSq = float.MaxValue;
+
+        // 策略1：grid cell 搜索（原有逻辑，覆盖 cell 归属明确的情况）
+        if (cellFeatureSceneNameGrid != null)
         {
-            for (int dz = -searchRadius; dz <= searchRadius; dz++)
+            Vector2Int center = WorldToGrid(worldPos);
+            for (int dx = -searchRadius; dx <= searchRadius; dx++)
             {
-                int nx = center.x + dx, nz = center.y + dz;
-                if (!IsInBounds(nx, nz)) continue;
-                string n = cellFeatureNameGrid[nx, nz];
-                if (string.IsNullOrEmpty(n)) continue;
-                int dist = dx * dx + dz * dz;
-                if (dist < bestDist) { bestDist = dist; best = n; }
+                for (int dz = -searchRadius; dz <= searchRadius; dz++)
+                {
+                    int nx = center.x + dx, nz = center.y + dz;
+                    if (!IsInBounds(nx, nz)) continue;
+                    string n = cellFeatureSceneNameGrid[nx, nz];
+                    if (string.IsNullOrEmpty(n)) continue;
+                    Vector3 cellWorld = GridToWorldCenter(nx, nz);
+                    float distSq = HorizontalDistSq(worldPos, cellWorld);
+                    if (distSq < bestDistSq) { bestDistSq = distSq; bestName = n; }
+                }
             }
         }
-        return best;
+
+        // 策略2：遍历所有特征的 anchor point（接近点），用世界坐标距离
+        // 解决 agent 在特征接近点但该 cell 不归属该特征的问题
+        float worldSearchRadius = searchRadius * cellSize;
+        float worldSearchRadiusSq = worldSearchRadius * worldSearchRadius;
+        if (featureSpatialProfileBySceneName != null)
+        {
+            foreach (var kv in featureSpatialProfileBySceneName)
+            {
+                var profile = kv.Value;
+                if (string.IsNullOrWhiteSpace(profile.sceneName))
+                    continue;
+                float anchorDistSq = HorizontalDistSq(worldPos, profile.anchorWorld);
+                if (anchorDistSq < bestDistSq && anchorDistSq < worldSearchRadiusSq)
+                {
+                    bestDistSq = anchorDistSq;
+                    bestName = profile.sceneName;
+                }
+            }
+        }
+
+        return bestName;
+    }
+
+    private static float HorizontalDistSq(Vector3 a, Vector3 b)
+    {
+        float dx = a.x - b.x;
+        float dz = a.z - b.z;
+        return dx * dx + dz * dz;
     }
 
     private CampusGridCellType KindToCellType(string kind)

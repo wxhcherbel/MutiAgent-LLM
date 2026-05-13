@@ -28,8 +28,6 @@ public class ActionDecisionModule : MonoBehaviour
     // ─── 协程句柄 ─────────────────────────────────────────────────
     private Coroutine activeCoroutine;
 
-    // ─── 重规划计数（防死锁）────────────────────────────────────
-    private int replanCount;
     private const int MaxReplanCount = 5;
 
     // ─── 滚动规划常量 ─────────────────────────────────────────────
@@ -38,6 +36,7 @@ public class ActionDecisionModule : MonoBehaviour
     /// 超限说明步骤目标存在根本性问题（导航死路/目标不可达），设为 Failed 而非强制 Done。
     /// </summary>
     private const int MaxIterations = 30;
+    private const int RollingPlanMaxTokens = 1200;
 
     // ─── nextActions 空重试计数 ───────────────────────────────────
     /// <summary>
@@ -46,6 +45,8 @@ public class ActionDecisionModule : MonoBehaviour
     /// </summary>
     private int _emptyActionRetries = 0;
     private const int MaxEmptyActionRetries = 2;
+    private int _jsonParseRetries = 0;
+    private const int MaxJsonParseRetries = 2;
 
     // ─── JSON 提取正则 ────────────────────────────────────────────
     private static readonly Regex JsonBlockRe = new Regex(@"```(?:json)?\s*([\s\S]*?)```");
@@ -171,8 +172,8 @@ public class ActionDecisionModule : MonoBehaviour
             isRollingMode           = true,
         };
 
-        replanCount = 0;
         _emptyActionRetries   = 0;
+        _jsonParseRetries    = 0;
         _c3DebateTriggered    = false;
         if (agentState != null)
         {
@@ -188,14 +189,6 @@ public class ActionDecisionModule : MonoBehaviour
 
         SetStatus(ADMStatus.Idle);
         activeCoroutine = StartCoroutine(RunRollingLoop(step));
-    }
-
-    /// <summary>由感知模块调用，记录事件，稍后在 Running 状态统一处理。</summary>
-    public void OnPerceptionEvent(string eventDescription, string locationName)
-    {
-        if (string.IsNullOrWhiteSpace(eventDescription)) return;
-        pendingPerceptionEvents.Enqueue((eventDescription, locationName ?? string.Empty));
-        Debug.Log($"[ADM] {agentProperties?.AgentID} 收到感知事件: {eventDescription}");
     }
 
     /// <summary>仪表板查询当前执行上下文快照（只读）。</summary>
@@ -425,7 +418,7 @@ public class ActionDecisionModule : MonoBehaviour
                 new LLMRequestOptions
                 {
                     prompt         = prompt,
-                    maxTokens      = 900,
+                    maxTokens      = RollingPlanMaxTokens,
                     enableJsonMode = true,
                     callTag        = $"ADM_Roll_iter{ctx.iterationCount + 1}",
                     agentId        = agentProperties?.AgentID
@@ -444,20 +437,28 @@ public class ActionDecisionModule : MonoBehaviour
             Debug.Log($"[ADM] {agentProperties?.AgentID} 滚动规划第{ctx.iterationCount + 1}轮 LLM 回复: {llmResult}");
 
             // ── 7. 解析 JSON ─────────────────────────────────────────
+            Newtonsoft.Json.Linq.JObject jObj = null;
             RollingPlanResult planResult = null;
-            try
+            string parseError = null;
+            if (!TryParseRollingPlan(llmResult, out jObj, out planResult, out parseError))
             {
-                planResult = JsonConvert.DeserializeObject<RollingPlanResult>(ExtractJson(llmResult));
-            }
-            catch (Exception e)
-            {
-                Debug.LogError($"[ADM] 滚动规划 JSON 解析失败: {e.Message}");
                 ReleaseC3MutexLocks(mutexCids);
+                _jsonParseRetries++;
+                if (_jsonParseRetries <= MaxJsonParseRetries)
+                {
+                    Debug.LogWarning(
+                        $"[ADM] {agentProperties?.AgentID} 滚动规划 JSON 解析失败，准备重试 " +
+                        $"({_jsonParseRetries}/{MaxJsonParseRetries})。{parseError}");
+                    continue;
+                }
+
+                Debug.LogError($"[ADM] 滚动规划 JSON 解析失败: {parseError}");
                 SetStatus(ADMStatus.Failed);
                 if (agentState != null) agentState.Status = AgentStatus.Idle;
-                planningModule?.MarkCurrentStepFailed($"JSON 解析失败: {e.Message}");
+                planningModule?.MarkCurrentStepFailed($"JSON 解析失败: {parseError}");
                 yield break;
             }
+            _jsonParseRetries = 0;
 
             // 输出思维链（可追溯性）
             if (!string.IsNullOrWhiteSpace(planResult?.thought))
@@ -473,62 +474,56 @@ public class ActionDecisionModule : MonoBehaviour
                 yield break;
             }
 
-            // ── 8. nextActions 为空 → 系统判定步骤是否完成 ──────────
+            // ── 8. LLM 显式判定步骤是否完成 ─────────────────────────
+            bool stepDone = jObj["stepDone"] != null && (bool)jObj["stepDone"];
+            string doneReason = jObj["doneReason"] != null ? (string)jObj["doneReason"] : "";
+
+            if (stepDone)
+            {
+                Debug.Log($"[ADM] {agentProperties?.AgentID} 步骤完成（LLM判定）: {doneReason}");
+                ReleaseC3MutexLocks(mutexCids);
+
+                WriteWhiteboardDoneSignals();
+                yield return StartCoroutine(WaitForC2Sync());
+
+                _memoryModule?.RememberProgress(
+                    missionId: ctx.msnId,
+                    slotId: ctx.stepId,
+                    stepLabel: step.text,
+                    summary: $"步骤完成: {step.text}。{doneReason}",
+                    targetRef: step.targetName);
+
+                _reflectionModule?.NotifyActionOutcome(
+                    missionId: ctx.msnId,
+                    missionText: ctx.stepText,
+                    slotId: ctx.slotId,
+                    stepText: step.text,
+                    targetRef: step.targetName,
+                    success: true,
+                    summary: doneReason);
+
+                planningModule?.CompleteCurrentStep();
+                SetStatus(ADMStatus.Done);
+                if (agentState != null) agentState.Status = AgentStatus.Idle;
+                yield break;
+            }
+
+            // stepDone=false 但 nextActions 为空 → LLM 认为未完成却没给动作，重试
             if (planResult.nextActions == null || planResult.nextActions.Length == 0)
             {
-                bool hasTarget = !string.IsNullOrWhiteSpace(step.targetName);
-                bool atTarget  = IsNearTarget(step.targetName, ctx.currentLocationName);
-
-                if (!hasTarget || atTarget)
+                ReleaseC3MutexLocks(mutexCids);
+                _emptyActionRetries++;
+                if (_emptyActionRetries <= MaxEmptyActionRetries)
                 {
-                    // 无导航目标 或 已到达目标，且 LLM 无更多动作 → 步骤完成
-                    string doneReason = hasTarget
-                        ? $"已到达 {step.targetName}，所有动作执行完毕"
-                        : "所有动作执行完毕";
-                    Debug.Log($"[ADM] {agentProperties?.AgentID} 步骤完成（系统判定）: {doneReason}");
-                    ReleaseC3MutexLocks(mutexCids);
-
-                    WriteWhiteboardDoneSignals();
-                    yield return StartCoroutine(WaitForC2Sync());
-
-                    _memoryModule?.RememberProgress(
-                        missionId: ctx.msnId,
-                        slotId: ctx.stepId,
-                        stepLabel: step.text,
-                        summary: $"步骤完成: {step.text}。{doneReason}",
-                        targetRef: step.targetName);
-
-                    _reflectionModule?.NotifyActionOutcome(
-                        missionId: ctx.msnId,
-                        missionText: ctx.stepText,
-                        slotId: ctx.slotId,
-                        stepText: step.text,
-                        targetRef: step.targetName,
-                        success: true,
-                        summary: doneReason);
-
-                    planningModule?.CompleteCurrentStep();
-                    SetStatus(ADMStatus.Done);
-                    if (agentState != null) agentState.Status = AgentStatus.Idle;
-                    yield break;
+                    Debug.LogWarning($"[ADM] {agentProperties?.AgentID} stepDone=false 但 nextActions 为空，" +
+                                     $"重试 ({_emptyActionRetries}/{MaxEmptyActionRetries})");
+                    continue;
                 }
-                else
-                {
-                    // 有目标但未到达，LLM 却没给导航动作 → 重试
-                    ReleaseC3MutexLocks(mutexCids);
-                    _emptyActionRetries++;
-                    if (_emptyActionRetries <= MaxEmptyActionRetries)
-                    {
-                        Debug.LogWarning($"[ADM] {agentProperties?.AgentID} 未到达 {step.targetName} 但 nextActions 为空，" +
-                                         $"重试 ({_emptyActionRetries}/{MaxEmptyActionRetries})");
-                        continue;
-                    }
-                    Debug.LogError($"[ADM] {agentProperties?.AgentID} LLM 连续 {MaxEmptyActionRetries} 次返回空动作，步骤设为 Failed");
-                    SetStatus(ADMStatus.Failed);
-                    if (agentState != null) agentState.Status = AgentStatus.Idle;
-                    planningModule?.MarkCurrentStepFailed($"未到达 {step.targetName} 且 LLM 连续 {MaxEmptyActionRetries} 次返回空动作");
-                    yield break;
-                }
+                Debug.LogError($"[ADM] {agentProperties?.AgentID} stepDone=false 且连续 {MaxEmptyActionRetries} 次返回空动作，步骤设为 Failed");
+                SetStatus(ADMStatus.Failed);
+                if (agentState != null) agentState.Status = AgentStatus.Idle;
+                planningModule?.MarkCurrentStepFailed($"stepDone=false 且连续 {MaxEmptyActionRetries} 次返回空动作");
+                yield break;
             }
             // 成功生成动作，重置重试计数
             _emptyActionRetries = 0;
@@ -676,6 +671,7 @@ public class ActionDecisionModule : MonoBehaviour
 
             "## 导航规则\n" +
             "地图仅覆盖当前位置300m内地物。\n" +
+            "• 地图距离是到地物质心的直线距离。MoveTo 的实际导航终点是地物的可达接近点（边缘），不是质心。因此执行历史显示\"已到达X\"时，即使地图仍显示与X有一定距离，也说明你已在X的可达范围内，无需再次 MoveTo。\n" +
             "• 目标在范围内（标注\"在本地图范围内\"）：targetName 直接填目标名。\n" +
             "• 目标超出范围（标注\"超出范围\"）：targetName 只能填地图内已列出的中间节点，每轮只规划到下一个节点。\n" +
             "• 选择中间节点时，请按以下优先级推理：\n" +
@@ -697,7 +693,11 @@ public class ActionDecisionModule : MonoBehaviour
             "• MoveTo：前往地图地点或附近可交互目标，targetName=地点名或目标名称（如 ResourcePoint_7），spatialHint=路径偏好\n" +
             "• Wait：原地悬停等待，duration=等待秒数，actionParams=等待条件说明\n" +
             "• Track：跟踪动态移动实体，targetAgentId=目标智能体ID，duration=跟踪时长，actionParams=相对方向（前/后/左/右）\n" +
-            "• Signal：向队友广播结构化信息，targetAgentId=接收方ID（\"all\"=全体），actionParams=消息内容\n" +
+            "• Signal：将信息外化并持久化，targetAgentId=接收方ID（\"all\"=全体）。actionParams 决定去向：\n" +
+            "  - 以 memo: 开头 → 写入自身工作记忆（仅自己后续可见），适用于标记、记录、备忘\n" +
+            "  - 以 whiteboard: 开头 → 写入组内共享白板（队友可见），适用于共享发现、协调\n" +
+            "  - 无前缀或 broadcast: 开头 → 发送实时消息给 targetAgentId\n" +
+            "  Signal 一旦执行成功，信息即已持久化，无需重复发送\n" +
             "• Get：拾取附近物体（需先 MoveTo 到目标附近8m内），targetName=目标名称，duration=拾取耗时（秒）。拾取后物体挂载在无人机下方跟随移动，同一时间只能携带一个物体\n" +
             "• Put：将当前携带的物体放置在当前位置，targetName=放置说明（可选），duration=放置耗时（秒）。放置后物体脱离无人机落到地面\n" +
             "• Land：降落至地面，targetName=降落区域（可选）\n" +
@@ -707,17 +707,28 @@ public class ActionDecisionModule : MonoBehaviour
             "• Approach：逼近目标agent至极近距离进行物理干扰（破坏性agent专用），targetAgentId=目标agent ID，duration=持续时间(秒)\n" +
             "• Flee：远离威胁agent（防御/规避用），targetAgentId=威胁agent ID，duration=逃离持续时间(秒)\n\n" +
 
+            "## 步骤完成判定\n" +
+            "每轮决策前，先结合步骤目标、当前位置、携带物品、已执行历史，判断目标是否已达成。\n" +
+            "判定原则（按顺序检查）：\n" +
+            "1. 步骤是阶段性里程碑，不是终极目标。对目标做过一轮有效尝试即可标记完成，不要追求穷尽。\n" +
+            "2. 若最近 2 轮动作与更早历史重复且未产生新结果，stepDone=true。继续执行的收益已低于推进下一步骤。\n" +
+            "3. 若步骤目标中存在当前动作集无法直接实现的意图，用 Signal(memo:...) 记录判断即视为完成，不要空转。\n\n" +
+
             "## 输出（JSON 对象，非数组）\n" +
             "{\n" +
             $"  \"thought\": {thoughtGuide},\n" +
+            "  \"stepDone\": false,\n" +
+            "  \"doneReason\": \"\",\n" +
             "  \"nextActions\": [\n" +
             "    {\"actionId\":\"aa_1\",\"type\":\"MoveTo\",\"targetName\":\"地点名\",\"targetAgentId\":\"\",\"duration\":0,\"actionParams\":\"\",\"spatialHint\":\"\"}\n" +
             "  ]\n" +
             "}\n" +
             "1. thought 必填，按上方 JSON 结构输出实际推理内容（迭代<3时 context/trajectory_analysis 可填空字符串）。\n" +
-            "2. 提供 1-3 个动作；若步骤描述的所有动作已全部执行完毕（已到达目标且无后续操作），填 []。\n" +
-            "3. 每个动作必须包含全部字段：actionId / type / targetName / targetAgentId / duration / actionParams / spatialHint。\n" +
-            "4. 若存在 C3 约束，生成的动作必须遵守其信号/互斥要求（如等待 ReadySignal、避开已占节点）；C2 约束无需在动作层面等待。\n";
+            "2. stepDone：bool，当前步骤目标是否已达成。true 时 nextActions 填 []。\n" +
+            "3. doneReason：stepDone=true 时填写完成原因；stepDone=false 时填空字符串。\n" +
+            "4. nextActions：stepDone=false 时提供 1-3 个动作。\n" +
+            "5. 每个动作必须包含全部字段：actionId / type / targetName / targetAgentId / duration / actionParams / spatialHint。\n" +
+            "6. 若存在 C3 约束，生成的动作必须遵守其信号/互斥要求（如等待 ReadySignal、避开已占节点）；C2 约束无需在动作层面等待。\n";
     }
 
     private string BuildConstraintSummary()
@@ -827,8 +838,8 @@ public class ActionDecisionModule : MonoBehaviour
         string lastAdded  = string.Empty;
         foreach (Vector2Int cell in path)
         {
-            if (campusGrid.cellFeatureNameGrid == null) break;
-            string feat = campusGrid.cellFeatureNameGrid[cell.x, cell.y];
+            if (campusGrid.cellFeatureSceneNameGrid == null) break;
+            string feat = campusGrid.cellFeatureSceneNameGrid[cell.x, cell.y];
             if (string.IsNullOrWhiteSpace(feat) || feat == currentLoc || feat == lastAdded) continue;
             _topoWaypointCache.Add(feat);
             lastAdded = feat;
@@ -1470,16 +1481,9 @@ public class ActionDecisionModule : MonoBehaviour
         if (agentState == null || campusGrid == null) return "未知位置";
         Vector3 pos = agentState.Position;
 
-        if (campusGrid.TryGetCellFeatureInfoByWorld(pos, out _, out string uid, out string name, out _, out _))
+        if (campusGrid.TryGetCellFeatureInfoByWorld(pos, out _, out string sceneName, out _, out _, out _))
         {
-            // 优先用 runtimeAlias（与地图显示一致）
-            if (!string.IsNullOrWhiteSpace(uid)
-                && campusGrid.featureSpatialProfileByUid != null
-                && campusGrid.featureSpatialProfileByUid.TryGetValue(uid, out var profile)
-                && !string.IsNullOrWhiteSpace(profile.runtimeAlias))
-                return profile.runtimeAlias;
-
-            if (!string.IsNullOrWhiteSpace(name)) return name;
+            if (!string.IsNullOrWhiteSpace(sceneName)) return sceneName;
         }
 
         // 当前格无特征（开阔地/地图边界外）：搜索半径5格内最近有名字的特征
@@ -1495,22 +1499,281 @@ public class ActionDecisionModule : MonoBehaviour
             agentState.CampusGrid = agent.CampusGrid2D ?? campusGrid;
     }
 
+
+    private bool TryParseRollingPlan(
+        string raw,
+        out Newtonsoft.Json.Linq.JObject jObj,
+        out RollingPlanResult planResult,
+        out string errorMessage)
+    {
+        jObj = null;
+        planResult = null;
+        errorMessage = null;
+
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            errorMessage = "LLM response is empty.";
+            return false;
+        }
+
+        string jsonStr = ExtractJson(raw);
+        if (string.IsNullOrWhiteSpace(jsonStr))
+        {
+            errorMessage = $"Extracted JSON is empty. rawLength={raw.Length}";
+            return false;
+        }
+
+        try
+        {
+            jObj = Newtonsoft.Json.Linq.JObject.Parse(jsonStr);
+            planResult = jObj.ToObject<RollingPlanResult>();
+            return true;
+        }
+        catch (Exception firstEx)
+        {
+            if (TryRepairTruncatedJson(jsonStr, out string repairedJson))
+            {
+                try
+                {
+                    jObj = Newtonsoft.Json.Linq.JObject.Parse(repairedJson);
+                    planResult = jObj.ToObject<RollingPlanResult>();
+                    Debug.LogWarning(
+                        $"[ADM] {agentProperties?.AgentID} Rolling-plan JSON looked truncated at the tail. " +
+                        $"Auto-repair succeeded. rawLength={raw.Length}, extractedLength={jsonStr.Length}, repairedLength={repairedJson.Length}");
+                    return true;
+                }
+                catch (Exception repairEx)
+                {
+                    errorMessage =
+                        $"extractedLength={jsonStr.Length}, lookedTruncated=true, repairFailed. " +
+                        $"firstError={firstEx.Message}; repairedError={repairEx.Message}; tailPreview={BuildJsonTailPreview(jsonStr)}";
+                    return false;
+                }
+            }
+
+            errorMessage =
+                $"extractedLength={jsonStr.Length}, lookedTruncated={LooksLikeTruncatedJson(jsonStr)}, " +
+                $"error={firstEx.Message}, tailPreview={BuildJsonTailPreview(jsonStr)}";
+            return false;
+        }
+    }
+
     private static string ExtractJson(string raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return raw;
+
         Match m = JsonBlockRe.Match(raw);
-        if (m.Success) return m.Groups[1].Value.Trim();
-        int start = raw.IndexOf('{');
-        int startArr = raw.IndexOf('[');
-        if (startArr >= 0 && (start < 0 || startArr < start)) start = startArr;
-        if (start >= 0)
+        string candidate = m.Success ? m.Groups[1].Value.Trim() : raw.Trim();
+
+        int start = candidate.IndexOf('{');
+        if (start < 0) return candidate;
+
+        if (TryExtractBalancedJson(candidate, start, out string balancedJson))
+            return balancedJson;
+
+        return candidate.Substring(start).Trim();
+    }
+
+    private static bool TryExtractBalancedJson(string text, int startIndex, out string json)
+    {
+        json = null;
+        if (string.IsNullOrWhiteSpace(text) || startIndex < 0 || startIndex >= text.Length) return false;
+
+        var closers = new Stack<char>();
+        bool inString = false;
+        bool escaping = false;
+
+        for (int i = startIndex; i < text.Length; i++)
         {
-            char open = raw[start];
-            char close = open == '[' ? ']' : '}';
-            int end = raw.LastIndexOf(close);
-            if (end > start) return raw.Substring(start, end - start + 1);
+            char ch = text[i];
+
+            if (inString)
+            {
+                if (escaping)
+                {
+                    escaping = false;
+                    continue;
+                }
+
+                if (ch == '\\')
+                {
+                    escaping = true;
+                    continue;
+                }
+
+                if (ch == '"')
+                    inString = false;
+
+                continue;
+            }
+
+            if (ch == '"')
+            {
+                inString = true;
+                continue;
+            }
+
+            if (ch == '{')
+            {
+                closers.Push('}');
+                continue;
+            }
+
+            if (ch == '[')
+            {
+                closers.Push(']');
+                continue;
+            }
+
+            if (ch == '}' || ch == ']')
+            {
+                if (closers.Count == 0 || closers.Pop() != ch)
+                    return false;
+
+                if (closers.Count == 0)
+                {
+                    json = text.Substring(startIndex, i - startIndex + 1).Trim();
+                    return true;
+                }
+            }
         }
-        return raw.Trim();
+
+        return false;
+    }
+
+    private static bool TryRepairTruncatedJson(string text, out string repaired)
+    {
+        repaired = null;
+        if (string.IsNullOrWhiteSpace(text)) return false;
+
+        var closers = new Stack<char>();
+        bool inString = false;
+        bool escaping = false;
+
+        foreach (char ch in text)
+        {
+            if (inString)
+            {
+                if (escaping)
+                {
+                    escaping = false;
+                    continue;
+                }
+
+                if (ch == '\\')
+                {
+                    escaping = true;
+                    continue;
+                }
+
+                if (ch == '"')
+                    inString = false;
+
+                continue;
+            }
+
+            if (ch == '"')
+            {
+                inString = true;
+                continue;
+            }
+
+            if (ch == '{')
+            {
+                closers.Push('}');
+                continue;
+            }
+
+            if (ch == '[')
+            {
+                closers.Push(']');
+                continue;
+            }
+
+            if (ch == '}' || ch == ']')
+            {
+                if (closers.Count == 0 || closers.Pop() != ch)
+                    return false;
+            }
+        }
+
+        if (inString || escaping || closers.Count == 0) return false;
+
+        var sb = new StringBuilder(text);
+        while (closers.Count > 0)
+            sb.Append(closers.Pop());
+
+        repaired = sb.ToString();
+        return true;
+    }
+
+    private static bool LooksLikeTruncatedJson(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+
+        var closers = new Stack<char>();
+        bool inString = false;
+        bool escaping = false;
+
+        foreach (char ch in text)
+        {
+            if (inString)
+            {
+                if (escaping)
+                {
+                    escaping = false;
+                    continue;
+                }
+
+                if (ch == '\\')
+                {
+                    escaping = true;
+                    continue;
+                }
+
+                if (ch == '"')
+                    inString = false;
+
+                continue;
+            }
+
+            if (ch == '"')
+            {
+                inString = true;
+                continue;
+            }
+
+            if (ch == '{')
+            {
+                closers.Push('}');
+                continue;
+            }
+
+            if (ch == '[')
+            {
+                closers.Push(']');
+                continue;
+            }
+
+            if (ch == '}' || ch == ']')
+            {
+                if (closers.Count == 0 || closers.Pop() != ch)
+                    return false;
+            }
+        }
+
+        return inString || escaping || closers.Count > 0;
+    }
+
+    private static string BuildJsonTailPreview(string text, int maxLen = 160)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return "\"\"";
+
+        string flat = text.Replace("\r", "\\r").Replace("\n", "\\n");
+        if (flat.Length > maxLen)
+            flat = flat.Substring(flat.Length - maxLen, maxLen);
+
+        return $"\"{flat}\"";
     }
 
     // ─────────────────────────────────────────────────────────────

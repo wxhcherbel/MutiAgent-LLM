@@ -19,7 +19,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using UnityEngine;
 using Newtonsoft.Json.Linq;
 
@@ -188,34 +187,20 @@ public class CampusJsonMapLoader : MonoBehaviour
         SpawnGroundPlane(gw, gl);
 
         // 生成要素
-        int buildingIndex = 0, sportsIndex = 0, waterIndex = 0, roadIndex = 0, expIndex = 0, bridgeIndex = 0,
-            parkingIndex = 0, greenIndex = 0, forestIndex = 0;
+        var sceneNameAllocator = new CampusFeatureSceneNameAllocator();
 
         for (int i = 0; i < features.Count; i++)
         {
             CampusFeature f = features[i];
-            string uidBase = f.uid ?? "";
-            int lastUs = uidBase.LastIndexOf('_');
-            if (lastUs > 0 && lastUs < uidBase.Length - 1)
-            {
-                string suffix = uidBase.Substring(lastUs + 1);
-                bool allDigits = suffix.Length > 0 && suffix.All(char.IsDigit);
-                if (allDigits) uidBase = uidBase.Substring(0, lastUs);
-            }
-            string baseName = SanitizeName(
-                string.IsNullOrWhiteSpace(f.name) || f.name.Trim() == "-"
-                    ? uidBase
-                    : f.name.Trim());
+            string sceneObjectBaseName = sceneNameAllocator.AllocateSceneName(
+                f.name,
+                CampusFeatureSceneNaming.GetDefaultScenePrefix(f.kind));
 
             // 建筑：必须生成（无 rings 用 bounds 兜底）
             if (f.kind == CampusFeatureKind.Building)
             {
                 float h = GetBuildingHeightMFromTags(f.tags);
                 float zCenter = groundZ + h * 0.5f;
-
-                string finalName = string.IsNullOrWhiteSpace(f.name) || f.name.Trim() == "-"
-                    ? $"building_{++buildingIndex}"
-                    : f.name.Trim();
 
                 CampusFeature tmp = f;
                 if (!tmp.HasArea())
@@ -243,7 +228,7 @@ public class CampusJsonMapLoader : MonoBehaviour
                     colorBuilding,
                     enableCollisionForBuildings,
                     rootBuilding,
-                    finalName
+                    sceneObjectBaseName
                 );
                 continue;
             }
@@ -256,21 +241,20 @@ public class CampusJsonMapLoader : MonoBehaviour
                 float zBias = ((int)f.kind) * zBiasStepM;
                 float zCenter = groundZ + thick * 0.5f + zBias;
 
-                bool fHasName = !string.IsNullOrWhiteSpace(f.name) && f.name.Trim() != "-";
                 if (f.kind == CampusFeatureKind.Road)
                 {
                     SpawnStrokeRibbon(f.linePoints, width, thick, zCenter, colorRoad, enableCollisionForStrokes,
-                        rootRoad, fHasName ? f.name.Trim() : $"road_{++roadIndex}");
+                        rootRoad, sceneObjectBaseName);
                 }
                 else if (f.kind == CampusFeatureKind.Expressway)
                 {
                     SpawnStrokeRibbon(f.linePoints, width, thick, zCenter, colorExpressway, enableCollisionForStrokes,
-                        rootExpressway, fHasName ? f.name.Trim() : $"expressway_{++expIndex}");
+                        rootExpressway, sceneObjectBaseName);
                 }
                 else if (f.kind == CampusFeatureKind.Bridge)
                 {
                     SpawnStrokeRibbon(f.linePoints, width, thick, zCenter, colorBridge, true,
-                        rootBridge, fHasName ? f.name.Trim() : $"bridge_{++bridgeIndex}");
+                        rootBridge, sceneObjectBaseName);
                 }
             }
 
@@ -281,36 +265,35 @@ public class CampusJsonMapLoader : MonoBehaviour
                 float thick = Mathf.Max(0.01f, areaThicknessM);
                 float zCenter = groundZ + thick * 0.5f + zBias;
 
-                bool aHasName = !string.IsNullOrWhiteSpace(f.name) && f.name.Trim() != "-";
                 if (f.kind == CampusFeatureKind.Water)
                 {
                     SpawnExtrudedArea(f, thick, zCenter, colorWater, enableCollisionForAreas, rootWater,
-                        aHasName ? f.name.Trim() : $"water_{++waterIndex}");
+                        sceneObjectBaseName);
                 }
                 else if (f.kind == CampusFeatureKind.Green)
                 {
                     SpawnExtrudedArea(f, thick, zCenter, colorGreen, enableCollisionForAreas, rootGreen,
-                        aHasName ? f.name.Trim() : $"green_{++greenIndex}");
+                        sceneObjectBaseName);
                 }
                 else if (f.kind == CampusFeatureKind.Forest)
                 {
                     SpawnExtrudedArea(f, thick, zCenter, colorForest, enableCollisionForAreas, rootForest,
-                        aHasName ? f.name.Trim() : $"forest_{++forestIndex}");
+                        sceneObjectBaseName);
                 }
                 else if (f.kind == CampusFeatureKind.Sports)
                 {
                     SpawnExtrudedArea(f, thick, zCenter, colorSports, enableCollisionForAreas, rootSports,
-                        aHasName ? f.name.Trim() : $"sports_{++sportsIndex}");
+                        sceneObjectBaseName);
                 }
                 else if (f.kind == CampusFeatureKind.Parking)
                 {
                     SpawnExtrudedArea(f, thick, zCenter, colorParking, enableCollisionForAreas, rootParking,
-                        aHasName ? f.name.Trim() : $"parking_{++parkingIndex}");
+                        sceneObjectBaseName);
                 }
                 else
                 {
                     SpawnExtrudedArea(f, thick, zCenter, colorGreen, enableCollisionForAreas, rootGreen,
-                        aHasName ? f.name.Trim() : $"green_{++greenIndex}");
+                        sceneObjectBaseName);
                 }
             }
         }
@@ -745,16 +728,6 @@ public class CampusJsonMapLoader : MonoBehaviour
         if (nm.HasProperty("_Cull"))nm.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
         tintMatCache[c] = nm;
         return nm;
-    }
-
-    private string SanitizeName(string s)
-    {
-        if (string.IsNullOrEmpty(s)) return s;
-        s = s.Trim();
-        s = s.Replace("\n", " ").Replace("\r", " ").Replace("\t", " ");
-        char[] bad = { '/', '\\', ':', '*', '?', '"', '<', '>', '|'};
-        for (int i = 0; i < bad.Length; i++) s = s.Replace(bad[i], '_');
-        return s;
     }
 
     private float GetBuildingHeightMFromTags(Dictionary<string, string> tagMap)

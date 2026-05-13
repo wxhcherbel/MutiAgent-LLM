@@ -35,7 +35,7 @@ public partial class AgentStateServer : MonoBehaviour
     private string whiteboardJson  = "{}";
     private string incidentsJson   = "[]";
     private bool   mapMetaReady    = false;
-    private bool   gridmapReady    = false;
+
 
     // ─── Motion Events（静态缓冲，供 AgentMotionExecutor 主线程写入）──────────
     private static readonly object              motionEventLock   = new object();
@@ -234,13 +234,13 @@ public partial class AgentStateServer : MonoBehaviour
 
                 // 修复：使用真实地图边界而非硬编码 0
                 var features = new List<FeaturePoint>();
-                if (grid.featureSpatialProfileByUid != null)
+                if (grid.featureSpatialProfileBySceneName != null)
                 {
-                    foreach (var profile in grid.featureSpatialProfileByUid.Values)
+                    foreach (var profile in grid.featureSpatialProfileBySceneName.Values)
                     {
                         features.Add(new FeaturePoint
                         {
-                            name   = profile.name,
+                            name   = profile.sceneName,
                             kind   = profile.kind,
                             x      = profile.centroidWorld.x,
                             z      = profile.centroidWorld.z,
@@ -707,7 +707,7 @@ public partial class AgentStateServer : MonoBehaviour
         lock (snapshotLock)
         {
             gridmapJson  = gj;
-            gridmapReady = true;
+            // gridmap JSON 已更新
         }
     }
 

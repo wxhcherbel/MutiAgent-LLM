@@ -35,8 +35,9 @@ public class AgentSpawner : MonoBehaviour
     public int maxAgents = 100;                      // 最大智能体数量
 
     [Header("阵营配置")]
-    [Tooltip("本次生成中破坏/对抗型 agent 的数量，其余均为协作型。生成时从后往前分配：后 adversarialCount 个为破坏型。")]
-    public int adversarialCount = 0;                 // 破坏型 agent 数量（0 表示全部协作型）
+    [Tooltip("本次生成中破坏/对抗型 agent 占总数的比例。0=全部协作型，0.3=30%为破坏型，1=全部破坏型。")]
+    [Range(0f, 1f)]
+    public float adversarialRatio = 0f;              // 破坏型 agent 比例（0 表示全部协作型）
     [Min(0f)] public float droneSpawnHeight = 2f;    // 无人机在地面基础上的起飞高度
 
     [Header("地图引用")]
@@ -391,8 +392,8 @@ public class AgentSpawner : MonoBehaviour
             return false;
         }
 
-        // 后 adversarialCount 个为破坏型，其余为协作型
-        int clampedAdversarial = Mathf.Clamp(adversarialCount, 0, count);
+        // 按比例计算破坏型数量，后 N 个为破坏型，其余为协作型
+        int clampedAdversarial = Mathf.Clamp(Mathf.RoundToInt(count * adversarialRatio), 0, count);
 
         int spawnedCount = 0;
         for (int i = 0; i < gridPoints.Count; i++)
@@ -862,16 +863,16 @@ public class AgentSpawner : MonoBehaviour
         AgentMotionExecutor mlController = agentObj.GetComponent<AgentMotionExecutor>();
         if (mlController == null) mlController = agentObj.AddComponent<AgentMotionExecutor>();
 
-        // 7.5) 可视化增强：让大地图中的 agent 更容易被定位和观察。
+        // 7.5) 人格系统：写入阵营标记（必须在 AgentVisualMarker 之前，因为 Marker.Awake 会读取阵营配色）
+        PersonalitySystem personalitySystem = agentObj.GetComponent<PersonalitySystem>();
+        if (personalitySystem == null) personalitySystem = agentObj.AddComponent<PersonalitySystem>();
+        personalitySystem.Profile.isAdversarial = isAdversarial;
+
+        // 8) 可视化增强：让大地图中的 agent 更容易被定位和观察。
         if (agentObj.GetComponent<AgentVisualMarker>() == null)
         {
             agentObj.AddComponent<AgentVisualMarker>();
         }
-
-        // 8) 人格系统：写入阵营标记
-        PersonalitySystem personalitySystem = agentObj.GetComponent<PersonalitySystem>();
-        if (personalitySystem == null) personalitySystem = agentObj.AddComponent<PersonalitySystem>();
-        personalitySystem.Profile.isAdversarial = isAdversarial;
 
         // 立即下发边界配置，避免 ML 控制器在首帧将智能体错误夹到固定点
         if (campusGrid == null) EnsureGridReady();

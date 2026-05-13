@@ -486,8 +486,7 @@ public class PerceptionModule : MonoBehaviour
         {
             string locName = actionDecisionModule != null
                 ? actionDecisionModule.ResolveCurrentLocationName() : "未知位置";
-            _autonomousDriveModule?.OnPerceptionEvent(
-                $"{locName}附近发现资源点", locName);
+           // _autonomousDriveModule?.OnPerceptionEvent($"{locName}附近发现资源点", locName);
         }
     }
 
@@ -539,8 +538,6 @@ public class PerceptionModule : MonoBehaviour
         });
 
         string description = $"敌方智能体 {otherAgent.Properties.AgentID} @ {otherAgent.transform.position}";
-        actionDecisionModule?.OnPerceptionEvent(description, "enemy");
-        Debug.Log($"[PerceptionModule] {ownerAgent?.Properties?.AgentID} 发现敌方: {otherAgent.Properties.AgentID}");
 
         // 写入感知记忆（区域级，去重 TTL 60s）
         string enemyLocName = actionDecisionModule != null
@@ -551,8 +548,7 @@ public class PerceptionModule : MonoBehaviour
         // 通知 AutonomousDriveModule（感知触发协作评估）
         string locationName = actionDecisionModule != null
             ? actionDecisionModule.ResolveCurrentLocationName() : "未知位置";
-        _autonomousDriveModule?.OnPerceptionEvent(
-            $"{locationName}附近发现敌方智能体 {otherAgent.Properties.AgentID}", locationName);
+        _autonomousDriveModule?.OnPerceptionEvent($"{locationName}附近发现敌方智能体 {otherAgent.Properties.AgentID}", locationName);
     }
 
     /// <summary>
@@ -818,21 +814,27 @@ public class PerceptionModule : MonoBehaviour
     }
 
     /// <summary>
-    /// 根据对象实例或离散化坐标生成稳定的小节点 ID。
+    /// 根据场景对象名生成小节点 ID。
+    /// 约束：小节点注册表只接受 Unity 场景命名，不再把坐标字符串当作常规查询名。
     /// </summary>
     private string BuildSmallNodeId(GameObject obj, SmallNodeType nodeType, Vector3 pos)
     {
-        // 优先使用 GameObject 名称（如 Tree_1、ResourcePoint_7），与 Unity 场景命名一致
         if (obj != null && !string.IsNullOrWhiteSpace(obj.name))
         {
             return obj.name;
         }
 
-        // 无名称时用坐标兜底
-        int px = Mathf.RoundToInt(pos.x * 10f);
-        int py = Mathf.RoundToInt(pos.y * 10f);
-        int pz = Mathf.RoundToInt(pos.z * 10f);
-        return $"{nodeType}:P({px},{py},{pz})";
+        if (obj != null)
+        {
+            string generatedName = $"{nodeType}_{Mathf.Abs(obj.GetInstanceID())}";
+            obj.name = generatedName;
+            Debug.LogWarning($"[PerceptionModule] 检测到未命名小节点，已自动补场景名: {generatedName}");
+            return generatedName;
+        }
+
+        string fallbackName = $"{nodeType}_Unknown";
+        Debug.LogWarning($"[PerceptionModule] 小节点场景对象为空，退回到临时名称: {fallbackName}");
+        return fallbackName;
     }
 
     /// <summary>
